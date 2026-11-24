@@ -62,7 +62,7 @@ export function LoginForm({ firstUser, next }: { firstUser: boolean; next: strin
         {formState.isSubmitting && <Loader2 className="animate-spin" />}
         {firstUser ? 'Create account' : 'Sign in'}
       </Button>
-      {!firstUser && <a href="/cms/forgot" className="text-center text-sm text-muted-foreground underline-offset-4 hover:underline">Forgot your password?</a>}
+      {!firstUser && <a href="/admin/forgot" className="text-center text-sm text-muted-foreground underline-offset-4 hover:underline">Forgot your password?</a>}
     </form>
   )
 }

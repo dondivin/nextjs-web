@@ -50,10 +50,12 @@ export default async function ModerationPage() {
 
   const msgs: ModMessage[] = messages.docs.map((m) => ({
     id: String(m.id),
-    text: m.text,
+    text: m.text || (m.image ? '(photo)' : ''),
+    imageUrl: m.image && typeof m.image === 'object' ? m.image.url || null : null,
     room: roomTitle(m.room),
     authorId: relId(m.author as Rel),
-    authorName: relName(m.author as Rel),
+    // staff messages have no member author: show the staff name instead
+    authorName: m.staffAuthor ? `${(typeof m.staffAuthor === 'object' && (m.staffAuthor.name || m.staffAuthor.email)) || 'Staff'} (staff)` : relName(m.author as Rel),
     deleted: !!m.deleted,
     deletedBy: m.deletedBy || null,
     isMod: !!m.isMod,
@@ -64,6 +66,7 @@ export default async function ModerationPage() {
     id: String(m.id),
     name: m.displayName,
     email: m.email,
+    hasPhoto: !!m.avatar,
     role: (m.role || 'fan') as ModMember['role'],
     status: (m.status || 'active') as ModMember['status'],
     mutedUntil: m.mutedUntil || null,

@@ -17,9 +17,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/backoffice/components/ui/tooltip'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/backoffice/components/ui/dialog'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/backoffice/components/ui/sheet'
-import { addLanguage, importTranslations, saveTranslation, updateLanguage } from '@/backoffice/actions/translations'
+import { addLanguage, importTranslations, saveTranslation, setLanguageIcon, updateLanguage } from '@/backoffice/actions/translations'
 
-export type TLang = { id: string; code: string; name: string; nativeName: string; dir: 'ltr' | 'rtl'; enabled: boolean; isDefault: boolean }
+export type TLang = { id: string; code: string; name: string; nativeName: string; dir: 'ltr' | 'rtl'; enabled: boolean; isDefault: boolean; iconUrl?: string | null }
+
+/** The language's icon, or its code in a circle when it has none. */
+function LangIcon({ url, code, size = 28 }: { url?: string | null; code: string; size?: number }) {
+  return url
+    ? <img src={url} alt="" className="shrink-0 rounded-full border object-cover" style={{ width: size, height: size }} />
+    : <span className="grid shrink-0 place-items-center rounded-full border bg-muted font-mono text-[10px] uppercase text-muted-foreground" style={{ width: size, height: size }}>{code.slice(0, 2)}</span>
+}
+const ICON_ACCEPT = 'image/svg+xml,image/png,image/jpeg,image/webp'
 export type TRow = { id: string; key: string; namespace: string; context: string; values: Record<string, string> }
 
 const tokens = (s: string) => (s.match(/\{\w+\}/g) || []).sort().join(' ')
@@ -57,7 +65,7 @@ export function TranslationsView({ languages, rows }: { languages: TLang[]; rows
       ),
     },
     ...languages.map((l): Col<TRow> => ({
-      id: 'lang_' + l.code, header: () => <span className="inline-flex items-center gap-1.5">{l.nativeName}<Badge variant="outline" className="font-mono text-[10px]">{l.code}</Badge>{l.isDefault && <Star className="size-3 fill-current text-warning" aria-label="Default language" />}</span>,
+      id: 'lang_' + l.code, header: () => <span className="inline-flex items-center gap-1.5"><LangIcon url={l.iconUrl} code={l.code} size={16} />{l.nativeName}<Badge variant="outline" className="font-mono text-[10px]">{l.code}</Badge>{l.isDefault && <Star className="size-3 fill-current text-warning" aria-label="Default language" />}</span>,
       enableSorting: false, size: 320, accessorFn: (r) => r.values[l.code] || '',
       cell: ({ row: { original: r } }) => (
         <TCell key={r.id + l.code} rowId={r.id} lang={l} value={r.values[l.code] || ''} source={source && l.code !== source.code ? r.values[source.code] || '' : ''}
@@ -162,19 +170,28 @@ function LanguagesSheet({ open, onOpenChange, languages, onChanged }: { open: bo
   function upd(id: string, data: { enabled?: boolean; isDefault?: boolean }, msg: string) {
     start(async () => { const r = await updateLanguage(id, data); if (r.ok) { toast.success(msg); onChanged() } else toast.error(r.error) })
   }
+  function icon(l: TLang, file: File | null) {
+    const fd = new FormData(); if (file) fd.set('icon', file)
+    start(async () => { const r = await setLanguageIcon(l.id, file ? fd : null); if (r.ok) { toast.success(file ? `Icon for ${l.nativeName} saved` : `Icon for ${l.nativeName} removed`); onChanged() } else toast.error(r.error) })
+  }
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="sm:max-w-md">
         <SheetHeader>
           <SheetTitle>Languages</SheetTitle>
-          <SheetDescription>Shown languages appear in the site’s language switcher. Texts missing in a language fall back to the default language.</SheetDescription>
+          <SheetDescription>Shown languages appear in the site’s language switcher, with their icon. Click an icon to change it (SVG, PNG or JPG, e.g. a flag). Texts missing in a language fall back to the default language.</SheetDescription>
         </SheetHeader>
         <div className="flex flex-col divide-y px-4">
           {languages.map((l) => (
             <div key={l.id} className="flex items-center gap-3 py-3">
+              <label className="group relative cursor-pointer" title={l.iconUrl ? 'Change the icon' : 'Add an icon'}>
+                <LangIcon url={l.iconUrl} code={l.code} size={36} />
+                <span className="absolute inset-0 grid place-items-center rounded-full bg-black/55 text-[10px] font-medium text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">{l.iconUrl ? 'Change' : 'Add'}</span>
+                <input type="file" accept={ICON_ACCEPT} className="sr-only" aria-label={`Icon for ${l.nativeName}`} disabled={pending} onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) icon(l, f) }} />
+              </label>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 font-medium">{l.nativeName}<Badge variant="outline" className="font-mono text-[10px]">{l.code}</Badge>{l.dir === 'rtl' && <Badge variant="outline">RTL</Badge>}</div>
-                <div className="text-xs text-muted-foreground">{l.name}{l.isDefault ? ' · default' : ''}</div>
+                <div className="text-xs text-muted-foreground">{l.name}{l.isDefault ? ' · default' : ''}{l.iconUrl && <> · <button type="button" className="underline-offset-2 hover:underline" disabled={pending} onClick={() => icon(l, null)}>remove icon</button></>}</div>
               </div>
               {!l.isDefault && <Button variant="ghost" size="sm" disabled={pending} onClick={() => upd(l.id, { isDefault: true }, `${l.nativeName} is now the default`)}>Make default</Button>}
               <div className="flex items-center gap-2">
@@ -192,12 +209,26 @@ function LanguagesSheet({ open, onOpenChange, languages, onChanged }: { open: bo
 function AddLanguageDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenChange: (o: boolean) => void; onDone: () => void }) {
   const [pending, start] = useTransition()
   const [f, setF] = useState({ code: '', name: '', nativeName: '', dir: 'ltr' as 'ltr' | 'rtl' })
+  const [iconFile, setIconFile] = useState<File | null>(null)
+  const [iconPreview, setIconPreview] = useState<string | null>(null)
+  function pickIcon(file: File | undefined) {
+    if (!file) return
+    if (file.size > 2 * 1024 * 1024) { toast.error('That icon is over 2 MB.'); return }
+    if (iconPreview) URL.revokeObjectURL(iconPreview)
+    setIconFile(file); setIconPreview(URL.createObjectURL(file))
+  }
   function submit(e: React.FormEvent) {
     e.preventDefault()
     start(async () => {
       const r = await addLanguage(f)
-      if (r.ok) { toast.success(`${f.nativeName} added. Translate its texts, then switch it on in Languages.`); setF({ code: '', name: '', nativeName: '', dir: 'ltr' }); onOpenChange(false); onDone() }
-      else toast.error(r.error)
+      if (!r.ok) { toast.error(r.error); return }
+      if (iconFile && r.data) {
+        const fd = new FormData(); fd.set('icon', iconFile)
+        const ri = await setLanguageIcon(r.data, fd)
+        if (!ri.ok) toast.error(`${f.nativeName} was added, but the icon wasn’t: ${ri.error}`)
+      }
+      toast.success(`${f.nativeName} added. Translate its texts, then switch it on in Languages.`)
+      setF({ code: '', name: '', nativeName: '', dir: 'ltr' }); setIconFile(null); setIconPreview(null); onOpenChange(false); onDone()
     })
   }
   return (
@@ -218,6 +249,18 @@ function AddLanguageDialog({ open, onOpenChange, onDone }: { open: boolean; onOp
               <Select value={f.dir} onValueChange={(v) => setF({ ...f, dir: v as 'ltr' | 'rtl' })}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent><SelectItem value="ltr">Left to right</SelectItem><SelectItem value="rtl">Right to left</SelectItem></SelectContent></Select>
             </div>
+          </div>
+          <div className="grid gap-2">
+            <Label>Icon <span className="font-normal text-muted-foreground">(optional)</span></Label>
+            <div className="flex items-center gap-3">
+              <LangIcon url={iconPreview} code={f.code || '?'} size={40} />
+              <label className="cursor-pointer">
+                <span className="inline-flex h-8 items-center rounded-md border px-3 text-sm font-medium hover:bg-accent">{iconFile ? 'Change icon' : 'Choose an icon'}</span>
+                <input type="file" accept={ICON_ACCEPT} className="sr-only" onChange={(e) => { pickIcon(e.target.files?.[0]); e.target.value = '' }} />
+              </label>
+              {iconFile && <Button type="button" variant="ghost" size="sm" onClick={() => { if (iconPreview) URL.revokeObjectURL(iconPreview); setIconFile(null); setIconPreview(null) }}>Remove</Button>}
+            </div>
+            <p className="text-xs text-muted-foreground">Shown in the site’s language switcher, e.g. a flag. SVG, PNG or JPG, up to 2 MB.</p>
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>

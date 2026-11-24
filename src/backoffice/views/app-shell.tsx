@@ -1,11 +1,13 @@
 'use client'
 import Link from 'next/link'
+import { BrandLogo } from '@/backoffice/components/brand-logo'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { useTheme } from 'next-themes'
+import { useTheme } from '@/backoffice/components/theme-provider'
 import {
   LayoutDashboard, Palette, Trophy, Languages, ShieldAlert, Settings2, MessagesSquare, UserCog, Database,
   ExternalLink, LogOut, Search, Moon, Sun, ChevronsUpDown, Monitor,
+  KeyRound, CircleUserRound,
 } from 'lucide-react'
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarInset,
@@ -23,9 +25,9 @@ import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbP
 type ShellUser = { name: string; email: string; roles: string[] }
 type NavItem = { title: string; href: string; icon: React.ComponentType<{ className?: string }>; external?: boolean; badge?: number }
 
-const LABELS: Record<string, string> = { admin: 'Dashboard', partners: 'Partners', translations: 'Translations', moderation: 'Moderation' }
+const LABELS: Record<string, string> = { admin: 'Dashboard', partners: 'Partners', translations: 'Translations', moderation: 'Moderation', resets: 'Password resets', profile: 'Chat profile', matches: 'Matches', settings: 'Settings', site: 'Site', chat: 'Chat', team: 'Team accounts', account: 'My account' }
 
-export function AppShell({ user, openReports, partners, children }: { user: ShellUser; openReports: number; partners: { id: string; name: string }[]; children: React.ReactNode }) {
+export function AppShell({ user, openReports, pendingResets = 0, partners, brand, children }: { user: ShellUser; openReports: number; pendingResets?: number; brand?: { logoUrl: string | null; siteName: string }; partners: { id: string; name: string }[]; children: React.ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
   const [cmd, setCmd] = useState(false)
@@ -37,22 +39,25 @@ export function AppShell({ user, openReports, partners, children }: { user: Shel
       items: [
         { title: 'Partners', href: '/admin/partners', icon: Palette },
         { title: 'Translations', href: '/admin/translations', icon: Languages },
-        { title: 'Matches', href: '/cms/collections/matches', icon: Trophy, external: true },
+        { title: 'Matches', href: '/admin/matches', icon: Trophy },
       ],
     },
     {
       label: 'Community',
       items: [
         { title: 'Moderation', href: '/admin/moderation', icon: ShieldAlert, badge: openReports },
-        { title: 'Chat settings', href: '/cms/globals/chat-settings', icon: MessagesSquare, external: true },
+        { title: 'Password resets', href: '/admin/resets', icon: KeyRound, badge: pendingResets },
+        { title: 'My chat profile', href: '/admin/profile', icon: CircleUserRound },
+        { title: 'Chat settings', href: '/admin/settings/chat', icon: MessagesSquare },
       ],
     },
     {
       label: 'Settings',
       items: [
-        { title: 'Site settings', href: '/cms/globals/site-settings', icon: Settings2, external: true },
-        { title: 'Team accounts', href: '/cms/collections/users', icon: UserCog, external: true },
-        { title: 'Data editor', href: '/cms', icon: Database, external: true },
+        { title: 'Site settings', href: '/admin/settings/site', icon: Settings2 },
+        { title: 'Team accounts', href: '/admin/team', icon: UserCog },
+        // raw Payload editor: owners only, as a last resort
+        ...(user.roles.includes('owner') ? [{ title: 'Raw data editor', href: '/cms', icon: Database, external: true }] : []),
       ],
     },
   ]
@@ -85,11 +90,9 @@ export function AppShell({ user, openReports, partners, children }: { user: Shel
             <SidebarMenuItem>
               <SidebarMenuButton size="lg" asChild>
                 <Link href="/admin">
-                  <span className="flex aspect-square size-8 items-center justify-center rounded-lg bg-brand text-brand-foreground">
-                    <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M13 3L5 14h6l-1 7 8-11h-6z" /></svg>
-                  </span>
+                  <BrandLogo url={brand?.logoUrl} />
                   <span className="grid flex-1 text-left leading-tight">
-                    <span className="truncate font-semibold">OddsClub</span>
+                    <span className="truncate font-semibold">{brand?.siteName || 'OddsClub'}</span>
                     <span className="truncate text-xs text-muted-foreground">Back office</span>
                   </span>
                 </Link>
@@ -138,7 +141,8 @@ export function AppShell({ user, openReports, partners, children }: { user: Shel
                   <DropdownMenuLabel className="font-normal"><div className="text-sm font-medium">{user.name || 'Account'}</div><div className="text-xs text-muted-foreground">{user.email}</div></DropdownMenuLabel>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem asChild><a href="/" target="_blank" rel="noopener"><ExternalLink />Open the site</a></DropdownMenuItem>
-                  <DropdownMenuItem asChild><a href="/cms/account"><UserCog />Account settings</a></DropdownMenuItem>
+                  <DropdownMenuItem asChild><Link href="/admin/profile"><CircleUserRound />Chat profile</Link></DropdownMenuItem>
+                  <DropdownMenuItem asChild><Link href="/admin/account"><UserCog />My account</Link></DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onSelect={logout}><LogOut />Log out</DropdownMenuItem>
                 </DropdownMenuContent>

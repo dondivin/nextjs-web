@@ -77,6 +77,8 @@ export interface Config {
     members: Member;
     'chat-messages': ChatMessage;
     'chat-reports': ChatReport;
+    'password-resets': PasswordReset;
+    'chat-images': ChatImage;
     'payload-kv': PayloadKv;
     'payload-locked-documents': PayloadLockedDocument;
     'payload-preferences': PayloadPreference;
@@ -93,6 +95,8 @@ export interface Config {
     members: MembersSelect<false> | MembersSelect<true>;
     'chat-messages': ChatMessagesSelect<false> | ChatMessagesSelect<true>;
     'chat-reports': ChatReportsSelect<false> | ChatReportsSelect<true>;
+    'password-resets': PasswordResetsSelect<false> | PasswordResetsSelect<true>;
+    'chat-images': ChatImagesSelect<false> | ChatImagesSelect<true>;
     'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
     'payload-preferences': PayloadPreferencesSelect<false> | PayloadPreferencesSelect<true>;
@@ -162,7 +166,19 @@ export interface MemberAuthOperations {
  */
 export interface User {
   id: string;
+  /**
+   * Shown in the site chat when you post as staff
+   */
   name?: string | null;
+  chatLastSeenAt?: string | null;
+  /**
+   * Your photo in the site chat (optional)
+   */
+  chatAvatar?: (string | null) | Media;
+  /**
+   * Avatar gradient used when there is no photo
+   */
+  chatGradient?: string | null;
   roles?: ('owner' | 'editor' | 'translator' | 'moderator')[] | null;
   updatedAt: string;
   createdAt: string;
@@ -191,6 +207,7 @@ export interface User {
 export interface Media {
   id: string;
   alt: string;
+  _objectKey?: string | null;
   updatedAt: string;
   createdAt: string;
   url?: string | null;
@@ -370,6 +387,10 @@ export interface Language {
    * Used when a text has no translation
    */
   isDefault?: boolean | null;
+  /**
+   * Icon shown in the language switcher (e.g. a flag). Upload it from Translations → Languages.
+   */
+  icon?: (string | null) | Media;
   updatedAt: string;
   createdAt: string;
 }
@@ -407,11 +428,19 @@ export interface Translation {
 export interface Member {
   id: string;
   displayName: string;
+  nameKey?: string | null;
   /**
-   * Avatar colour (hex). Picked automatically on sign-up.
+   * Profile photo. When empty, the gradient is used.
+   */
+  avatar?: (string | null) | Media;
+  /**
+   * CSS gradient used when there is no photo, e.g. linear-gradient(135deg, #FF7A18, #AF002D). Picked at random on sign-up.
+   */
+  avatarGradient?: string | null;
+  /**
+   * Name colour in the chat (first colour of the gradient, set automatically)
    */
   color?: string | null;
-  avatar?: (string | null) | Media;
   role?: ('fan' | 'agent' | 'moderator') | null;
   status?: ('active' | 'muted' | 'banned') | null;
   mutedUntil?: string | null;
@@ -445,12 +474,28 @@ export interface Member {
 export interface ChatMessage {
   id: string;
   room: string;
+  /**
+   * Fan who wrote it (empty for staff messages)
+   */
   author?: (string | null) | Member;
-  text: string;
+  /**
+   * Back-office staff member who wrote it
+   */
+  staffAuthor?: (string | null) | User;
+  clientId?: string | null;
+  /**
+   * Can be empty when the message is a picture
+   */
+  text?: string | null;
+  image?: (string | null) | ChatImage;
   isMod?: boolean | null;
   reply?: {
     id?: string | null;
     author?: (string | null) | Member;
+    /**
+     * Chat id of the quoted author (fan or staff)
+     */
+    by?: string | null;
     text?: string | null;
   };
   /**
@@ -473,6 +518,26 @@ export interface ChatMessage {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "chat-images".
+ */
+export interface ChatImage {
+  id: string;
+  room: string;
+  _objectKey?: string | null;
+  updatedAt: string;
+  createdAt: string;
+  url?: string | null;
+  thumbnailURL?: string | null;
+  filename?: string | null;
+  mimeType?: string | null;
+  filesize?: number | null;
+  width?: number | null;
+  height?: number | null;
+  focalX?: number | null;
+  focalY?: number | null;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "chat-reports".
  */
 export interface ChatReport {
@@ -490,6 +555,37 @@ export interface ChatReport {
   status?: ('open' | 'dismissed' | 'actioned') | null;
   handledBy?: (string | null) | User;
   handledAt?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "password-resets".
+ */
+export interface PasswordReset {
+  id: string;
+  /**
+   * Team account requests can only be approved by an owner
+   */
+  kind?: ('member' | 'staff') | null;
+  email: string;
+  /**
+   * Empty when no account uses this email
+   */
+  member?: (string | null) | Member;
+  /**
+   * Team account (kind = staff)
+   */
+  user?: (string | null) | User;
+  /**
+   * Message from the person asking
+   */
+  note?: string | null;
+  status?: ('pending' | 'approved' | 'denied' | 'done' | 'expired') | null;
+  tokenHash: string;
+  decidedBy?: (string | null) | User;
+  decidedAt?: string | null;
+  expiresAt: string;
   updatedAt: string;
   createdAt: string;
 }
@@ -552,6 +648,14 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'chat-reports';
         value: string | ChatReport;
+      } | null)
+    | ({
+        relationTo: 'password-resets';
+        value: string | PasswordReset;
+      } | null)
+    | ({
+        relationTo: 'chat-images';
+        value: string | ChatImage;
       } | null);
   globalSlug?: string | null;
   user:
@@ -611,6 +715,9 @@ export interface PayloadMigration {
  */
 export interface UsersSelect<T extends boolean = true> {
   name?: T;
+  chatLastSeenAt?: T;
+  chatAvatar?: T;
+  chatGradient?: T;
   roles?: T;
   updatedAt?: T;
   createdAt?: T;
@@ -636,6 +743,7 @@ export interface UsersSelect<T extends boolean = true> {
  */
 export interface MediaSelect<T extends boolean = true> {
   alt?: T;
+  _objectKey?: T;
   updatedAt?: T;
   createdAt?: T;
   url?: T;
@@ -725,6 +833,7 @@ export interface LanguagesSelect<T extends boolean = true> {
   order?: T;
   enabled?: T;
   isDefault?: T;
+  icon?: T;
   updatedAt?: T;
   createdAt?: T;
 }
@@ -752,8 +861,10 @@ export interface TranslationsSelect<T extends boolean = true> {
  */
 export interface MembersSelect<T extends boolean = true> {
   displayName?: T;
-  color?: T;
+  nameKey?: T;
   avatar?: T;
+  avatarGradient?: T;
+  color?: T;
   role?: T;
   status?: T;
   mutedUntil?: T;
@@ -785,13 +896,17 @@ export interface MembersSelect<T extends boolean = true> {
 export interface ChatMessagesSelect<T extends boolean = true> {
   room?: T;
   author?: T;
+  staffAuthor?: T;
+  clientId?: T;
   text?: T;
+  image?: T;
   isMod?: T;
   reply?:
     | T
     | {
         id?: T;
         author?: T;
+        by?: T;
         text?: T;
       };
   reactions?: T;
@@ -818,6 +933,43 @@ export interface ChatReportsSelect<T extends boolean = true> {
   handledAt?: T;
   updatedAt?: T;
   createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "password-resets_select".
+ */
+export interface PasswordResetsSelect<T extends boolean = true> {
+  kind?: T;
+  email?: T;
+  member?: T;
+  user?: T;
+  note?: T;
+  status?: T;
+  tokenHash?: T;
+  decidedBy?: T;
+  decidedAt?: T;
+  expiresAt?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "chat-images_select".
+ */
+export interface ChatImagesSelect<T extends boolean = true> {
+  room?: T;
+  _objectKey?: T;
+  updatedAt?: T;
+  createdAt?: T;
+  url?: T;
+  thumbnailURL?: T;
+  filename?: T;
+  mimeType?: T;
+  filesize?: T;
+  width?: T;
+  height?: T;
+  focalX?: T;
+  focalY?: T;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
@@ -888,6 +1040,24 @@ export interface SiteSetting {
    * Footer line with company and licence details, per language.
    */
   companyLine?:
+    | {
+        locale: string;
+        value?: string | null;
+        id?: string | null;
+      }[]
+    | null;
+  /**
+   * Square logo (stored as 512×512 PNG). Used in the nav, chat, back office, browser tab, home-screen icon and search engines.
+   */
+  logo?: (string | null) | Media;
+  /**
+   * Optional 1200×630 image for link previews (WhatsApp, Facebook, X…). Without it one is made from the logo.
+   */
+  shareImage?: (string | null) | Media;
+  /**
+   * What search engines show under the site name, per language (about 150 characters).
+   */
+  seoDescription?:
     | {
         locale: string;
         value?: string | null;
@@ -968,6 +1138,15 @@ export interface SiteSettingsSelect<T extends boolean = true> {
         id?: T;
       };
   companyLine?:
+    | T
+    | {
+        locale?: T;
+        value?: T;
+        id?: T;
+      };
+  logo?: T;
+  shareImage?: T;
+  seoDescription?:
     | T
     | {
         locale?: T;

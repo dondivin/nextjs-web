@@ -2,15 +2,8 @@ import type { GlobalConfig } from 'payload'
 import { anyone, roles } from '../access'
 import { localizedText } from '../fields/localizedText'
 
-export const RULE_ICONS = [
-  { label: '18+', value: 'age' },
-  { label: 'Heart (respect)', value: 'heart' },
-  { label: 'No links', value: 'nolink' },
-  { label: 'Shield', value: 'shield' },
-  { label: 'Tag (codes)', value: 'tag' },
-  { label: 'Clock (slow mode)', value: 'clock' },
-  { label: 'Ball (on topic)', value: 'ball' },
-]
+export { RULE_ICONS } from '../lib/options'
+import { RULE_ICONS } from '../lib/options'
 
 export const ChatSettings: GlobalConfig = {
   slug: 'chat-settings',

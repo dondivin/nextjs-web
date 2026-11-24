@@ -1,5 +1,6 @@
 import type { CollectionConfig } from 'payload'
 import { hasRole } from '../../access'
+import { onReportChange } from '../../chat/hooks'
 
 export const REPORT_REASONS = [
   { label: 'Spam', value: 'spam' },
@@ -14,6 +15,7 @@ export const ChatReports: CollectionConfig = {
   slug: 'chat-reports',
   admin: { defaultColumns: ['messageText', 'reason', 'status', 'createdAt'], group: 'Chat' },
   defaultSort: '-createdAt',
+  hooks: { afterChange: [onReportChange] },
   access: {
     read: ({ req }) => hasRole(req.user as never, 'moderator') || (req.user?.collection === 'members' ? { reporter: { equals: req.user.id } } : false),
     create: ({ req }) => hasRole(req.user as never, 'moderator') || req.user?.collection === 'members',

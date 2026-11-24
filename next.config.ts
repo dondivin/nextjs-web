@@ -23,6 +23,8 @@ const nextConfig: NextConfig = {
 
     return webpackConfig
   },
+  // back-office server actions receive chat avatar photos (up to 5 MB)
+  experimental: { serverActions: { bodySizeLimit: '6mb' } },
   turbopack: {
     root: path.resolve(dirname),
   },

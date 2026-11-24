@@ -2,9 +2,10 @@ import { getPayload } from 'payload'
 import config from '@payload-config'
 import { en } from './strings'
 import { pickLocalized } from '../fields/localizedText'
+import { toEngineMatch } from '../chat/data'
 import type { EngineConfig, EngineMatch, EnginePartner } from '../site/engine/types'
 
-export type Language = { code: string; name: string; nativeName: string; dir: 'ltr' | 'rtl'; isDefault: boolean }
+export type Language = { code: string; name: string; nativeName: string; dir: 'ltr' | 'rtl'; isDefault: boolean; iconUrl: string | null }
 
 export async function payloadClient() {
   return getPayload({ config })
@@ -13,9 +14,9 @@ export async function payloadClient() {
 /** Enabled languages, default first. */
 export async function getLanguages(): Promise<Language[]> {
   const payload = await payloadClient()
-  const res = await payload.find({ collection: 'languages', where: { enabled: { equals: true } }, sort: 'order', pagination: false, depth: 0 })
-  const list = res.docs.map((d) => ({ code: d.code, name: d.name, nativeName: d.nativeName, dir: (d.dir || 'ltr') as 'ltr' | 'rtl', isDefault: !!d.isDefault }))
-  if (!list.length) return [{ code: 'en', name: 'English', nativeName: 'English', dir: 'ltr', isDefault: true }]
+  const res = await payload.find({ collection: 'languages', where: { enabled: { equals: true } }, sort: 'order', pagination: false, depth: 1 })
+  const list = res.docs.map((d) => ({ code: d.code, name: d.name, nativeName: d.nativeName, dir: (d.dir || 'ltr') as 'ltr' | 'rtl', isDefault: !!d.isDefault, iconUrl: d.icon && typeof d.icon === 'object' ? d.icon.url || null : null }))
+  if (!list.length) return [{ code: 'en', name: 'English', nativeName: 'English', dir: 'ltr', isDefault: true, iconUrl: null }]
   return list.sort((a, b) => Number(b.isDefault) - Number(a.isDefault))
 }
 
@@ -63,21 +64,7 @@ export async function loadSite(locale: string) {
     }
   })
 
-  const matches: EngineMatch[] = matchesRes.docs.map((m) => ({
-    id: String(m.id),
-    sport: m.sport,
-    league: m.league || undefined,
-    home: m.home,
-    away: m.away,
-    status: m.status,
-    minute: m.minute ?? null,
-    hs: m.scoreHome ?? null,
-    as: m.scoreAway ?? null,
-    o1: m.oddsHome ?? null,
-    ox: m.oddsDraw ?? null,
-    o2: m.oddsAway ?? null,
-    startsAt: m.startsAt || null,
-  }))
+  const matches: EngineMatch[] = matchesRes.docs.map(toEngineMatch)
 
   const defaultPartnerDoc = site.defaultPartner && typeof site.defaultPartner === 'object' ? site.defaultPartner : null
   const defaultPartner = defaultPartnerDoc?.slug || partners[0]?.id
@@ -98,7 +85,7 @@ export async function loadSite(locale: string) {
       bannedWords: (chat.bannedWords || []).map((w) => w.word).filter(Boolean),
       rules: (chat.rules || []).map((r) => ({ icon: r.icon, title: pickLocalized(r.title, locale, def), body: pickLocalized(r.body, locale, def) })),
     },
-    apiBase: '/api',
+    apiBase: '/chat-api',
   }
 
   const initial = first

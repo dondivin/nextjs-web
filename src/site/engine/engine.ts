@@ -46,7 +46,7 @@ if (lenis){
   document.addEventListener('click', function(e){
     var a = e.target.closest && e.target.closest('a[href^="#"]'); if (!a || document.body.classList.contains('chat-open')) return;
     var h = a.getAttribute('href'); if (!h || h === '#' || /^#chat/.test(h)) return;
-    var t = document.querySelector(h); if (!t) return; e.preventDefault(); lenis.scrollTo(t, {duration:1.2});
+    var t = document.querySelector(h); if (!t) return; e.preventDefault(); if (window.__phoneJump) window.__phoneJump(1200); lenis.scrollTo(t, {duration:1.2});
   });
 }
 function $(id){ return document.getElementById(id); }
@@ -120,7 +120,7 @@ navState(); ScrollTrigger.addEventListener('refresh', navState); window.addEvent
   if (lenis) lenis.on('scroll', update); window.addEventListener('scroll', update, {passive:true}); update();
   btn.addEventListener('click', function(){
     if (!REDUCE) G.fromTo(btn, {scale:.85}, {scale:1, duration:.6, ease:'elastic.out(1, .5)', clearProps:'transform'});
-    if (lenis) lenis.scrollTo(0, {duration:1.6}); else window.scrollTo({top:0, behavior: REDUCE ? 'auto' : 'smooth'});
+    if (lenis){ if (window.__phoneJump) window.__phoneJump(1600); lenis.scrollTo(0, {duration:1.6}); } else window.scrollTo({top:0, behavior: REDUCE ? 'auto' : 'smooth'});
   });
 })();
 /* ---------- Helpers ---------- */
@@ -309,7 +309,7 @@ var RULES = ((cfg.chat && cfg.chat.rules) || []).map(function(r){ return [r.titl
 var SLOW_MS = Math.max(0, Number(cfg.chat && cfg.chat.slowSeconds) || 0) * 1000;
 var MAXLEN = Number(cfg.chat && cfg.chat.maxLength) || 400;
 var UI = {filter:'all', rows:new Map(), roomEls:new Map(), days:new Map(), renderedRoom:null, newBefore:null, newEl:null, emptyEl:null, typingEl:null, skels:null,
-          mod:{muted:{}}, reports:{}, reported:{}, myReports:{}, accepted:false, slowUntil:0, lastText:'', lastTextAt:0, loaded:false, hdrRoom:null};
+          mod:{muted:{}}, pic:null, reports:{}, reported:{}, myReports:{}, accepted:false, slowUntil:0, lastText:'', lastTextAt:0, loaded:false, hdrRoom:null};
 var segPill = LiquidPill($('segPill'), 'x'), roomPill = LiquidPill($('roomPill'), 'y');
 var wallPush = Spring(0, .5, .9, .2).on(function(v){ $('wallIn').style.transform = Math.abs(v) < .2 ? '' : 'translateY(' + v.toFixed(2) + 'px)'; });
 
@@ -338,6 +338,7 @@ function typersIn(roomId){ return viewers().filter(function(p){ if (p.isMe || !p
   return r === roomId; }); }
 async function names(ids){ ids = ids.filter(function(x, i, a){ return x && a.indexOf(x) === i && !LIVE.profiles[x]; }); if (!ids.length || !CHAT.user) return; try { var ps = await CHAT.user.profiles(ids); for (var k in ps) LIVE.profiles[k] = ps[k]; } catch(e){} }
 function nameOf(id){ if (id && id === CHAT.uid) return S('chat.you'); var p = LIVE.profiles[id]; if (p && p.name) return p.name; if (id && id === DM.agent.uid) return agentName(); return S('chat.fan'); }
+function msgPreview(m){ return (m && (m.text || (m.image ? S('chat.photo') : ''))) || ''; }
 function roomMsgs(id){ if (id === 'support') return DM.mine; if (String(id).indexOf('sup:') === 0) return DM.msgs[id.slice(4)] || []; return LIVE.messages.filter(function(m){ return (m.room || 'lounge') === id; }); }
 
 var toastTimer = 0;
@@ -348,7 +349,7 @@ function personAvatar(uid, showOnline, agent){
   var p = uid && LIVE.profiles[uid];
   if (p && p.avatarUrl){ var img = document.createElement('img'); img.alt = ''; img.src = p.avatarUrl; av.appendChild(img); }
   else if (agent && !uid) av.appendChild(svg('<path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/><path d="M19 20a3 3 0 0 1-3 2h-3"/>'));
-  else { var i = el('span', 'ini', initials(agent ? agentName() : nameOf(uid))); i.style.background = (p && p.color) || teamColor(uid || 'x'); av.appendChild(i); }
+  else { var i = el('span', 'ini', initials(agent ? agentName() : nameOf(uid))); i.style.background = (p && (p.gradient || p.color)) || teamColor(uid || 'x'); av.appendChild(i); }
   if (showOnline && isOnline(uid)) av.appendChild(el('span', 'on'));
   return av;
 }
@@ -391,9 +392,9 @@ function placeRoomPill(){
 function fillRoom(b, r){
   var msgs = roomMsgs(r.id), last = msgs[msgs.length - 1];
   var unread = msgs.filter(function(m){ return m.ts > (lastSeen[r.id] || 0) && m.by !== CHAT.uid; }).length;
-  if (!last && r.dm && r.uid && DM.threads[r.uid] && DM.threads[r.uid].lastTs){ var th = DM.threads[r.uid]; last = {id:'t' + th.lastTs, text:String(th.lastText || ''), ts:Number(th.lastTs), by:th.lastBy}; if (last.ts > (lastSeen[r.id] || 0) && last.by !== CHAT.uid) unread = 1; }
+  if (!last && r.dm && r.uid && DM.threads[r.uid] && DM.threads[r.uid].lastTs){ var th = DM.threads[r.uid]; last = {id:'t' + th.lastTs, text:String(th.lastText || (th.photo ? S('chat.photo') : '')), ts:Number(th.lastTs), by:th.lastBy}; if (last.ts > (lastSeen[r.id] || 0) && last.by !== CHAT.uid) unread = 1; }
   var typ = typersIn(r.id), current = r.id === CHAT.active && isOpen();
-  var sig = [r.title, last && last.id, last && last.text, unread, typ.length, r.dm ? isOnline(r.uid) : online(r.id) > 0, r.dm && LIVE.profiles[r.uid] && LIVE.profiles[r.uid].avatarUrl, r.match && [r.match.status, r.match.hs, r.match.as, r.match.kickoff], current, last && nameOf(last.by)].join('|');
+  var sig = [r.title, last && last.id, msgPreview(last), unread, typ.length, r.dm ? isOnline(r.uid) : online(r.id) > 0, r.dm && LIVE.profiles[r.uid] && (LIVE.profiles[r.uid].avatarUrl || LIVE.profiles[r.uid].gradient), r.match && [r.match.status, r.match.hs, r.match.as, r.match.kickoff], current, last && nameOf(last.by)].join('|');
   if (b._sig === sig) return; b._sig = sig;
   b.textContent = ''; if (current) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
   b.appendChild(roomAvatar(r, true));
@@ -402,7 +403,7 @@ function fillRoom(b, r){
   if (r.match && r.match.status === 'live'){ t.appendChild(el('span', 'r-live', S('chat.liveTag'))); t.appendChild(el('span', 'r-score', (r.match.hs||0) + '–' + (r.match.as||0))); }
   main.appendChild(t);
   var prev = typ.length ? (typ.length === 1 ? S('chat.isTyping', {name: nameOf(peerId(typ[0]))}) : S('chat.peopleTyping', {n: typ.length}))
-    : last ? (last.by === CHAT.uid ? S('chat.lastByYou', {text: last.text}) : (r.dm ? last.text : S('chat.lastBy', {name: nameOf(last.by), text: last.text}))) : r.dm ? (r.agent ? S('chat.agentHint') : S('chat.noMessages')) : (r.lounge ? S('chat.loungeHint') : (r.match.status === 'upcoming' ? S('chat.starts', {time: r.match.kickoff || S('chat.soon')}) : (r.match.league || S('chat.eventRoom'))));
+    : last ? (last.by === CHAT.uid ? S('chat.lastByYou', {text: msgPreview(last)}) : (r.dm ? msgPreview(last) : S('chat.lastBy', {name: nameOf(last.by), text: msgPreview(last)}))) : r.dm ? (r.agent ? S('chat.agentHint') : S('chat.noMessages')) : (r.lounge ? S('chat.loungeHint') : (r.match.status === 'upcoming' ? S('chat.starts', {time: r.match.kickoff || S('chat.soon')}) : (r.match.league || S('chat.eventRoom'))));
   main.appendChild(el('div', 'r-last' + (typ.length ? ' typing' : ''), prev)); b.appendChild(main);
   var side = el('div', 'r-side'); side.appendChild(el('span', 'r-time', last ? listTime(last.ts) : ''));
   if (unread && !current) side.appendChild(el('span', 'unread', unread > 99 ? '99+' : String(unread)));
@@ -413,7 +414,7 @@ function fillRoom(b, r){
 /* ---------- Header (updated in place, never rebuilt mid-view) ---------- */
 function renderHeader(){
   var r = roomById(CHAT.active), on = r.dm && isOnline(r.uid);
-  var key = r.id + '|' + r.title + '|' + on + '|' + (r.dm && LIVE.profiles[r.uid] ? LIVE.profiles[r.uid].avatarUrl : '');
+  var key = r.id + '|' + r.title + '|' + on + '|' + (r.dm && LIVE.profiles[r.uid] ? (LIVE.profiles[r.uid].avatarUrl || LIVE.profiles[r.uid].gradient || '') : '');
   if (UI.hdrRoom !== key){ var av = $('cAvatar'); av.textContent = ''; av.appendChild(roomAvatar(r, true)); $('cTitle').textContent = r.title; UI.hdrRoom = key; }
   var sub = $('cSub'), typ = typersIn(CHAT.active), text = '', cls = '', dot = false;
   if (typ.length){ cls = 'typing'; text = r.dm ? S('chat.typingShort') : (typ.length === 1 ? S('chat.isTyping', {name: nameOf(peerId(typ[0]))}) : S('chat.peopleAreTyping', {n: typ.length})); }
@@ -438,6 +439,17 @@ function renderHeader(){
       sc.appendChild(pl); } }
   else if (sc._key){ sc._key = ''; sc.textContent = ''; }
 }
+/* ---------- Picture viewer ---------- */
+var LB = null;
+function openLightbox(url){
+  if (!LB){ LB = el('div', 'lightbox'); LB.setAttribute('role', 'dialog'); LB.setAttribute('aria-modal', 'true'); LB.setAttribute('aria-label', S('chat.viewImage'));
+    var im = document.createElement('img'); im.alt = ''; LB.appendChild(im);
+    var x = el('button', 'iconbtn lb-close'); x.type = 'button'; x.setAttribute('aria-label', S('chat.closeImage')); x.appendChild(svg('<path d="M6 6l12 12M18 6L6 18"/>')); LB.appendChild(x);
+    LB.addEventListener('click', closeLightbox); document.body.appendChild(LB);
+    document.addEventListener('keydown', function(e){ if (e.key === 'Escape' && LB.classList.contains('open')){ e.stopImmediatePropagation(); closeLightbox(); } }, true); }
+  LB.querySelector('img').src = url; LB.classList.add('open'); setTimeout(function(){ LB.querySelector('.lb-close').focus({preventScroll:true}); }, 30);
+}
+function closeLightbox(){ if (LB) LB.classList.remove('open'); }
 /* ---------- Conversation ---------- */
 function buildRow(m){
   var row = el('div', 'row'); row.dataset.id = m.id;
@@ -445,7 +457,9 @@ function buildRow(m){
   var bw = el('div', 'bwrap'), b = el('div', 'bubble'); b.tabIndex = 0;
   var sw = el('span', 'swipe-ic'); sw.appendChild(svg('<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 6 6v3"/>')); b.appendChild(sw);
   row._name = el('div', 'b-name'); row._quote = el('div', 'b-quote'); row._text = el('div', 'b-text'); row._meta = el('span', 'b-meta');
-  [row._name, row._quote, row._text].forEach(function(x){ b.appendChild(x); });
+  row._pic = el('button', 'b-pic'); row._pic.type = 'button'; row._pic.setAttribute('aria-label', S('chat.viewImage')); row._picImg = document.createElement('img'); row._picImg.alt = ''; row._picImg.loading = 'lazy'; row._pic.appendChild(row._picImg);
+  row._pic.addEventListener('click', function(e){ e.stopPropagation(); if (row._m && row._m.image) openLightbox(row._m.image.url); });
+  [row._name, row._quote, row._pic, row._text].forEach(function(x){ b.appendChild(x); });
   row._reacts = el('div', 'reacts');
   var acts = el('div', 'acts glass'); acts.setAttribute('role', 'toolbar'); acts.setAttribute('aria-label', S('chat.actionsAria'));
   REACTS.forEach(function(rx){ var bt = el('button', 'emo', rx[1]); bt.type = 'button'; bt.setAttribute('aria-label', S('chat.reactAria', {name: S('react.' + rx[0])})); bt.onclick = function(e){ e.stopPropagation(); toggleReact(row._m, rx[0]); }; acts.appendChild(bt); });
@@ -475,18 +489,20 @@ function fillRow(row, m, f){
   var mine = m.by && m.by === CHAT.uid, on = f.online[m.by], flat = CHAT.theme === 'discord', dm = isDmRoom(CHAT.active);
   row.classList.toggle('out', !!mine); row.classList.toggle('in', !mine); row.classList.toggle('gap', f.first); row.classList.toggle('tail', f.tail);
   var rx = m.reactions || {}, rsig = REACTS.map(function(r){ var o = rx[r[0]] || {}; return Object.keys(o).filter(function(k){ return o[k]; }).sort().join(','); }).join('|');
-  var sig = [CHAT.theme, dm, m.text, mine, f.first, f.tail, !!on, nameOf(m.by), !!CHAT.pending[m.id], m.reply && m.reply.id, rsig, UI.reports[m.id] || 0, m.mod].join('§');
+  var sig = [CHAT.theme, dm, m.text, m.image && m.image.url, mine, f.first, f.tail, !!on, nameOf(m.by), !!CHAT.pending[m.id], m.reply && m.reply.id, rsig, UI.reports[m.id] || 0, m.mod, LIVE.profiles[m.by] && (LIVE.profiles[m.by].avatarUrl || LIVE.profiles[m.by].gradient)].join('§');
   if (row._sig === sig) return; row._sig = sig;
   row._av.className = 'av' + ((flat ? f.first : f.tail) ? '' : ' hide'); row._av.hidden = (!!mine || dm) && !flat;
   var p = LIVE.profiles[m.by], ini = row._av.querySelector('.ini');
   if (p && p.avatarUrl){ if (row._img.getAttribute('src') !== p.avatarUrl) row._img.src = p.avatarUrl; row._img.hidden = false; if (ini) ini.remove(); }
-  else { row._img.hidden = true; if (!ini){ ini = el('span', 'ini'); row._av.insertBefore(ini, row._img); } ini.textContent = initials(mine && LIVE.me && LIVE.me.name ? LIVE.me.name : nameOf(m.by)); ini.style.background = (p && p.color) || teamColor(m.by || 'fan'); }
+  else { row._img.hidden = true; if (!ini){ ini = el('span', 'ini'); row._av.insertBefore(ini, row._img); } ini.textContent = initials(mine && LIVE.me && LIVE.me.name ? LIVE.me.name : nameOf(m.by)); ini.style.background = (p && (p.gradient || p.color)) || teamColor(m.by || 'fan'); }
   var dot = row._av.querySelector('.on'); if (on && !dot) row._av.appendChild(el('span', 'on')); if (!on && dot) dot.remove();
   row._name.hidden = (mine && !flat) || (dm && !flat) || !f.first; row._name.textContent = '';
   if (!row._name.hidden){ row._name.appendChild(el('span', null, mine ? (flat ? ((LIVE.me && LIVE.me.name) || S('chat.you')) : S('chat.you')) : nameOf(m.by))); row._name.style.color = mine && flat ? '' : ((p && p.color) || 'var(--c-accent)'); if (m.mod) row._name.appendChild(el('span', 'mod', S('chat.modTag'))); }
   row._quote.hidden = !(m.reply && m.reply.id); row._quote.textContent = '';
   if (!row._quote.hidden){ row._quote.appendChild(el('b', null, nameOf(m.reply.by))); row._quote.appendChild(el('span', null, String(m.reply.text || '').slice(0, 140))); }
-  row._text.textContent = m.text; row._text.appendChild(row._meta);
+  row._pic.hidden = !m.image;
+  if (m.image){ var iw = Number(m.image.w) || 4, ih = Number(m.image.h) || 3; row._pic.style.aspectRatio = iw + ' / ' + ih; if (row._picImg.getAttribute('src') !== m.image.url) row._picImg.src = m.image.url; }
+  row._text.textContent = m.text || ''; row._text.classList.toggle('only-meta', !m.text); row._text.appendChild(row._meta);
   row._meta.textContent = ''; row._meta.appendChild(document.createTextNode(hhmm(m.ts)));
   if (CHAT.canEdit && UI.reports[m.id]){ var fl = svg('<path d="M5 21V4h11l-2 4 2 4H5"/>'); fl.classList.add('flag'); fl.setAttribute('role','img'); fl.removeAttribute('aria-hidden'); fl.setAttribute('aria-label', S('chat.reportsAria', {n: UI.reports[m.id]})); row._meta.appendChild(fl); }
   if (mine){ var pend = !!CHAT.pending[m.id], ic = svg(pend ? ICON.clock : ICON.check); ic.setAttribute('role','img'); ic.removeAttribute('aria-hidden'); ic.setAttribute('aria-label', pend ? S('chat.sending') : S('chat.sent')); row._meta.appendChild(ic); }
@@ -505,7 +521,7 @@ function emptyEl(){ if (!UI.emptyEl){ var e = el('div', 'c-empty glass');
 function typingEl(typ){
   if (!UI.typingEl){ var r = el('div', 'row in tail typingrow enter'); var av = el('div', 'av'); var ini = el('span', 'ini'); av.appendChild(ini); r.appendChild(av);
     var bw = el('div', 'bwrap'), b = el('div', 'bubble'), d = el('div', 'dots3'); d.innerHTML = '<i></i><i></i><i></i>'; b.appendChild(d); bw.appendChild(b); r.appendChild(bw); r.setAttribute('aria-label', S('chat.someoneTyping')); UI.typingEl = r; }
-  var id = peerId(typ[0]), p = LIVE.profiles[id], ini2 = UI.typingEl.querySelector('.ini'); ini2.textContent = initials(nameOf(id)); ini2.style.background = (p && p.color) || teamColor(id || 'fan');
+  var id = peerId(typ[0]), p = LIVE.profiles[id], ini2 = UI.typingEl.querySelector('.ini'); ini2.textContent = initials(nameOf(id)); ini2.style.background = (p && (p.gradient || p.color)) || teamColor(id || 'fan');
   return UI.typingEl;
 }
 var renderToken = 0;
@@ -621,8 +637,8 @@ function setMuted(id, on){
 }
 function startReply(m){
   if (!m || needsRules()) return;
-  CHAT.replyTo = {id:m.id, by:m.by || null, text:String(m.text).slice(0,140)};
-  $('replyWho').textContent = S('chat.replyingTo', {name: nameOf(m.by)}); $('replyText').textContent = m.text; $('replyWrap').classList.add('show'); $('msgInput').focus({preventScroll:true});
+  CHAT.replyTo = {id:m.id, by:m.by || null, text:msgPreview(m).slice(0,140)};
+  $('replyWho').textContent = S('chat.replyingTo', {name: nameOf(m.by)}); $('replyText').textContent = msgPreview(m); $('replyWrap').classList.add('show'); $('msgInput').focus({preventScroll:true});
 }
 function clearReply(){ CHAT.replyTo = null; $('replyWrap').classList.remove('show'); }
 $('replyClose').onclick = clearReply;
@@ -647,7 +663,23 @@ function checkMessage(text){
 
 /* ---------- Composer ---------- */
 function setPresence(){ if (!CHAT.db) return; backend.presence({room: isOpen() ? CHAT.active : null, typing: isOpen() && !!$('msgInput').value.trim()}); }
-function refreshSend(){ var v = $('msgInput').value.trim(); $('composer').classList.toggle('has-text', !!v || Date.now() < UI.slowUntil); $('sendBtn').disabled = !v || Date.now() < UI.slowUntil; }
+function refreshSend(){ var v = $('msgInput').value.trim() || UI.pic; $('composer').classList.toggle('has-text', !!v || Date.now() < UI.slowUntil); $('sendBtn').disabled = !v || Date.now() < UI.slowUntil; }
+function canAttach(){ return !!(CHAT.db && CHAT.canPost && (CHAT.canEdit || CHAT.active === 'support')); }
+function updateAttach(){ var ok = canAttach(); $('attachBtn').hidden = !ok; if (!ok) clearPic(); }
+function clearPic(){ UI.pic = null; $('picWrap').classList.remove('show'); refreshSend(); }
+function setPic(f){
+  if (!f) return;
+  if (!/^image\//.test(f.type || 'image/')){ toast(S('auth.err.photoType')); return; }
+  if (f.size > 10 * 1024 * 1024){ toast(S('chat.err.imageTooBig')); return; }
+  var url = URL.createObjectURL(f), probe = new Image();
+  probe.onload = function(){ UI.pic = {file:f, url:url, w:probe.naturalWidth, h:probe.naturalHeight}; $('picThumb').src = url; $('picName').textContent = f.name || S('chat.photo');
+    $('picWrap').classList.add('show'); refreshSend(); $('msgInput').focus({preventScroll:true}); };
+  probe.onerror = function(){ URL.revokeObjectURL(url); toast(S('auth.err.photoType')); };
+  probe.src = url;
+}
+$('attachBtn').onclick = function(){ if (needsRules()) return; $('picFile').click(); };
+$('picFile').onchange = function(){ var f = this.files && this.files[0]; this.value = ''; setPic(f); };
+$('picClose').onclick = clearPic;
 $('msgInput').setAttribute('maxlength', String(MAXLEN));
 $('msgInput').addEventListener('input', function(){
   var t = this, h0 = t.offsetHeight; t.style.height = 'auto'; var h1 = Math.min(140, t.scrollHeight); t.style.height = h0 + 'px'; void t.offsetHeight; t.style.height = h1 + 'px';
@@ -666,20 +698,21 @@ function startSlow(){
 }
 $('composer').addEventListener('submit', async function(e){
   e.preventDefault(); var input = $('msgInput'), text = input.value.trim().slice(0, MAXLEN);
-  if (!text || !CHAT.db) return; if (needsRules()) return;
-  var problem = checkMessage(text);
+  var pic = UI.pic;
+  if ((!text && !pic) || !CHAT.db) return; if (needsRules()) return;
+  var problem = text ? checkMessage(text) : (Date.now() < UI.slowUntil ? S('rule.slow', {s: Math.ceil((UI.slowUntil - Date.now()) / 1000)}) : null);
   if (problem){ var c = $('composer'); c.classList.remove('shake'); void c.offsetWidth; c.classList.add('shake'); toast(problem); return; }
   var dmTo = CHAT.active === 'support' ? CHAT.uid : (String(CHAT.active).indexOf('sup:') === 0 ? CHAT.active.slice(4) : null);
   var clientId = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   var doc = {clientId: clientId, text: text, room: dmTo ? null : CHAT.active, dmTo: dmTo, reply: CHAT.replyTo || null};
-  UI.lastText = text.toLowerCase(); UI.lastTextAt = Date.now();
-  input.value = ''; input.style.height = ''; $('counter').classList.remove('show'); clearReply(); startSlow();
+  if (text){ UI.lastText = text.toLowerCase(); UI.lastTextAt = Date.now(); }
+  input.value = ''; input.style.height = ''; $('counter').classList.remove('show'); clearReply(); clearPic(); startSlow();
   backend.presence({typing:false});
   CHAT.pending[clientId] = true;
-  backend.addOptimistic({id: clientId, by: CHAT.uid, text: text, ts: Date.now(), room: dmTo ? (dmTo === CHAT.uid ? 'support' : 'sup:' + dmTo) : CHAT.active, reply: doc.reply, mod: CHAT.canEdit || undefined}, dmTo);
+  backend.addOptimistic({id: clientId, by: CHAT.uid, text: text, ts: Date.now(), room: dmTo ? (dmTo === CHAT.uid ? 'support' : 'sup:' + dmTo) : CHAT.active, reply: doc.reply, mod: CHAT.canEdit || undefined, image: pic ? {url: pic.url, w: pic.w, h: pic.h} : undefined}, dmTo);
   renderConvo('mine');
-  try { await backend.send(doc); delete CHAT.pending[clientId]; renderConvo('mine'); }
-  catch(err){ delete CHAT.pending[clientId]; backend.dropOptimistic(clientId, dmTo); input.value = text; UI.slowUntil = 0; renderConvo();
+  try { await (pic ? backend.sendImage(doc, pic.file) : backend.send(doc)); delete CHAT.pending[clientId]; renderConvo('mine'); if (pic) setTimeout(function(){ URL.revokeObjectURL(pic.url); }, 60000); }
+  catch(err){ delete CHAT.pending[clientId]; backend.dropOptimistic(clientId, dmTo); input.value = text; UI.slowUntil = 0; if (pic){ UI.pic = pic; $('picWrap').classList.add('show'); } renderConvo();
     toast(err && err.message ? err.message : S('chat.sendFailed'));
     refreshSend(); }
 });
@@ -690,7 +723,7 @@ function applyComposer(){
   else if (!CHAT.canPost) msg = S('chat.gate.readOnly');
   else if (UI.mod.muted[CHAT.uid]) msg = S('chat.gate.muted');
   else if (!UI.accepted){ msg = S('chat.gate.rules'); showBtn = true; }
-  comp.hidden = !!msg; gate.hidden = !msg; gb.hidden = !showBtn; gb.textContent = btnLabel; gb.onclick = btnAction;
+  comp.hidden = !!msg; gate.hidden = !msg; updateAttach(); gb.hidden = !showBtn; gb.textContent = btnLabel; gb.onclick = btnAction;
   if (msg){ gt.textContent = msg; clearReply(); }
 }
 
@@ -746,7 +779,7 @@ function route(){
       var src = MORPH.src ? rectOf(MORPH.src) : {x: window.innerWidth / 2 - 80, y: window.innerHeight - 90, w: 160, h: 52, rad: 26}; MORPH.src = null;
       if (REDUCE) showMessenger(); else morph(src, {x:0, y:0, w:window.innerWidth, h:window.innerHeight, rad:0}, showMessenger);
     }
-    clearReply(); closeCtx(true); renderRooms(); renderHeader(); renderConvo(); setPresence(); placeRoomPill();
+    clearReply(); closeCtx(true); renderRooms(); renderHeader(); renderConvo(); setPresence(); placeRoomPill(); updateAttach();
     if (window.innerWidth > 820 && valid) setTimeout(function(){ if (!$('composer').hidden) $('msgInput').focus({preventScroll:true}); }, wasOpen ? 50 : 650);
   } else if (isOpen()){
     closeCtx(true); var target = document.querySelector('.nav a[href^="#chat"]') || document.querySelector('a[href^="#chat"]');
@@ -770,7 +803,7 @@ document.addEventListener('keydown', function(e){
 /* ---------- Chat themes (per viewer; only the chat changes) ---------- */
 var THEMES = ['oddsclub','whatsapp','whatsapp-dark','telegram','imessage','messenger','discord','signal'].map(function(id){ return [id, S('theme.' + id + '.name'), S('theme.' + id + '.desc')]; });
 CHAT.theme = (function(){ var t = store('ps_chat_theme'); return THEMES.some(function(x){ return x[0] === t; }) ? t : 'oddsclub'; })();
-function setThemeAttr(id){ ['messenger','ctx','rulesSheet','themeSheet'].forEach(function(k){ var e = $(k); if (e) e.setAttribute('data-ct', id); }); }
+function setThemeAttr(id){ ['messenger','ctx','rulesSheet','themeSheet','authSheet'].forEach(function(k){ var e = $(k); if (e) e.setAttribute('data-ct', id); }); }
 function applyTheme(id, animate){
   if (id === CHAT.theme && !animate) { setThemeAttr(id); return; }
   var run = function(){ CHAT.theme = id; setThemeAttr(id); store('ps_chat_theme', id);
@@ -968,7 +1001,7 @@ route();
       var list = LIVE.messages.filter(function(m){ return m.room === 'lounge'; }).slice(-6), y = 236, bottom = Y - 180;
       if (!list.length){ rr(X/2-200,y+40,400,80,20); g.fillStyle = 'rgba(16,48,90,.9)'; g.fill(); txt(S('chat.noMessages'), X/2, y+90, 24, 700, C.mute, 'center'); }
       var blocks = [];
-      list.forEach(function(m){ var mine = m.by && m.by === CHAT.uid, words = String(m.text).split(/\s+/), lines = [], cur = ''; g.font = '600 24px Manrope, sans-serif';
+      list.forEach(function(m){ var mine = m.by && m.by === CHAT.uid, words = msgPreview(m).split(/\s+/), lines = [], cur = ''; g.font = '600 24px Manrope, sans-serif';
         words.forEach(function(w){ var t = cur ? cur+' '+w : w; if (g.measureText(t).width > 380){ if (cur) lines.push(cur); cur = w; } else cur = t; }); if (cur) lines.push(cur); lines = lines.slice(0,3);
         blocks.push({m:m, mine:mine, lines:lines, h: (mine ? 30 : 60) + lines.length*32 + 24}); });
       var total = blocks.reduce(function(a,b){ return a + b.h + 14; }, 0); while (total > bottom - y && blocks.length > 1){ total -= blocks[0].h + 14; blocks.shift(); }
@@ -1010,9 +1043,8 @@ route();
     var t1 = G.timeline({scrollTrigger:{trigger:hero, start:'top top', end:'bottom top', scrub:1}, defaults:{ease:'sine.inOut'}});
     t1.to(P, {x:B.x, s:B.s, ry:B.ry + Math.PI * 2, duration:1, ease:'power2.inOut'}, 0)
       .to(P, {rx:midRx, y:midY, rz:midRz, duration:.5}, 0).to(P, {rx:B.rx, y:B.y, rz:B.rz, duration:.5}, .5);
-    var t2 = G.timeline({scrollTrigger:{trigger:feat, start:'bottom bottom', end:function(){ return '+=' + window.innerHeight * 0.8; }, scrub:1}});
-    t2.fromTo(O, {ey:0, erx:0, es:1}, {ey:7, erx:-0.7, es:0.75, ease:'power2.in'});
-    tls.push(t1, t2);
+    // after the features the phone no longer flies away: tailPose() keeps it turning with the scroll down to the footer
+    tls.push(t1);
   }
   var lastH = 0;
   var lastW = -1; function relayout(force){ var de = document.documentElement, w = de.clientWidth || window.innerWidth, h = window.innerHeight; if (force !== true && w === lastW && Math.abs(h - size.h) < 2) return; lastW = w; var was = mobile; resize(); if (was !== mobile || mobile){ lastH = size.h; buildScroll(); } ScrollTrigger.refresh(); }
@@ -1032,17 +1064,38 @@ route();
   var FACE = 0.42;   // share of each feature's scroll range where the phone just faces you
   function spinPart(f, local){ if (REDUCE || f < 0 || f >= 3) return 0; var x = Math.max(0, Math.min(1, (local - FACE) / (1 - FACE))); return x * x * (3 - 2 * x); }
   var FEAT_SCREENS = [1, 2, 3, 4];
+  // Below the features the phone simply keeps going with the scroll, behind the content: it stays where the features
+  // left it and turns one full 360° per section (Join → promo screen, Matchday → odds screen, footer → live screen),
+  // linearly with the scroll position. The screen swaps while its back faces you. No docking, no scroll hijacking.
+  var TAIL = [['#join', 1], ['#matchday', 2], ['footer', 0]].map(function(x){ return {el:document.querySelector(x[0]), screen:x[1]}; }).filter(function(x){ return x.el; });
+  function tailPose(){
+    if (!TAIL.length) return null;
+    var h = size.h, sy = window.scrollY || 0, s0 = sy + feat.getBoundingClientRect().bottom - h;
+    if (sy <= s0) return null;
+    var maxS = Math.max(s0, document.documentElement.scrollHeight - h);
+    // anchor k = scroll position where section k's middle reaches the middle of the screen (clamped to the page end)
+    var at = [s0], scr = [FEAT_SCREENS[3]];
+    TAIL.forEach(function(x){ var r = x.el.getBoundingClientRect(); at.push(Math.max(at[at.length - 1], Math.min(maxS, sy + r.top + r.height / 2 - h / 2))); scr.push(x.screen); });
+    var k = 0; while (k < at.length - 1 && at[k + 1] <= sy) k++;
+    var den = (at[k + 1] || at[k]) - at[k], u = k + (k < at.length - 1 && den >= 1 ? Math.min(1, (sy - at[k]) / den) : 0);
+    return {u:u, spin: REDUCE ? 0 : u * Math.PI * 2, screen: scr[Math.min(scr.length - 1, Math.round(u))]};
+  }
   window.onFeatureChange = function(f){
     G.to(O, {lean: (f >= 0 && !mobile) ? (f % 2 === 0 ? -0.38 : 0.38) : 0, leanX: f >= 0 ? 0.04 : 0, duration:.9, ease:'power3.out'});
     if (REDUCE && f >= 0) showScreen(FEAT_SCREENS[f], true);
   };
   var t0 = performance.now(), lastDraw = 0, flipping = false, settling = false;
   window.__phoneFlipping = function(v){ flipping = v; };
+  // jump state (back-to-top / nav links) and footer fade
+  var jumpUntil = 0, held = null, blendK = 0, shownPose = [0, 0, 0, 0, 0, 1], lastFrame = performance.now(), footEl = document.querySelector('footer'), lastOp = '';
+  window.__phoneJump = function(ms){ jumpUntil = performance.now() + ms + 80; };
+  ['wheel', 'touchstart', 'keydown'].forEach(function(ev){ window.addEventListener(ev, function(){ jumpUntil = 0; }, {passive:true}); });   // the user took over: stop holding
   function frame(){
     if (document.body.classList.contains('chat-open')) return;
-    var now = performance.now(), t = (now - t0) / 1000;
+    var now = performance.now(), t = (now - t0) / 1000, jumping = !REDUCE && now < jumpUntil;
     if (S2.feature < 0){
-      if (S2.pA < 0.5 && shown !== 0 && Math.abs(Math.sin(O.flip / 2)) < 0.01) showScreen(0);
+      if (jumping){}
+      else if (S2.pA < 0.5 && shown !== 0 && Math.abs(Math.sin(O.flip / 2)) < 0.01) showScreen(0);
       else if (S2.pA >= 0.5 && S2.pC <= 0 && shown === 0) showScreen(1);
     }
     if (LIVE.dirty && now - lastDraw > 500){ LIVE.dirty = false; lastDraw = now; showScreen(shown, true); }
@@ -1054,14 +1107,28 @@ route();
     var TURN = Math.PI * 2, f = S2.feature;
     var saTarget = f >= 0 ? (f + spinPart(f, S2.local)) * TURN : (S2.pC > 0 || S2.pB > 0.5 ? 3 * TURN : 0);
     O.sa += (saTarget - O.sa) * 0.2; if (Math.abs(saTarget - O.sa) < 1e-4) O.sa = saTarget;
-    if (f >= 0 && !REDUCE){ var si = FEAT_SCREENS[Math.max(0, Math.min(3, Math.round(O.sa / TURN)))]; if (si !== shown) showScreen(si, true); }
+    var Dk = tailPose(), Q = P;   // below the features: same place, scroll-linked turn (see tailPose)
+    if (jumping){}
+    else if (Dk){ if (Dk.screen !== shown) showScreen(Dk.screen, true); }
+    else if (f >= 0 && !REDUCE){ var si = FEAT_SCREENS[Math.max(0, Math.min(3, Math.round(O.sa / TURN)))]; if (si !== shown) showScreen(si, true); }
     var idle = REDUCE ? 0 : 1, exitK = 1 - Math.min(1, O.ey / 7);
-    spin.position.set(P.x, P.y + O.iy + O.ey + Math.sin(t * 1.3) * 0.06 * idle, 0);
-    var spinK = Math.sin(O.sa % TURN / 2);   // 0 when facing, 1 at the half turn
-    spin.rotation.set(P.rx + O.leanX + O.erx - O.my * 0.12 * exitK - spinK * 0.12, P.ry + O.iry + O.lean + O.flip + O.drag + O.sa + O.mx * 0.22 * exitK, P.rz + Math.sin(t * 0.9) * 0.02 * idle);
-    spin.scale.setScalar(P.s * O.is * O.es * (1 + Math.abs(spinK) * 0.06));
-    var gone = S2.pC >= 1; canvas.style.visibility = gone ? 'hidden' : 'visible';
-    if (!gone) renderer.render(scene, camera);
+    var lean = Dk ? O.lean * Math.max(0, 1 - Dk.u) : O.lean, dSpin = Dk ? Dk.spin : 0;
+    var spinK = Math.max(Math.sin(O.sa % TURN / 2), Math.sin(dSpin / 2));   // 0 when facing, 1 at the half turn
+    var live = [Q.x, Q.y + O.iy + O.ey + Math.sin(t * 1.3) * 0.06 * idle,
+      Q.rx + O.leanX + O.erx - O.my * 0.12 * exitK - spinK * 0.12, Q.ry + O.iry + lean + O.flip + O.drag + O.sa + dSpin + O.mx * 0.22 * exitK, Q.rz + Math.sin(t * 0.9) * 0.02 * idle,
+      Q.s * O.is * O.es * (1 + Math.abs(spinK) * 0.06)];
+    // back-to-top / nav jumps: hold the phone still while the page flies, then glide (shortest turn) into the live pose
+    var out = live;
+    if (jumping){ if (!held) held = shownPose.slice(); out = held; blendK = 0; }
+    else if (held){ blendK = Math.min(1, blendK + Math.min(50, now - lastFrame) / 900); var k = 1 - Math.pow(1 - blendK, 3);
+      out = live.map(function(v, i){ var d = v - held[i]; if (i === 3) d = Math.atan2(Math.sin(d), Math.cos(d)); return held[i] + d * k; });
+      if (blendK >= 1) held = null; }
+    shownPose = out; lastFrame = now;
+    spin.position.set(out[0], out[1], 0); spin.rotation.set(out[2], out[3], out[4]); spin.scale.setScalar(out[5]);
+    // fade a little as the footer comes into view
+    var ft = footEl ? footEl.getBoundingClientRect().top : size.h, fv = Math.max(0, Math.min(1, (size.h - ft) / (size.h * 0.45)));
+    var op = (1 - 0.6 * fv * fv * (3 - 2 * fv)).toFixed(3); if (op !== lastOp){ lastOp = op; canvas.style.opacity = op; }
+    renderer.render(scene, camera);
   }
   function setPalette(c){ C.bg = c.night; C.card = c.panel; C.line = c.navy2; C.blue = c.blue; C.green = c.cta; C.ink = c.ink; C.yellow = c.odds; C.oddBg = c.oddBg; C.wall = c.navy; C.bin = c.navy2; C.bout = c.blue; }
   var brandMats = [[back.material, 'navy2'], [plate.material, 'blue'], [logo.material, 'cta'], [rimA, 'sky'], [rimB, 'cta']];

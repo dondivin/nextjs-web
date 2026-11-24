@@ -9,10 +9,10 @@ export default async function TranslationsPage() {
   await requireUser('editor', 'translator')
   const payload = await payloadClient()
   const [langs, docs] = await Promise.all([
-    payload.find({ collection: 'languages', sort: 'order', pagination: false, depth: 0 }),
+    payload.find({ collection: 'languages', sort: 'order', pagination: false, depth: 1 }),
     payload.find({ collection: 'translations', sort: 'key', pagination: false, depth: 0 }),
   ])
-  const languages: TLang[] = langs.docs.map((l) => ({ id: String(l.id), code: l.code, name: l.name, nativeName: l.nativeName, dir: (l.dir || 'ltr') as 'ltr' | 'rtl', enabled: !!l.enabled, isDefault: !!l.isDefault }))
+  const languages: TLang[] = langs.docs.map((l) => ({ id: String(l.id), code: l.code, name: l.name, nativeName: l.nativeName, dir: (l.dir || 'ltr') as 'ltr' | 'rtl', enabled: !!l.enabled, isDefault: !!l.isDefault, iconUrl: l.icon && typeof l.icon === 'object' ? l.icon.url || null : null }))
   const rows: TRow[] = docs.docs.map((d) => ({
     id: String(d.id),
     key: d.key,

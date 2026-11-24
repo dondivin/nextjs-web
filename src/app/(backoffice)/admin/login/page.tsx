@@ -1,5 +1,7 @@
 import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
+import { BrandLogo } from '@/backoffice/components/brand-logo'
+import { getBrand } from '@/lib/brand'
 import { getBackofficeUser, payloadClient } from '@/backoffice/lib/server'
 import { LoginForm } from '@/backoffice/views/login-form'
 
@@ -7,6 +9,7 @@ export const metadata: Metadata = { title: 'Sign in' }
 export const dynamic = 'force-dynamic'
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string }> }) {
+  const brand = await getBrand(await payloadClient())
   if (await getBackofficeUser()) redirect('/admin')
   const payload = await payloadClient()
   const { totalDocs } = await payload.count({ collection: 'users' })
@@ -15,10 +18,8 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
     <div className="grid min-h-svh lg:grid-cols-2">
       <div className="flex flex-col gap-4 p-6 md:p-10">
         <div className="flex items-center gap-2 font-semibold">
-          <span className="flex size-8 items-center justify-center rounded-lg bg-brand text-brand-foreground">
-            <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M13 3L5 14h6l-1 7 8-11h-6z" /></svg>
-          </span>
-          OddsClub admin
+          <BrandLogo url={brand.logoUrl} />
+          {brand.siteName} admin
         </div>
         <div className="flex flex-1 items-center justify-center">
           <div className="w-full max-w-sm">

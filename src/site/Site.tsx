@@ -9,7 +9,7 @@ import { rich, plain } from '@/i18n/rich'
 import { startEngine } from './engine/engine'
 import type { EngineConfig } from './engine/types'
 
-type Props = { cfg: EngineConfig; initial: { bookmaker: string; promo: string; bonus: string; payments: string }; extras: { helpline: string; company: string; year: number }; languageSwitcher?: React.ReactNode }
+type Props = { cfg: EngineConfig; initial: { bookmaker: string; promo: string; bonus: string; payments: string }; extras: { helpline: string; company: string; year: number }; languageSwitcher?: React.ReactNode; logoUrl?: string | null }
 
 const I = {
   chat: <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" />,
@@ -20,6 +20,19 @@ const I = {
     </>
   ),
   close: <path d="M6 6l12 12M18 6L6 18" />,
+  image: (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="3" />
+      <circle cx="9" cy="10" r="2" />
+      <path d="M21 16l-5-5-9 9" />
+    </>
+  ),
+  user: (
+    <>
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 21a8 8 0 0 1 16 0" />
+    </>
+  ),
   shieldCheck: (
     <>
       <path d="M12 3l8 4v5c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V7z" />
@@ -42,7 +55,14 @@ function Icon({ children, className = 'icon' }: { children: React.ReactNode; cla
     </svg>
   )
 }
-function BrandMark() {
+/** The platform logo (Site settings → Brand), or the default lightning mark. */
+function BrandMark({ logoUrl }: { logoUrl?: string | null }) {
+  if (logoUrl)
+    return (
+      <span className="brand-mark has-logo" aria-hidden="true">
+        <img src={logoUrl} alt="" />
+      </span>
+    )
   return (
     <span className="brand-mark" aria-hidden="true">
       <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -52,7 +72,7 @@ function BrandMark() {
   )
 }
 
-export default function Site({ cfg, initial, extras, languageSwitcher }: Props) {
+export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl }: Props) {
   const s = cfg.strings
   const t = (k: string) => (s[k] != null ? s[k] : k)
   const p = (k: string, v: Record<string, string | number> = {}) => plain(t(k), v)
@@ -86,7 +106,7 @@ export default function Site({ cfg, initial, extras, languageSwitcher }: Props) 
 
       <header className="nav">
         <a className="brand" href="#top">
-          <BrandMark />
+          <BrandMark logoUrl={logoUrl} />
           {cfg.siteName}
         </a>
         <nav className="nav-links" aria-label={t('nav.mainAria')}>
@@ -303,13 +323,16 @@ export default function Site({ cfg, initial, extras, languageSwitcher }: Props) 
         <aside className="m-side">
           <div className="side-head">
             <div className="side-brand">
-              <BrandMark />
+              <BrandMark logoUrl={logoUrl} />
               <div>
                 <h2 id="chatsTitle">{t('chat.title')}</h2>
                 <small id="sideOnline">{t('chat.connecting')}</small>
               </div>
             </div>
             <div className="side-tools">
+              <button className="iconbtn" type="button" id="chatAccount" hidden aria-label={t('auth.accountAria')}>
+                <Icon>{I.user}</Icon>
+              </button>
               <button className="iconbtn" type="button" data-open-themes="" aria-label={t('chat.themeAria')}>
                 <Icon>{I.palette}</Icon>
               </button>
@@ -399,7 +422,25 @@ export default function Site({ cfg, initial, extras, languageSwitcher }: Props) 
                 </div>
               </div>
             </div>
+            <div className="reply-wrap" id="picWrap">
+              <div>
+                <div className="reply-bar glass pic-bar" aria-live="polite">
+                  <img id="picThumb" alt="" />
+                  <div>
+                    <b>{t('chat.photo')}</b>
+                    <span id="picName"></span>
+                  </div>
+                  <button className="iconbtn" id="picClose" type="button" aria-label={t('chat.removePic')}>
+                    <Icon>{I.close}</Icon>
+                  </button>
+                </div>
+              </div>
+            </div>
             <form className="composer glass" id="composer" hidden>
+              <button className="attach" id="attachBtn" type="button" aria-label={t('chat.attachAria')} hidden>
+                <Icon>{I.image}</Icon>
+              </button>
+              <input id="picFile" type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/avif" hidden />
               <label htmlFor="msgInput" className="sr">
                 {t('chat.messageLabel')}
               </label>
@@ -461,6 +502,99 @@ export default function Site({ cfg, initial, extras, languageSwitcher }: Props) 
             <button className="btn btn-primary" id="themeDone" type="button">
               {t('themes.done')}
             </button>
+          </div>
+        </div>
+      </div>
+      <div className="sheet-wrap" id="authSheet" data-ct="oddsclub" role="dialog" aria-modal="true" aria-labelledby="authTitle" aria-hidden="true">
+        <div className="sheet glass">
+          <h3 id="authTitle">{t('auth.signInTitle')}</h3>
+          <p id="authIntro">{t('auth.signInIntro')}</p>
+          <form className="auth-form" id="authForm" noValidate>
+            <label className="field" id="authNameRow" hidden>
+              <span>{t('auth.username')}</span>
+              <input id="authName" type="text" autoComplete="nickname" minLength={2} maxLength={24} />
+            </label>
+            <div className="field" id="authAvatarRow" hidden>
+              <span>{t('auth.avatar')}</span>
+              <div className="ap">
+                <span className="ap-prev" id="apPrev" aria-hidden="true">
+                  <img id="apImg" alt="" hidden />
+                  <b id="apIni"></b>
+                </span>
+                <div className="ap-btns">
+                  <button className="btn-text" id="apUpload" type="button">
+                    {t('auth.avatar.upload')}
+                  </button>
+                  <button className="btn-text" id="apShuffle" type="button">
+                    {t('auth.avatar.shuffle')}
+                  </button>
+                  <button className="btn-text" id="apRemove" type="button" hidden>
+                    {t('auth.avatar.remove')}
+                  </button>
+                </div>
+              </div>
+              <small>{t('auth.avatar.hint')}</small>
+              <input id="apFile" type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/avif" hidden />
+            </div>
+            <label className="field" id="authEmailRow">
+              <span>{t('auth.email')}</span>
+              <input id="authEmail" type="email" autoComplete="email" inputMode="email" required maxLength={200} />
+            </label>
+            <label className="field" id="authPwRow">
+              <span id="authPwLabel">{t('auth.password')}</span>
+              <input id="authPassword" type="password" autoComplete="current-password" required minLength={8} maxLength={200} />
+              <small id="authPwHint" hidden>
+                {t('auth.passwordHint')}
+              </small>
+            </label>
+            <button className="btn-text auth-forgot" id="authForgot" type="button">
+              {t('auth.forgot')}
+            </button>
+            <label className="field" id="authNoteRow" hidden>
+              <span>{t('auth.note')}</span>
+              <textarea id="authNote" rows={3} maxLength={500} placeholder={t('auth.notePlaceholder')}></textarea>
+            </label>
+            <p className="auth-error" id="authError" role="alert" hidden></p>
+            <div className="sheet-actions">
+              <button className="btn-text auth-switch" id="authSwitch" type="button">
+                {t('auth.toSignUp')}
+              </button>
+              <button className="btn btn-secondary" id="authCancel" type="button">
+                {t('auth.notNow')}
+              </button>
+              <button className="btn btn-primary" id="authSubmit" type="submit">
+                {t('auth.submitSignIn')}
+              </button>
+            </div>
+          </form>
+          <div className="auth-notice" id="authNotice" hidden>
+            <div className="sheet-actions">
+              <button className="btn btn-secondary" id="authNoticeSecondary" type="button"></button>
+              <button className="btn btn-primary" id="authNoticePrimary" type="button"></button>
+            </div>
+          </div>
+          <div className="auth-account" id="authAccount" hidden>
+            <div className="who">
+              <span className="bubbleic ap-prev" id="authWhoAv">
+                <img alt="" hidden />
+                <b></b>
+              </span>
+              <div>
+                <b id="authWho"></b>
+                <small id="authWhoSub"></small>
+              </div>
+            </div>
+            <div className="sheet-actions">
+              <button className="btn-text auth-switch" id="authEdit" type="button">
+                {t('auth.editProfile')}
+              </button>
+              <button className="btn btn-secondary" id="authSignOut" type="button">
+                {t('auth.signOut')}
+              </button>
+              <button className="btn btn-primary" id="authDone" type="button">
+                {t('auth.done')}
+              </button>
+            </div>
           </div>
         </div>
       </div>

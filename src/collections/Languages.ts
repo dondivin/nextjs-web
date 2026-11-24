@@ -37,5 +37,6 @@ export const Languages: CollectionConfig = {
         { name: 'isDefault', type: 'checkbox', defaultValue: false, admin: { width: '25%', description: 'Used when a text has no translation' } },
       ],
     },
+    { name: 'icon', type: 'upload', relationTo: 'media', admin: { description: 'Icon shown in the language switcher (e.g. a flag). Upload it from Translations → Languages.' } },
   ],
 }

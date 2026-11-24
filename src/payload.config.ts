@@ -17,24 +17,35 @@ import { ChatSettings } from './globals/ChatSettings'
 import { Members } from './collections/chat/Members'
 import { ChatMessages } from './collections/chat/ChatMessages'
 import { ChatReports } from './collections/chat/ChatReports'
+import { PasswordResets } from './collections/chat/PasswordResets'
+import { ChatImages } from './collections/chat/ChatImages'
 import { seed } from './seed/seed'
 
 const filename = fileURLToPath(import.meta.url)
 const dirname = path.dirname(filename)
 
-// Backblaze B2 (S3-compatible). Enabled when the B2_* variables are set; otherwise uploads stay on local disk (dev).
+// Cloudflare R2 (S3-compatible) for uploads (chat avatars, partner logos…). Enabled when the R2_* variables are set;
+// otherwise uploads stay on local disk in ./media (development).
+// R2_PUBLIC_URL (optional): the bucket's public domain (custom domain or r2.dev). When set, files are served straight from
+// Cloudflare's CDN; without it they are streamed through the site at /api/media/file/<name>.
 const plugins: Plugin[] = []
-if (process.env.B2_BUCKET && process.env.B2_KEY_ID && process.env.B2_APP_KEY && process.env.B2_ENDPOINT) {
+const r2Public = (process.env.R2_PUBLIC_URL || '').replace(/\/+$/, '')
+if (process.env.R2_ACCOUNT_ID && process.env.R2_BUCKET && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY) {
   plugins.push(
     s3Storage({
-      collections: { media: true },
-      bucket: process.env.B2_BUCKET,
+      collections: {
+        media: r2Public
+          ? { disablePayloadAccessControl: true, generateFileURL: ({ filename, prefix }) => `${r2Public}/${prefix ? prefix + '/' : ''}${filename}` }
+          : true,
+        // chat pictures are never public: always served through Payload so the access rule (direct chats) is checked
+        'chat-images': true,
+      },
+      bucket: process.env.R2_BUCKET,
       config: {
-        endpoint: process.env.B2_ENDPOINT, // e.g. https://s3.eu-central-003.backblazeb2.com
-        region: process.env.B2_REGION || 'us-east-1',
-        forcePathStyle: true,
-        credentials: { accessKeyId: process.env.B2_KEY_ID, secretAccessKey: process.env.B2_APP_KEY },
-        // B2 does not support the newer default S3 checksum headers
+        endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+        region: 'auto',
+        credentials: { accessKeyId: process.env.R2_ACCESS_KEY_ID, secretAccessKey: process.env.R2_SECRET_ACCESS_KEY },
+        // only send checksums when an operation needs them (safe default for S3-compatible stores)
         requestChecksumCalculation: 'WHEN_REQUIRED',
         responseChecksumValidation: 'WHEN_REQUIRED',
       },
@@ -53,7 +64,7 @@ export default buildConfig({
       baseDir: path.resolve(dirname),
     },
   },
-  collections: [Users, Media, Partners, Matches, Languages, Translations, Members, ChatMessages, ChatReports],
+  collections: [Users, Media, Partners, Matches, Languages, Translations, Members, ChatMessages, ChatReports, PasswordResets, ChatImages],
   globals: [SiteSettings, ChatSettings],
   editor: lexicalEditor(),
   secret: process.env.PAYLOAD_SECRET || '',

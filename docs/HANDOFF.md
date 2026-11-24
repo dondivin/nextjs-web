@@ -36,19 +36,20 @@ The approved design is a working single-file prototype:
 | Framework | Next.js 16 (App Router) + TypeScript, inside a Payload CMS 3 app (created with `create-payload-app`, blank template) |
 | Back office | **Custom back office at `/admin`** (owner chose “fully custom”): Next.js route group `src/app/(backoffice)`, shadcn/ui (new-york, Tailwind v4, Radix) + TanStack Table v9 (via `@tanstack/react-table/legacy` v8-style API) + react-hook-form/zod + react-colorful + Recharts + cmdk + papaparse + sonner + next-themes + lucide-react. Data via server actions using the Payload Local API. Payload’s own admin moved to `/cms` as a raw data editor. |
 | Database | **MongoDB** (`@payloadcms/db-mongodb`) — chosen by the owner |
-| Images / uploads | **Backblaze B2** through `@payloadcms/storage-s3` (B2 is S3-compatible) — chosen by the owner |
-| Hosting | Owner decides later. Build must be host-agnostic: env vars only, Dockerfile + docker-compose provided |
+| Images / uploads | **Cloudflare R2** through `@payloadcms/storage-s3` (R2 is S3-compatible) — owner switched from Backblaze B2 to Cloudflare (2026-11-24). `R2_*` env vars; `R2_PUBLIC_URL` (bucket custom domain) serves files from Cloudflare's CDN. Without R2 vars: local `./media` |
+| Hosting | **One VPS, one Node process** (owner, 2026-11-24). The live chat keeps its state in memory, so **no Redis** is needed. Run a single instance (no PM2 cluster mode / no multiple replicas); if that ever changes, add Redis pub/sub to `src/chat/hub.ts` first. Behind nginx, turn off proxy buffering for `/chat-api/stream` (SSE). Dockerfile + docker-compose provided |
 | Package manager | **pnpm** (never run npm in this repo) |
 | Animation libs | three, gsap (+ScrollTrigger, Draggable), lenis, motion, dayjs, @floating-ui/dom — npm packages, same behaviour as the prototype |
 | i18n | Our own `languages` + `translations` collections (NOT Payload's static `localization`), so languages can be added at runtime |
-| Realtime chat | Server-Sent Events (SSE) from Next route handlers + an in-process event bus (`globalThis`). Redis pub/sub adapter later for multi-instance. (socket.io packages were installed early but are not used — can be removed.) |
+| Realtime chat | Server-Sent Events (SSE) from Next route handlers (`/chat-api/*`) + an in-process hub on `globalThis` (`src/chat/hub.ts`). One server → no Redis (see Hosting). (socket.io packages were installed early but are not used — can be removed.) |
 
 ## 3. Environment notes (important for Claude sessions)
 - Project path on the owner's Mac: `~/Documents/divin/new/prod/oddsclub`.
-- Claude works through a Linux VM that mounts this folder. **Claude cannot download packages** (registry blocked);
-  the owner runs every `pnpm add` and runs `pnpm dev` on the Mac, then pastes errors.
-- Claude CAN type-check in the VM: `node node_modules/typescript/bin/tsc --noEmit -p .`
-  (pure JS). `next build` / `pnpm dev` cannot run in the VM (native darwin binaries) — the owner runs them.
+- Claude now runs directly on the owner's Mac (earlier sessions used a Linux VM). The owner runs `pnpm dev` in their own
+  terminal; Claude talks to it on http://localhost:3000 and does not start/stop it.
+- Type-check: `node node_modules/typescript/bin/tsc --noEmit -p .`
+- `pnpm payload run <script>` exits without running the script on this machine → scripts run with
+  `node --env-file-if-exists=.env --import tsx <script>` (that is what `pnpm seed` / `pnpm admin:reset-password` do).
 - Versions installed: next 16.4.6, payload 3.94.1, react 19.2.9, three 0.187, gsap 3.15, lenis 1.3, motion 14, typescript 5.7.
 - Next 16 note: request interception file is `src/proxy.ts` (Next 16 renamed `middleware.ts` → `proxy.ts`).
 - three 0.187 vs prototype r128: use `renderer.outputColorSpace = THREE.SRGBColorSpace`,
@@ -65,7 +66,27 @@ See `docs/PROGRESS.md` for the live checklist and log. Summary:
 5. **Real chat** backend (members auth, rooms, DMs, presence, moderation) replacing the prototype's claude.ai `db/room/user` capabilities.
 6. **Launch prep**: Docker, env docs, SEO, monitoring, backups, compliance (18+ gate, cookie consent, responsible-gambling + affiliate notices, geo restrictions — client's lawyer to confirm).
 
-## 5. How to continue
+## 5. Commands
+Run from the project folder. Use **pnpm** (never npm).
+
+| Command | What it does | When |
+|---|---|---|
+| `pnpm install` | Install dependencies | After cloning / when package.json changes |
+| `pnpm dev` | Start the site + back office on http://localhost:3000 (`/en` site, `/admin` back office, `/cms` raw data editor) | Development. **Restart it** after changing `.env` or `next.config.ts` |
+| `pnpm build` then `pnpm start` | Production build, then run it | On the server |
+| `pnpm generate:types` | Regenerate `src/payload-types.ts` from the collections | After any schema change (collections / globals / fields) |
+| `pnpm generate:importmap` | Regenerate Payload's admin import map | After adding custom Payload admin components |
+| `node node_modules/typescript/bin/tsc --noEmit -p .` | Type-check everything | Before handing over any change |
+| `pnpm lint` | ESLint | Optional |
+| `pnpm test` | Integration (vitest) + end-to-end (Playwright) tests | Optional (starter tests only so far) |
+| `pnpm seed` | Fill the database with the prototype content (languages, all texts en + fr, partners + themes, matches, chat rules). Only **adds what is missing**, never overwrites back-office edits | Fresh database, or after adding new text keys to `src/i18n/strings.ts`. The server also does this automatically on start (turn off with `OC_AUTO_SEED=false` in `.env`) |
+| `pnpm seed --force-strings` | Same, but **overwrites** existing texts with the built-in English/French | Only to reset texts on purpose (it erases translators' edits) |
+| `pnpm admin:reset-password` | Shows which account is the main admin | Server, recovery |
+| `pnpm admin:reset-password <main-admin-email>` | New password for the **main admin** (the first account created), typed hidden; `--generate` prints a random one instead. Unlocks it and keeps it an owner. Refuses every other account (they use "Forgot your password?" + owner approval) | Server, when the main admin is locked out |
+
+Environment variables: see `.env.example` (MongoDB, `PAYLOAD_SECRET`, `NEXT_PUBLIC_SERVER_URL`, Cloudflare R2 `R2_*`).
+
+## 6. How to continue
 1. Read `docs/PROGRESS.md` → find the first unchecked item.
 2. Read the matching section of the prototype (map in `docs/ARCHITECTURE.md` §6).
 3. Write code, type-check with tsc, append a dated entry to `docs/PROGRESS.md` (what changed, what the owner must run).

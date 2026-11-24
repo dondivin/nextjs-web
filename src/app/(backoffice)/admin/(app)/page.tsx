@@ -19,7 +19,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   const now = new Date()
   const days = Array.from({ length: 14 }, (_, i) => startOfDay(subDays(now, 13 - i)))
 
-  const [partners, matches, members, newMembers, reports, reportList, langs, translations, perDay] = await Promise.all([
+  const [partners, matches, members, newMembers, reports, reportList, langs, translations, perDay, resets] = await Promise.all([
     payload.find({ collection: 'partners', sort: 'order', pagination: false, depth: 0, select: { name: true, active: true, colors: true, promoCode: true, signupUrl: true } }),
     payload.find({ collection: 'matches', where: { active: { equals: true } }, sort: 'order', pagination: false, depth: 0 }),
     payload.count({ collection: 'members' }),
@@ -29,6 +29,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
     payload.find({ collection: 'languages', sort: 'order', pagination: false, depth: 0 }),
     payload.find({ collection: 'translations', pagination: false, depth: 0, select: { values: true } }),
     Promise.all(days.map((d, i) => payload.count({ collection: 'chat-messages', where: { and: [{ createdAt: { greater_than_equal: d.toISOString() } }, { createdAt: { less_than: (days[i + 1] || now).toISOString() } }] } }))),
+    payload.count({ collection: 'password-resets', where: { status: { equals: 'pending' } }, overrideAccess: true }),
   ])
 
   const live = matches.docs.filter((m) => m.status === 'live')
@@ -50,10 +51,16 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
         <h1 className="text-2xl font-semibold tracking-tight">{hello}{user.name ? `, ${user.name.split(' ')[0]}` : ''}</h1>
         <p className="text-sm text-muted-foreground">Here’s what’s happening on OddsClub today.</p>
       </div>
+      {resets.totalDocs > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-warning/40 bg-warning/10 px-4 py-3 text-sm">
+          <span><b>{resets.totalDocs}</b> {resets.totalDocs === 1 ? 'fan is' : 'fans are'} waiting for a password reset.</span>
+          <Button asChild size="sm" variant="outline"><Link href="/admin/resets">Review requests<ArrowRight /></Link></Button>
+        </div>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Kpi icon={Palette} label="Active partners" value={partners.docs.filter((p) => p.active).length} sub={`${partners.docs.length} in total`} href="/admin/partners" />
-        <Kpi icon={Trophy} label="Live matches" value={live.length} sub={`${upcoming.length} upcoming`} href="/cms/collections/matches" />
+        <Kpi icon={Trophy} label="Live matches" value={live.length} sub={`${upcoming.length} upcoming`} href="/admin/matches" />
         <Kpi icon={MessagesSquare} label="Messages today" value={today} sub={`${members.totalDocs} members · +${newMembers.totalDocs} this week`} href="/admin/moderation" />
         <Kpi icon={Flag} label="Open reports" value={reports.totalDocs} sub={reports.totalDocs ? 'Needs review' : 'All clear'} href="/admin/moderation" tone={reports.totalDocs ? 'danger' : 'ok'} />
       </div>
@@ -89,7 +96,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
         <Card className="xl:col-span-2">
           <CardHeader className="flex-row items-center justify-between">
             <div><CardTitle>Matches</CardTitle><CardDescription>Live and next up on the board</CardDescription></div>
-            <Button variant="ghost" size="sm" asChild><a href="/cms/collections/matches">Manage<ArrowRight /></a></Button>
+            <Button variant="ghost" size="sm" asChild><a href="/admin/matches">Manage<ArrowRight /></a></Button>
           </CardHeader>
           <CardContent className="flex flex-col divide-y">
             {[...live, ...upcoming].slice(0, 6).map((m) => (

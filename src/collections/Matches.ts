@@ -1,15 +1,9 @@
 import type { CollectionConfig } from 'payload'
 import { anyone, roles } from '../access'
+import { onMatchesChange } from '../chat/hooks'
 
-export const SPORT_OPTIONS = [
-  { label: 'Football', value: 'football' },
-  { label: 'Basketball', value: 'basketball' },
-  { label: 'Tennis', value: 'tennis' },
-  { label: 'Esports', value: 'esports' },
-  { label: 'Ice hockey', value: 'hockey' },
-  { label: 'Volleyball', value: 'volleyball' },
-  { label: 'Other', value: 'other' },
-]
+export { SPORT_OPTIONS } from '../lib/options'
+import { SPORT_OPTIONS } from '../lib/options'
 
 /** Matches on the board. Each match also gets its own chat room. */
 export const Matches: CollectionConfig = {
@@ -17,7 +11,11 @@ export const Matches: CollectionConfig = {
   admin: { useAsTitle: 'title', defaultColumns: ['title', 'sport', 'status', 'startsAt', 'order', 'active'], group: 'Content' },
   defaultSort: 'order',
   access: { read: anyone, create: roles('editor', 'moderator'), update: roles('editor', 'moderator'), delete: roles('editor', 'moderator') },
-  hooks: { beforeChange: [({ data }) => { data.title = `${data.home || '?'} v ${data.away || '?'}`; return data }] },
+  hooks: {
+    beforeChange: [({ data }) => { data.title = `${data.home || '?'} v ${data.away || '?'}`; return data }],
+    afterChange: [onMatchesChange],
+    afterDelete: [onMatchesChange],
+  },
   fields: [
     { name: 'title', type: 'text', admin: { hidden: true } },
     { type: 'row', fields: [

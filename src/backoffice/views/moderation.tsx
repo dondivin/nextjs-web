@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { formatDistanceToNowStrict, format } from 'date-fns'
 import {
-  ShieldAlert, ShieldCheck, MessageSquareX, Undo2, Ban, VolumeX, Volume2, MoreHorizontal, Flag, Users, MessagesSquare, CheckCheck, Crown,
+  ShieldAlert, ShieldCheck, MessageSquareX, Undo2, Ban, VolumeX, Volume2, MoreHorizontal, Flag, Users, MessagesSquare, CheckCheck, Crown, ImageOff,
 } from 'lucide-react'
 import { PageHeader } from '@/backoffice/components/page-header'
 import { DataTable, type Col } from '@/backoffice/components/data-table'
@@ -22,13 +22,14 @@ import {
 } from '@/backoffice/components/ui/alert-dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/backoffice/components/ui/select'
 import { resolveReport, setMemberRole, setMemberStatus, setMessageDeleted } from '@/backoffice/actions/moderation'
+import { removeMemberPhoto } from '@/backoffice/actions/profile'
 
 export type ModReport = {
   id: string; messageId: string; text: string; room: string; authorId: string | null; authorName: string; authorStatus: string
   reporterName: string; reasons: string[]; count: number; createdAt: string
 }
-export type ModMessage = { id: string; text: string; room: string; authorId: string | null; authorName: string; deleted: boolean; deletedBy: string | null; isMod: boolean; createdAt: string }
-export type ModMember = { id: string; name: string; email: string; role: 'fan' | 'agent' | 'moderator'; status: 'active' | 'muted' | 'banned'; mutedUntil: string | null; lastSeenAt: string | null; createdAt: string }
+export type ModMessage = { id: string; text: string; imageUrl?: string | null; room: string; authorId: string | null; authorName: string; deleted: boolean; deletedBy: string | null; isMod: boolean; createdAt: string }
+export type ModMember = { id: string; name: string; email: string; hasPhoto?: boolean; role: 'fan' | 'agent' | 'moderator'; status: 'active' | 'muted' | 'banned'; mutedUntil: string | null; lastSeenAt: string | null; createdAt: string }
 
 const REASON: Record<string, string> = { spam: 'Spam', abuse: 'Abuse', scam: 'Scam / paid tips', promo: 'Other promo code', other: 'Other' }
 const MUTES = [['1h', '1 hour'], ['24h', '24 hours'], ['7d', '7 days'], ['forever', 'Until unmuted']] as const
@@ -118,6 +119,7 @@ export function ModerationView({ reports, messages, members }: { reports: ModRep
       cell: ({ row: { original: m } }) => (
         <div className="flex max-w-xl flex-col gap-1">
           <Who name={m.authorName} sub={<>{m.room}{m.isMod && <> · <span className="text-brand">Mod</span></>}</>} />
+          {m.imageUrl && <a href={m.imageUrl} target="_blank" rel="noopener" className="mt-1 block w-fit"><img src={m.imageUrl} alt="Picture sent in the chat" className={'max-h-32 rounded-md border ' + (m.deleted ? 'opacity-40' : '')} /></a>}
           <p className={'text-sm whitespace-pre-wrap ' + (m.deleted ? 'text-muted-foreground line-through' : '')}>{m.text}</p>
         </div>
       ),
@@ -168,6 +170,7 @@ export function ModerationView({ reports, messages, members }: { reports: ModRep
                   <DropdownMenuSubContent>{MUTES.map(([k, l]) => <DropdownMenuItem key={k} onSelect={() => act(() => setMemberStatus(m.id, 'muted', k), `${m.name} is muted`)}>{l}</DropdownMenuItem>)}</DropdownMenuSubContent>
                 </DropdownMenuSub>
               )}
+              {m.hasPhoto && <DropdownMenuItem onSelect={() => act(() => removeMemberPhoto(m.id), `${m.name}’s photo was removed`)}><ImageOff />Remove profile photo</DropdownMenuItem>}
               {m.status !== 'banned' && <><DropdownMenuSeparator /><DropdownMenuItem variant="destructive" onSelect={() => setConfirm({ title: `Ban ${m.name}?`, body: 'This member will no longer be able to post. You can lift the ban at any time.', action: 'Ban member', done: `${m.name} is banned`, run: () => setMemberStatus(m.id, 'banned') })}><Ban />Ban</DropdownMenuItem></>}
             </DropdownMenuContent>
           </DropdownMenu>

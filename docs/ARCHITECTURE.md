@@ -4,10 +4,13 @@
 ```
 Browser ──► Next.js 16 (App Router)
              ├─ /[locale]            public site (server component loads data → client component runs the animations)
-             ├─ /admin               Payload back office
-             └─ /api/*               Payload REST + our custom Payload endpoints (chat, presence, SSE stream)
+             ├─ /admin               custom back office (dashboard, moderation, password resets, partners, translations, chat profile)
+             ├─ /cms                 Payload's own admin (raw data editor)
+             ├─ /chat-api/stream     live chat feed (Server-Sent Events), one per open tab
+             ├─ /chat-api/<action>   chat actions (JSON; pictures/avatars as multipart)
+             └─ /api/*               Payload REST (also serves uploaded files: /api/media/file/…, /api/chat-images/file/…)
 Payload 3 ──► MongoDB (all content, translations, chat)
-          └─► Backblaze B2 (uploads via @payloadcms/storage-s3)
+          └─► Cloudflare R2 (uploads via @payloadcms/storage-s3; public bucket domain = CDN)
 ```
 
 ## 2. Porting strategy for the prototype (phase 1)
@@ -26,15 +29,20 @@ Payload 3 ──► MongoDB (all content, translations, chat)
 | slug | purpose | key fields |
 |---|---|---|
 | `users` | back-office accounts | email, name, roles: owner \| editor \| translator \| moderator |
-| `media` | uploads (B2) | alt |
+| `media` | public uploads (Cloudflare R2): avatars, logos | alt |
 | `languages` | site languages | code (en, fr…), name, nativeName, dir (ltr/rtl), enabled, isDefault, order |
 | `translations` | static UI strings | key (unique, e.g. `hero.headline.1`), namespace, context (help for translators), values: [{locale, value}] |
 | `partners` | betting brands + theme | name, slug (used in `#b-slug`), order, active, logo, promoCode, signupUrl, termsUrl, colors{night,navy,navy2,panel,blue,sky,cta,ink,odds,oddBg,tint,deep,mute,nav}, texts: [{locale, bonus, payments}] |
 | `matches` | board + chat rooms | sport, league, home, away, status (upcoming/live/ft), minute, scoreHome, scoreAway, oddsHome, oddsDraw, oddsAway, startsAt, order, active |
-| `members` (phase 5) | chat accounts (auth) | displayName, color, avatar, role: fan \| moderator \| agent, rulesAcceptedAt, muted, lastSeen |
-| `chat-messages` (phase 5) | messages | room ('lounge' \| match id \| 'dm:<memberId>'), author, text, reply{id,author,text}, reactions (json), isMod, deletedAt |
-| `chat-reports` (phase 5) | reports | message, reporter, room, text snapshot, status |
-| `dm-threads` (phase 5) | DM inbox for agents | member, lastText, lastAt, lastBy, memberLastSeen |
+| `members` | fan chat accounts (auth: email + password) | displayName (unique, via nameKey), avatar (media) / avatarGradient, color, role, status (active / muted / banned), mutedUntil, rulesAcceptedAt, lastSeenAt |
+| `chat-messages` | messages | room ('lounge' \| match id \| 'dm:<memberId>'), author (member) or staffAuthor (user), text, image (chat-images), reply{id,by,text}, reactions (json), isMod, deleted |
+| `chat-images` | pictures sent in the chat (never public: the file URL checks the same rule as the room) | room |
+| `chat-reports` | reports | message, reporter, room, text snapshot, reason, status |
+| `password-resets` | "forgot password" requests approved in the back office (no email service) | kind (member / staff), email, member / user, note, status, tokenHash, expiresAt |
+
+Staff in the chat = back-office `users` with role moderator / owner (chat name + avatar on `/admin/profile`).
+The **main admin** (oldest `users` account) is protected and is only recoverable with `pnpm admin:reset-password`.
+Direct chats are built from `chat-messages` with room `dm:<memberId>` (no separate threads collection).
 
 ### Globals
 | slug | fields |
@@ -87,7 +95,10 @@ Resolution order everywhere: requested locale → default language → seeded En
 | 1798–2034 | 3D phone (Three.js), screens drawn on canvas, scroll poses, brand flip | `engine/phone3d.ts` |
 | 2035–2063 | Drag the phone to switch partner (GSAP Draggable) | `engine/drag.ts` |
 
-## 7. Folder layout (target)
+## 7. Commands
+See `docs/HANDOFF.md` §5 for every command (dev, build, types, seed, recovery).
+
+## 8. Folder layout (target)
 ```
 src/
   app/(frontend)/[locale]/layout.tsx   html/body, fonts, site.css, lang/dir
@@ -100,6 +111,9 @@ src/
   site/engine/                         ported behaviour modules
   site/styles/site.css                 prototype CSS
   seed/                                seed script: languages, translations (en + fr), partners, matches, settings
-  endpoints/chat/                      Payload custom endpoints (phase 5)
+  chat/                                live chat server: hub (SSE), data, service (rules + actions), hooks, avatars, gradients
+  app/chat-api/                        chat routes (stream + actions)
+  app/(backoffice)/ + backoffice/      custom back office
+  scripts/                             server commands (reset-password)
 docs/  design/prototype/
 ```
