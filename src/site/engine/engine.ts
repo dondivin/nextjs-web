@@ -50,7 +50,9 @@ if (lenis){
   });
 }
 function $(id){ return document.getElementById(id); }
-function el(tag, cls, text){ var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+// initials, team badges and scores are not words: keep browser translators (Chrome / Google Translate) away from them
+var NO_TRANSLATE = /(^|\s)(badge|ini|r-score|s|scorepill)(\s|$)/;
+function el(tag, cls, text){ var e = document.createElement(tag); if (cls){ e.className = cls; if (NO_TRANSLATE.test(cls)){ e.setAttribute('translate', 'no'); e.classList.add('notranslate'); } } if (text != null) e.textContent = text; return e; }
 function svg(path){ var s = document.createElementNS('http://www.w3.org/2000/svg','svg'); s.setAttribute('viewBox','0 0 24 24'); s.setAttribute('class','icon'); s.setAttribute('aria-hidden','true'); s.innerHTML = path; return s; }
 var ICON = {check:'<path d="M5 12l5 5 9-10"/>', clock:'<circle cx="12" cy="12" r="8"/><path d="M12 8v4l2 2"/>'};
 
@@ -120,7 +122,9 @@ navState(); ScrollTrigger.addEventListener('refresh', navState); window.addEvent
   if (lenis) lenis.on('scroll', update); window.addEventListener('scroll', update, {passive:true}); update();
   btn.addEventListener('click', function(){
     if (!REDUCE) G.fromTo(btn, {scale:.85}, {scale:1, duration:.6, ease:'elastic.out(1, .5)', clearProps:'transform'});
-    if (lenis){ if (window.__phoneJump) window.__phoneJump(1600); lenis.scrollTo(0, {duration:1.6}); } else window.scrollTo({top:0, behavior: REDUCE ? 'auto' : 'smooth'});
+    // slower, calmer trip to the top: longer for longer distances (≈1.6 s → 3 s), gentle start and stop
+    if (lenis){ var dur = Math.min(3, 1.6 + window.scrollY / 4500); if (window.__phoneJump) window.__phoneJump(dur * 1000);
+      lenis.scrollTo(0, {duration:dur, easing:function(t){ return t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }}); } else window.scrollTo({top:0, behavior: REDUCE ? 'auto' : 'smooth'});
   });
 })();
 /* ---------- Helpers ---------- */
@@ -246,7 +250,7 @@ function renderMatches(){
       prevOdds[key] = now; cell.appendChild(v); odds.appendChild(cell); });
     card.appendChild(odds);
     var a = el('div', 'm-actions'), chat = el('a', 'btn-text');
-    chat.href = '#chat-' + m.id; chat.appendChild(svg('<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>'));
+    chat.href = '/' + cfg.locale + '/chat/' + m.id; chat.appendChild(svg('<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>'));
     var n = LIVE.messages.filter(function(x){ return x.room === m.id; }).length;
     chat.appendChild(document.createTextNode(n ? S('board.eventChatCount', {n: n}) : S('board.eventChat'))); a.appendChild(chat);
     card.appendChild(a);
@@ -314,19 +318,36 @@ var segPill = LiquidPill($('segPill'), 'x'), roomPill = LiquidPill($('roomPill')
 var wallPush = Spring(0, .5, .9, .2).on(function(v){ $('wallIn').style.transform = Math.abs(v) < .2 ? '' : 'translateY(' + v.toFixed(2) + 'px)'; });
 
 var DM = {agent:{uid:null, lastSeen:0}, mine:[], threads:{}, msgs:{}, subs:{}};
+// fan-to-fan private chats (consent first): PM.rels[uid] = {status: pending-out | pending-in | accepted | blocked, lastSeen}, PM.msgs[uid] = messages
+var PM = {rels:{}, msgs:{}};
+// groups & channels (made by the team): GR.list = rooms this viewer sees ({id, name, kind, join, status, canRead, canPost, members, rules…}), GR.msgs[id]
+var GR = {list:[], msgs:{}};
+function grpId(id){ return String(id).indexOf('g:') === 0 ? String(id).slice(2) : null; }
+function grpOf(id){ var g = grpId(id); return g ? GR.list.filter(function(x){ return x.id === g; })[0] || null : null; }
+function pmUid(id){ return String(id).indexOf('pm:') === 0 ? String(id).slice(3) : null; }
 function agentName(){ var p = DM.agent.uid && LIVE.profiles[DM.agent.uid]; return (p && p.name) || SITE.agentName || S('chat.agentDefault'); }
 function threadOrder(){ return Object.keys(DM.threads).sort(function(a, b){ return (DM.threads[b].lastTs || 0) - (DM.threads[a].lastTs || 0); }); }
-function isDmRoom(id){ return id === 'support' || String(id).indexOf('sup:') === 0; }
+function isDmRoom(id){ return id === 'support' || String(id).indexOf('sup:') === 0 || String(id).indexOf('pm:') === 0; }
 function isOnline(uid){ return !!uid && viewers().some(function(p){ return !p.isMe && peerId(p) === uid; }); }
-function lastSeenOf(uid){ if (uid && uid === DM.agent.uid) return DM.agent.lastSeen || 0; var t = DM.threads[uid]; return (t && Number(t.lastSeen)) || 0; }
+function lastSeenOf(uid){ if (uid && uid === DM.agent.uid) return DM.agent.lastSeen || 0; if (uid && PM.rels[uid]) return Number(PM.rels[uid].lastSeen) || 0; var t = DM.threads[uid]; return (t && Number(t.lastSeen)) || 0; }
 function seenText(ts){ if (!ts) return ''; var l = dayLabel(ts); return S('chat.lastSeen', {day: isTodayLabel(l) ? S('time.todayLower') : (l === S('time.yesterday') ? S('time.yesterdayLower') : l), time: hhmm(ts)}); }
-function openRoom(id){ if (/^[A-Za-z0-9-]+$/.test(id)) location.hash = 'chat-' + id; else { CHAT.pendingRoom = id; if (location.hash === '#chat-dm') route(); else location.hash = 'chat-dm'; } }
+function roomHash(id){ return 'chat-' + String(id).replace(/^(sup|pm|g):/, '$1-'); }
+function roomFromHash(h){ var id = h.slice(5), m = /^(sup|pm|g)-([a-f0-9]{24})$/i.exec(id); return m ? m[1] + ':' + m[2] : id; }
+function openRoom(id){ goChat(id); }
 function rooms(){ var list = [];
   if (CHAT.db && CHAT.uid){
     if (CHAT.canEdit) threadOrder().forEach(function(uid){ list.push({id:'sup:' + uid, dm:true, uid:uid, title:nameOf(uid)}); });
-    else list.push({id:'support', dm:true, agent:true, uid:DM.agent.uid, title:agentName()});
+    else {
+      list.push({id:'support', dm:true, agent:true, uid:DM.agent.uid, title:agentName()});
+      Object.keys(PM.rels).filter(function(u){ var st = PM.rels[u].status; return st === 'accepted' || st === 'pending-out'; })
+        .map(function(u){ var ms = PM.msgs[u] || [], last = ms[ms.length - 1]; return {u:u, ts:(last && last.ts) || Number(PM.rels[u].at) || 0}; })
+        .sort(function(a, b){ return b.ts - a.ts; })
+        .forEach(function(x){ list.push({id:'pm:' + x.u, dm:true, pm:true, uid:x.u, title:nameOf(x.u), pendingOut: PM.rels[x.u].status === 'pending-out'}); });
+    }
   }
-  list.push({id:'lounge', title:S('chat.lounge'), lounge:true}); LIVE.matches.forEach(function(m){ list.push({id:m.id, title:S('chat.matchTitle', {home: m.home, away: m.away}), match:m}); }); return list; }
+  list.push({id:'lounge', title:S('chat.lounge'), lounge:true});
+  GR.list.forEach(function(g){ list.push({id:'g:' + g.id, group:g, title:g.name}); });
+  LIVE.matches.forEach(function(m){ list.push({id:m.id, title:S('chat.matchTitle', {home: m.home, away: m.away}), match:m}); }); return list; }
 function roomById(id){ return rooms().filter(function(r){ return r.id === id; })[0] || rooms()[0]; }
 function viewers(){ return CHAT.peers.filter(function(p){ return p.kind === 'viewer'; }); }
 function online(roomId){ return viewers().filter(function(p){ return roomId ? (p.presence && p.presence.room === roomId) : true; }).length; }
@@ -335,11 +356,16 @@ function onlineSet(){ var s = {}; viewers().forEach(function(p){ var id = peerId
 function typersIn(roomId){ return viewers().filter(function(p){ if (p.isMe || !p.presence || !p.presence.typing) return false; var r = p.presence.room;
   if (roomId === 'support') return r === 'sup:' + CHAT.uid;
   if (String(roomId).indexOf('sup:') === 0) return r === 'support' && peerId(p) === roomId.slice(4);
+  if (pmUid(roomId)) return r === 'pm:' + CHAT.uid && peerId(p) === pmUid(roomId);
   return r === roomId; }); }
-async function names(ids){ ids = ids.filter(function(x, i, a){ return x && a.indexOf(x) === i && !LIVE.profiles[x]; }); if (!ids.length || !CHAT.user) return; try { var ps = await CHAT.user.profiles(ids); for (var k in ps) LIVE.profiles[k] = ps[k]; } catch(e){} }
-function nameOf(id){ if (id && id === CHAT.uid) return S('chat.you'); var p = LIVE.profiles[id]; if (p && p.name) return p.name; if (id && id === DM.agent.uid) return agentName(); return S('chat.fan'); }
+async function names(ids){ ids = ids.filter(function(x, i, a){ return x && a.indexOf(x) === i && !LIVE.profiles[x]; }); if (!ids.length || !CHAT.user) return; try { var ps = await CHAT.user.profiles(ids); for (var k in ps) LIVE.profiles[k] = ps[k]; ids.forEach(function(id){ if (!LIVE.profiles[id]) NAMES.gone[id] = true; }); } catch(e){} }
+var NAMES = {asked:{}, gone:{}, timer:0, queue:[]};
+function fetchName(id){ if (!id || NAMES.asked[id] || !CHAT.user) return; NAMES.asked[id] = true; NAMES.queue.push(id); clearTimeout(NAMES.timer);
+  NAMES.timer = setTimeout(function(){ var q = NAMES.queue; NAMES.queue = []; names(q).then(function(){ refreshChat(); }); }, 60); }
+function nameOf(id){ if (id && id === CHAT.uid) return S('chat.you'); var p = LIVE.profiles[id]; if (p && p.name) return p.name; if (id && id === DM.agent.uid) return agentName();
+  if (!id) return S('chat.guest'); if (NAMES.gone[id]) return S('chat.deletedUser'); fetchName(id); return '…'; }
 function msgPreview(m){ return (m && (m.text || (m.image ? S('chat.photo') : ''))) || ''; }
-function roomMsgs(id){ if (id === 'support') return DM.mine; if (String(id).indexOf('sup:') === 0) return DM.msgs[id.slice(4)] || []; return LIVE.messages.filter(function(m){ return (m.room || 'lounge') === id; }); }
+function roomMsgs(id){ if (id === 'support') return DM.mine; if (pmUid(id)) return PM.msgs[pmUid(id)] || []; if (grpId(id)) return GR.msgs[grpId(id)] || []; if (String(id).indexOf('sup:') === 0) return DM.msgs[id.slice(4)] || []; return LIVE.messages.filter(function(m){ return (m.room || 'lounge') === id; }); }
 
 var toastTimer = 0;
 function toast(msg, ok){ var t = $('toast'); $('toastText').textContent = msg; t.classList.toggle('ok', !!ok); t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(function(){ t.classList.remove('show'); }, 2800); }
@@ -355,6 +381,9 @@ function personAvatar(uid, showOnline, agent){
 }
 function roomAvatar(r, showOnline){
   if (r.dm) return personAvatar(r.uid, showOnline, r.agent);
+  if (r.group){ var ga = el('div', 'r-av person'); ga.setAttribute('aria-hidden', 'true'); var gi = el('span', 'ini'); gi.style.background = r.group.gradient || 'linear-gradient(135deg,#3E63DD,#8E4EC6)';
+    gi.appendChild(svg(r.group.kind === 'channel' ? '<path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1z"/><path d="M15 9a4 4 0 0 1 0 6M18 6a8 8 0 0 1 0 12"/>' : '<circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3 19c0-3 2.7-5 6-5s6 2 6 5M15 14.5c2.8 0 5 1.6 5 4.5"/>'));
+    ga.appendChild(gi); if (showOnline && online(r.id) > 0) ga.appendChild(el('span', 'on')); return ga; }
   var av = el('div', 'r-av ' + (r.lounge ? 'lounge' : 'pair')); av.setAttribute('aria-hidden', 'true');
   if (r.lounge) av.appendChild(svg('<circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3 19c0-3 2.7-5 6-5s6 2 6 5M15 14.5c2.8 0 5 1.6 5 4.5"/>'));
   else [r.match.home, r.match.away].forEach(function(n){ var b = el('span', 'badge', initials(n)); b.style.background = teamColor(n); av.appendChild(b); });
@@ -394,15 +423,20 @@ function fillRoom(b, r){
   var unread = msgs.filter(function(m){ return m.ts > (lastSeen[r.id] || 0) && m.by !== CHAT.uid; }).length;
   if (!last && r.dm && r.uid && DM.threads[r.uid] && DM.threads[r.uid].lastTs){ var th = DM.threads[r.uid]; last = {id:'t' + th.lastTs, text:String(th.lastText || (th.photo ? S('chat.photo') : '')), ts:Number(th.lastTs), by:th.lastBy}; if (last.ts > (lastSeen[r.id] || 0) && last.by !== CHAT.uid) unread = 1; }
   var typ = typersIn(r.id), current = r.id === CHAT.active && isOpen();
-  var sig = [r.title, last && last.id, msgPreview(last), unread, typ.length, r.dm ? isOnline(r.uid) : online(r.id) > 0, r.dm && LIVE.profiles[r.uid] && (LIVE.profiles[r.uid].avatarUrl || LIVE.profiles[r.uid].gradient), r.match && [r.match.status, r.match.hs, r.match.as, r.match.kickoff], current, last && nameOf(last.by)].join('|');
+  var sig = [r.title, !!r.pendingOut, r.group && [r.group.status, r.group.canRead, r.group.kind, r.group.gradient, r.group.description].join(','), last && last.id, msgPreview(last), unread, typ.length, r.dm ? isOnline(r.uid) : online(r.id) > 0, r.dm && LIVE.profiles[r.uid] && (LIVE.profiles[r.uid].avatarUrl || LIVE.profiles[r.uid].gradient), r.match && [r.match.status, r.match.hs, r.match.as, r.match.kickoff], current, last && nameOf(last.by)].join('|');
   if (b._sig === sig) return; b._sig = sig;
   b.textContent = ''; if (current) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
   b.appendChild(roomAvatar(r, true));
   var main = el('div', 'r-main'), t = el('div', 'r-title'); t.appendChild(el('span', null, r.title));
   if (r.agent) t.appendChild(el('span', 'r-tag', S('chat.partnerTag')));
+  if (r.group && r.group.kind === 'channel') t.appendChild(el('span', 'r-tag', S('groups.channelTag')));
   if (r.match && r.match.status === 'live'){ t.appendChild(el('span', 'r-live', S('chat.liveTag'))); t.appendChild(el('span', 'r-score', (r.match.hs||0) + '–' + (r.match.as||0))); }
   main.appendChild(t);
+  if (r.pendingOut){ main.appendChild(el('div', 'r-last', S('pm.waitingShort'))); b.appendChild(main); return; }
+  if (r.group && (!r.group.canRead || r.group.status === 'invited')){ var gs = r.group.status;
+    main.appendChild(el('div', 'r-last' + (gs === 'invited' ? ' typing' : ''), gs === 'invited' ? S('groups.invitedShort') : gs === 'requested' ? S('groups.requestedShort') : (r.group.description || S('groups.membersOnly')))); b.appendChild(main); return; }
   var prev = typ.length ? (typ.length === 1 ? S('chat.isTyping', {name: nameOf(peerId(typ[0]))}) : S('chat.peopleTyping', {n: typ.length}))
+    : (!last && r.group) ? (r.group.description || S('groups.sub', {kind: S('groups.kind.' + r.group.kind), n: r.group.members}))
     : last ? (last.by === CHAT.uid ? S('chat.lastByYou', {text: msgPreview(last)}) : (r.dm ? msgPreview(last) : S('chat.lastBy', {name: nameOf(last.by), text: msgPreview(last)}))) : r.dm ? (r.agent ? S('chat.agentHint') : S('chat.noMessages')) : (r.lounge ? S('chat.loungeHint') : (r.match.status === 'upcoming' ? S('chat.starts', {time: r.match.kickoff || S('chat.soon')}) : (r.match.league || S('chat.eventRoom'))));
   main.appendChild(el('div', 'r-last' + (typ.length ? ' typing' : ''), prev)); b.appendChild(main);
   var side = el('div', 'r-side'); side.appendChild(el('span', 'r-time', last ? listTime(last.ts) : ''));
@@ -416,14 +450,22 @@ function renderHeader(){
   var r = roomById(CHAT.active), on = r.dm && isOnline(r.uid);
   var key = r.id + '|' + r.title + '|' + on + '|' + (r.dm && LIVE.profiles[r.uid] ? (LIVE.profiles[r.uid].avatarUrl || LIVE.profiles[r.uid].gradient || '') : '');
   if (UI.hdrRoom !== key){ var av = $('cAvatar'); av.textContent = ''; av.appendChild(roomAvatar(r, true)); $('cTitle').textContent = r.title; UI.hdrRoom = key; }
+  var mg = $('cManage'); if (mg){ mg.hidden = !(r.group && r.group.isAdmin); mg.onclick = function(){ backend.manageRoom(r.group.id); }; }
+  var lv = $('cLeave'); if (lv){ lv.hidden = !(r.group && r.group.status === 'member' && !CHAT.canEdit && !r.group.isOwner); lv.onclick = function(){ if (window.confirm(S('groups.leaveConfirm', {name: r.group.name}))) backend.groupLeave(r.group.id).then(function(){ toast(S('groups.left', {name: r.group.name}), true); goChat('', {replace: true}); }, function(e){ toast(e.message); }); }; }
+  var pin = $('pinned'); if (pin){ if (!pin._orig) pin._orig = pin.lastElementChild.innerHTML; var txt = pin.lastElementChild, rules = r.group && r.group.rules;
+    if (rules){ if (pin._room !== r.id){ txt.textContent = ''; txt.appendChild(el('b', null, S('groups.rulesTitle'))); txt.appendChild(document.createTextNode(' · ' + rules)); pin._room = r.id; } }
+    else if (pin._room){ txt.innerHTML = pin._orig; pin._room = null; } }
+  var blk = $('cBlock'); if (blk){ blk.hidden = !(r.pm && PM.rels[r.uid] && PM.rels[r.uid].status === 'accepted'); blk.onclick = function(){ if (window.confirm(S('pm.blockConfirm', {name: nameOf(r.uid)}))) backend.pmRespond(r.uid, 'block'); }; }
   var sub = $('cSub'), typ = typersIn(CHAT.active), text = '', cls = '', dot = false;
   if (typ.length){ cls = 'typing'; text = r.dm ? S('chat.typingShort') : (typ.length === 1 ? S('chat.isTyping', {name: nameOf(peerId(typ[0]))}) : S('chat.peopleAreTyping', {n: typ.length})); }
+  else if (r.pendingOut){ text = S('pm.waitingShort'); }
+  else if (r.group){ text = S('groups.sub', {kind: S('groups.kind.' + r.group.kind), n: r.group.members}); }
   else if (r.dm){
     if (on){ cls = 'on'; text = S('chat.online'); }
-    else { text = seenText(lastSeenOf(r.uid)) || (r.agent ? S('chat.agentSub') : S('chat.fan')); }
+    else { text = seenText(lastSeenOf(r.uid)) || (r.agent ? S('chat.agentSub') : S('chat.offline')); }
   } else {
     var here = viewers().filter(function(p){ return !p.isMe && p.presence && p.presence.room === CHAT.active; });
-    var ids = here.map(peerId).filter(function(x, i, a){ return x && a.indexOf(x) === i; });
+    var ids = here.map(peerId).filter(function(x, i, a){ return x && x !== CHAT.uid && a.indexOf(x) === i; });   // my other tabs aren't 'others'
     if (ids.length){ dot = true; var nm = ids.slice(0, 2).map(nameOf); text = ids.length > 2 ? S('chat.hereMore', {names: nm.join(', '), n: ids.length - 2}) : S('chat.hereList', {names: nm.join(', ')}); }
     else text = r.match ? S('chat.groupSub', {league: r.match.league || S('chat.eventRoom')}) : S('chat.loungeSub');
   }
@@ -439,17 +481,71 @@ function renderHeader(){
       sc.appendChild(pl); } }
   else if (sc._key){ sc._key = ''; sc.textContent = ''; }
 }
-/* ---------- Picture viewer ---------- */
+/* ---------- Picture viewer ----------
+   Opens from the picture in the bubble: a frame grows from the bubble's exact spot and size to full screen (the crop of the
+   bubble opens up into the whole picture) while the background darkens; closing (tap, ✕, Escape, drag down) shrinks it back
+   into the bubble. The bubble's copy is hidden meanwhile so it reads as one picture moving. Reduced motion: instant. */
 var LB = null;
-function openLightbox(url){
-  if (!LB){ LB = el('div', 'lightbox'); LB.setAttribute('role', 'dialog'); LB.setAttribute('aria-modal', 'true'); LB.setAttribute('aria-label', S('chat.viewImage'));
-    var im = document.createElement('img'); im.alt = ''; LB.appendChild(im);
-    var x = el('button', 'iconbtn lb-close'); x.type = 'button'; x.setAttribute('aria-label', S('chat.closeImage')); x.appendChild(svg('<path d="M6 6l12 12M18 6L6 18"/>')); LB.appendChild(x);
-    LB.addEventListener('click', closeLightbox); document.body.appendChild(LB);
-    document.addEventListener('keydown', function(e){ if (e.key === 'Escape' && LB.classList.contains('open')){ e.stopImmediatePropagation(); closeLightbox(); } }, true); }
-  LB.querySelector('img').src = url; LB.classList.add('open'); setTimeout(function(){ LB.querySelector('.lb-close').focus({preventScroll:true}); }, 30);
+function lbFit(w, h){
+  var vw = window.innerWidth, vh = window.innerHeight, pad = vw < 700 ? 0 : 40, s = Math.min((vw - pad * 2) / w, (vh - pad * 2) / h);
+  var W = Math.round(w * s), H = Math.round(h * s);
+  return {x: Math.round((vw - W) / 2), y: Math.round((vh - H) / 2), w: W, h: H};
 }
-function closeLightbox(){ if (LB) LB.classList.remove('open'); }
+function lbPlace(r, radius){ var f = LB._frame; f.style.left = r.x + 'px'; f.style.top = r.y + 'px'; f.style.width = r.w + 'px'; f.style.height = r.h + 'px'; f.style.borderRadius = radius; }
+function lbRectOf(elm){ var r = elm.getBoundingClientRect(); return {x: r.left, y: r.top, w: r.width, h: r.height}; }
+function lbVisible(elm){ if (!elm || !elm.isConnected) return false; var r = elm.getBoundingClientRect(); return r.width > 0 && r.bottom > 0 && r.top < window.innerHeight && r.right > 0 && r.left < window.innerWidth; }
+function openLightbox(url, thumb, w, h){
+  if (!LB){
+    LB = el('div', 'lightbox'); LB.setAttribute('role', 'dialog'); LB.setAttribute('aria-modal', 'true'); LB.setAttribute('aria-label', S('chat.viewImage'));
+    LB.appendChild(el('div', 'lb-bg'));
+    var fr = el('div', 'lb-frame'), im = document.createElement('img'); im.alt = ''; im.draggable = false; fr.appendChild(im); LB.appendChild(fr); LB._frame = fr; LB._img = im;
+    var x = el('button', 'iconbtn lb-close'); x.type = 'button'; x.setAttribute('aria-label', S('chat.closeImage')); x.appendChild(svg('<path d="M6 6l12 12M18 6L6 18"/>')); LB.appendChild(x);
+    x.addEventListener('click', function(e){ e.stopPropagation(); closeLightbox(); });
+    LB.addEventListener('click', function(){ if (!LB._dragged) closeLightbox(); LB._dragged = false; });
+    document.body.appendChild(LB);
+    document.addEventListener('keydown', function(e){ if (e.key === 'Escape' && LB.classList.contains('open')){ e.stopImmediatePropagation(); closeLightbox(); } }, true);
+    window.addEventListener('resize', function(){ if (LB.classList.contains('show') && !LB._closing){ LB._frame.style.transition = 'none'; lbPlace(lbFit(LB._w, LB._h), '12px'); } });
+    // drag down (or up) to close
+    var sy = 0, dy = 0, dragging = false;
+    fr.addEventListener('pointerdown', function(e){ if (LB._closing) return; dragging = true; sy = e.clientY; dy = 0; fr.setPointerCapture(e.pointerId); fr.style.transition = 'none'; });
+    fr.addEventListener('pointermove', function(e){ if (!dragging) return; dy = e.clientY - sy; if (Math.abs(dy) > 4) LB._dragged = true;
+      fr.style.transform = 'translateY(' + dy + 'px) scale(' + (1 - Math.min(Math.abs(dy) / 1600, .18)) + ')'; LB.style.setProperty('--lb-bg', String(1 - Math.min(Math.abs(dy) / 420, .85))); });
+    var end = function(){ if (!dragging) return; dragging = false;
+      if (Math.abs(dy) > 110){ var cur = lbRectOf(fr); fr.style.transform = ''; lbPlace(cur, '12px'); void fr.offsetWidth; closeLightbox(); }
+      else { fr.style.transition = 'transform .32s cubic-bezier(.2,.9,.3,1.2)'; fr.style.transform = ''; LB.style.removeProperty('--lb-bg'); } };
+    fr.addEventListener('pointerup', end); fr.addEventListener('pointercancel', end);
+  }
+  var fr = LB._frame, start = thumb && lbVisible(thumb) ? lbRectOf(thumb) : null;
+  LB._thumb = thumb || null; LB._w = w || (thumb && thumb.naturalWidth) || 4; LB._h = h || (thumb && thumb.naturalHeight) || 3; LB._closing = false; LB._dragged = false;
+  LB._radius = thumb ? getComputedStyle(thumb.parentNode).borderRadius || '12px' : '12px';
+  LB._img.src = url; LB.style.removeProperty('--lb-bg'); fr.style.transform = ''; fr.style.opacity = '';
+  var target = lbFit(LB._w, LB._h);
+  fr.style.transition = 'none';
+  if (start && !REDUCE){ lbPlace(start, LB._radius); } else { lbPlace(target, '12px'); }
+  LB.classList.add('open'); if (thumb) thumb.style.visibility = 'hidden';
+  void fr.offsetWidth;   // apply the start position before animating
+  LB.classList.add('show');
+  if (start && !REDUCE){ fr.style.transition = 'left .46s cubic-bezier(.2,.85,.25,1), top .46s cubic-bezier(.2,.85,.25,1), width .46s cubic-bezier(.2,.85,.25,1), height .46s cubic-bezier(.2,.85,.25,1), border-radius .46s'; lbPlace(target, '12px'); }
+  setTimeout(function(){ LB.querySelector('.lb-close').focus({preventScroll:true}); }, 60);
+}
+function closeLightbox(){
+  if (!LB || !LB.classList.contains('open') || LB._closing) return;
+  LB._closing = true;
+  var fr = LB._frame, thumb = LB._thumb, back = thumb && lbVisible(thumb) && !REDUCE;
+  var finish = function(){ LB.classList.remove('open'); LB._closing = false; fr.style.transition = 'none'; fr.style.transform = ''; fr.style.opacity = ''; LB.style.removeProperty('--lb-bg'); if (thumb) thumb.style.visibility = ''; };
+  LB.classList.remove('show'); LB.style.removeProperty('--lb-bg');
+  if (REDUCE){ finish(); return; }
+  var ease = 'cubic-bezier(.4,0,.2,1)';
+  if (back){
+    // back into the bubble (re-measured: the chat may have scrolled)
+    if (thumb) thumb.style.visibility = 'hidden';
+    fr.style.transition = ['left', 'top', 'width', 'height', 'border-radius', 'transform'].map(function(p){ return p + ' .38s ' + ease; }).join(', ');
+    fr.style.transform = ''; lbPlace(lbRectOf(thumb), LB._radius);
+  } else {
+    fr.style.transition = 'transform .28s ' + ease + ', opacity .28s ' + ease; fr.style.transform = 'scale(.92)'; fr.style.opacity = '0';
+  }
+  setTimeout(finish, back ? 400 : 300);
+}
 /* ---------- Conversation ---------- */
 function buildRow(m){
   var row = el('div', 'row'); row.dataset.id = m.id;
@@ -458,7 +554,7 @@ function buildRow(m){
   var sw = el('span', 'swipe-ic'); sw.appendChild(svg('<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 6 6v3"/>')); b.appendChild(sw);
   row._name = el('div', 'b-name'); row._quote = el('div', 'b-quote'); row._text = el('div', 'b-text'); row._meta = el('span', 'b-meta');
   row._pic = el('button', 'b-pic'); row._pic.type = 'button'; row._pic.setAttribute('aria-label', S('chat.viewImage')); row._picImg = document.createElement('img'); row._picImg.alt = ''; row._picImg.loading = 'lazy'; row._pic.appendChild(row._picImg);
-  row._pic.addEventListener('click', function(e){ e.stopPropagation(); if (row._m && row._m.image) openLightbox(row._m.image.url); });
+  row._pic.addEventListener('click', function(e){ e.stopPropagation(); if (row._m && row._m.image) openLightbox(row._m.image.url, row._picImg, row._m.image.w, row._m.image.h); });
   [row._name, row._quote, row._pic, row._text].forEach(function(x){ b.appendChild(x); });
   row._reacts = el('div', 'reacts');
   var acts = el('div', 'acts glass'); acts.setAttribute('role', 'toolbar'); acts.setAttribute('aria-label', S('chat.actionsAria'));
@@ -489,7 +585,7 @@ function fillRow(row, m, f){
   var mine = m.by && m.by === CHAT.uid, on = f.online[m.by], flat = CHAT.theme === 'discord', dm = isDmRoom(CHAT.active);
   row.classList.toggle('out', !!mine); row.classList.toggle('in', !mine); row.classList.toggle('gap', f.first); row.classList.toggle('tail', f.tail);
   var rx = m.reactions || {}, rsig = REACTS.map(function(r){ var o = rx[r[0]] || {}; return Object.keys(o).filter(function(k){ return o[k]; }).sort().join(','); }).join('|');
-  var sig = [CHAT.theme, dm, m.text, m.image && m.image.url, mine, f.first, f.tail, !!on, nameOf(m.by), !!CHAT.pending[m.id], m.reply && m.reply.id, rsig, UI.reports[m.id] || 0, m.mod, LIVE.profiles[m.by] && (LIVE.profiles[m.by].avatarUrl || LIVE.profiles[m.by].gradient)].join('§');
+  var sig = [CHAT.theme, dm, m.text, m.image && m.image.url, mine, f.first, f.tail, !!on, nameOf(m.by), !!CHAT.pending[m.id], m.reply && m.reply.id, rsig, UI.reports[m.id] || 0, m.mod, LIVE.profiles[m.by] && (LIVE.profiles[m.by].avatarUrl || LIVE.profiles[m.by].gradient), LIVE.profiles[m.by] && LIVE.profiles[m.by].badge && LIVE.profiles[m.by].badge.label].join('§');
   if (row._sig === sig) return; row._sig = sig;
   row._av.className = 'av' + ((flat ? f.first : f.tail) ? '' : ' hide'); row._av.hidden = (!!mine || dm) && !flat;
   var p = LIVE.profiles[m.by], ini = row._av.querySelector('.ini');
@@ -497,7 +593,7 @@ function fillRow(row, m, f){
   else { row._img.hidden = true; if (!ini){ ini = el('span', 'ini'); row._av.insertBefore(ini, row._img); } ini.textContent = initials(mine && LIVE.me && LIVE.me.name ? LIVE.me.name : nameOf(m.by)); ini.style.background = (p && (p.gradient || p.color)) || teamColor(m.by || 'fan'); }
   var dot = row._av.querySelector('.on'); if (on && !dot) row._av.appendChild(el('span', 'on')); if (!on && dot) dot.remove();
   row._name.hidden = (mine && !flat) || (dm && !flat) || !f.first; row._name.textContent = '';
-  if (!row._name.hidden){ row._name.appendChild(el('span', null, mine ? (flat ? ((LIVE.me && LIVE.me.name) || S('chat.you')) : S('chat.you')) : nameOf(m.by))); row._name.style.color = mine && flat ? '' : ((p && p.color) || 'var(--c-accent)'); if (m.mod) row._name.appendChild(el('span', 'mod', S('chat.modTag'))); }
+  if (!row._name.hidden){ row._name.appendChild(el('span', null, mine ? (flat ? ((LIVE.me && LIVE.me.name) || S('chat.you')) : S('chat.you')) : nameOf(m.by))); row._name.style.color = mine && flat ? '' : ((p && p.color) || 'var(--c-accent)'); if (m.mod) row._name.appendChild(el('span', 'mod', S('chat.modTag'))); else if (p && p.badge){ var rb = el('span', 'mod role-badge', p.badge.label); rb.style.background = p.badge.color; rb.style.color = '#fff'; row._name.appendChild(rb); } }
   row._quote.hidden = !(m.reply && m.reply.id); row._quote.textContent = '';
   if (!row._quote.hidden){ row._quote.appendChild(el('b', null, nameOf(m.reply.by))); row._quote.appendChild(el('span', null, String(m.reply.text || '').slice(0, 140))); }
   row._pic.hidden = !m.image;
@@ -517,7 +613,12 @@ function fillRow(row, m, f){
 function dayEl(label){ var d = UI.days.get(label); if (!d){ d = el('div', 'day', label); UI.days.set(label, d); } return d; }
 function emptyEl(){ if (!UI.emptyEl){ var e = el('div', 'c-empty glass');
   e.innerHTML = '<svg class="ball" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/><path d="M8 12h.01M12 12h.01M16 12h.01"/></svg>';
-  e.appendChild(el('b', null, S('chat.emptyTitle'))); e.appendChild(el('span', null, S('chat.emptyBody'))); UI.emptyEl = e; } return UI.emptyEl; }
+  e._t = el('b'); e._b = el('span'); e.appendChild(e._t); e.appendChild(e._b); UI.emptyEl = e; }
+  var g = grpOf(CHAT.active), locked = g && !g.canRead;
+  var quiet = g && !locked && !g.canPost;   // a channel members can't post in
+  UI.emptyEl._t.textContent = locked ? S('groups.lockedTitle') : quiet ? S('groups.emptyChannel') : S('chat.emptyTitle');
+  UI.emptyEl._b.textContent = locked ? (g.description || S('groups.lockedBody')) : quiet ? (g.description || S('groups.emptyChannelBody')) : S('chat.emptyBody');
+  return UI.emptyEl; }
 function typingEl(typ){
   if (!UI.typingEl){ var r = el('div', 'row in tail typingrow enter'); var av = el('div', 'av'); var ini = el('span', 'ini'); av.appendChild(ini); r.appendChild(av);
     var bw = el('div', 'bwrap'), b = el('div', 'bubble'), d = el('div', 'dots3'); d.innerHTML = '<i></i><i></i><i></i>'; b.appendChild(d); bw.appendChild(b); r.appendChild(bw); r.setAttribute('aria-label', S('chat.someoneTyping')); UI.typingEl = r; }
@@ -664,7 +765,7 @@ function checkMessage(text){
 /* ---------- Composer ---------- */
 function setPresence(){ if (!CHAT.db) return; backend.presence({room: isOpen() ? CHAT.active : null, typing: isOpen() && !!$('msgInput').value.trim()}); }
 function refreshSend(){ var v = $('msgInput').value.trim() || UI.pic; $('composer').classList.toggle('has-text', !!v || Date.now() < UI.slowUntil); $('sendBtn').disabled = !v || Date.now() < UI.slowUntil; }
-function canAttach(){ return !!(CHAT.db && CHAT.canPost && (CHAT.canEdit || CHAT.active === 'support')); }
+function canAttach(){ return !!(CHAT.db && CHAT.canPost && (CHAT.canEdit || CHAT.active === 'support' || (CHAT.perms && CHAT.perms.sendPictures && !pmUid(CHAT.active)))); }
 function updateAttach(){ var ok = canAttach(); $('attachBtn').hidden = !ok; if (!ok) clearPic(); }
 function clearPic(){ UI.pic = null; $('picWrap').classList.remove('show'); refreshSend(); }
 function setPic(f){
@@ -703,27 +804,40 @@ $('composer').addEventListener('submit', async function(e){
   var problem = text ? checkMessage(text) : (Date.now() < UI.slowUntil ? S('rule.slow', {s: Math.ceil((UI.slowUntil - Date.now()) / 1000)}) : null);
   if (problem){ var c = $('composer'); c.classList.remove('shake'); void c.offsetWidth; c.classList.add('shake'); toast(problem); return; }
   var dmTo = CHAT.active === 'support' ? CHAT.uid : (String(CHAT.active).indexOf('sup:') === 0 ? CHAT.active.slice(4) : null);
+  var pmTo = pmUid(CHAT.active);
   var clientId = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-  var doc = {clientId: clientId, text: text, room: dmTo ? null : CHAT.active, dmTo: dmTo, reply: CHAT.replyTo || null};
+  var doc = {clientId: clientId, text: text, room: dmTo || pmTo ? null : CHAT.active, dmTo: dmTo, pmTo: pmTo, reply: CHAT.replyTo || null};
   if (text){ UI.lastText = text.toLowerCase(); UI.lastTextAt = Date.now(); }
   input.value = ''; input.style.height = ''; $('counter').classList.remove('show'); clearReply(); clearPic(); startSlow();
   backend.presence({typing:false});
   CHAT.pending[clientId] = true;
-  backend.addOptimistic({id: clientId, by: CHAT.uid, text: text, ts: Date.now(), room: dmTo ? (dmTo === CHAT.uid ? 'support' : 'sup:' + dmTo) : CHAT.active, reply: doc.reply, mod: CHAT.canEdit || undefined, image: pic ? {url: pic.url, w: pic.w, h: pic.h} : undefined}, dmTo);
+  backend.addOptimistic({id: clientId, by: CHAT.uid, text: text, ts: Date.now(), room: dmTo ? (dmTo === CHAT.uid ? 'support' : 'sup:' + dmTo) : CHAT.active, reply: doc.reply, mod: CHAT.canEdit || undefined, image: pic ? {url: pic.url, w: pic.w, h: pic.h} : undefined}, dmTo, pmTo);
   renderConvo('mine');
   try { await (pic ? backend.sendImage(doc, pic.file) : backend.send(doc)); delete CHAT.pending[clientId]; renderConvo('mine'); if (pic) setTimeout(function(){ URL.revokeObjectURL(pic.url); }, 60000); }
-  catch(err){ delete CHAT.pending[clientId]; backend.dropOptimistic(clientId, dmTo); input.value = text; UI.slowUntil = 0; if (pic){ UI.pic = pic; $('picWrap').classList.add('show'); } renderConvo();
+  catch(err){ delete CHAT.pending[clientId]; backend.dropOptimistic(clientId, dmTo, pmTo); input.value = text; UI.slowUntil = 0; if (pic){ UI.pic = pic; $('picWrap').classList.add('show'); } renderConvo();
     toast(err && err.message ? err.message : S('chat.sendFailed'));
     refreshSend(); }
 });
 function applyComposer(){
-  var gate = $('gate'), gt = $('gateText'), gb = $('gateBtn'), comp = $('composer'), msg = null, showBtn = false, btnLabel = S('chat.readRules'), btnAction = openRules;
+  var gate = $('gate'), gt = $('gateText'), gb = $('gateBtn'), comp = $('composer'), msg = null, showBtn = false, btnLabel = S('chat.readRules'), btnAction = openRules, gb2 = null;
   if (!CHAT.db) msg = S('chat.gate.unavailable');
   else if (!CHAT.uid){ msg = S('chat.gate.signIn'); showBtn = true; btnLabel = S('chat.signIn'); btnAction = function(){ backend.openSignIn(); }; }
   else if (!CHAT.canPost) msg = S('chat.gate.readOnly');
   else if (UI.mod.muted[CHAT.uid]) msg = S('chat.gate.muted');
   else if (!UI.accepted){ msg = S('chat.gate.rules'); showBtn = true; }
+  else if (grpOf(CHAT.active) && !grpOf(CHAT.active).canPost){ var gr = grpOf(CHAT.active), gid = gr.id;
+    var go = function(fn, ok){ return function(){ fn(gid).then(function(){ if (ok) toast(ok, true); }, function(e){ toast(e.message); }); }; };
+    if (gr.status === 'invited'){ msg = S('groups.gate.invited', {name: gr.name}); showBtn = true; btnLabel = S('groups.join'); btnAction = go(backend.groupJoin, S('groups.joined', {name: gr.name}));
+      gb2 = {label: S('groups.decline'), action: go(backend.groupLeave)}; }
+    else if (gr.status === 'requested'){ msg = S('groups.gate.requested'); showBtn = true; btnLabel = S('groups.cancelRequest'); btnAction = go(backend.groupLeave); }
+    else if (gr.status === 'member') msg = S(gr.owned ? 'groups.gate.channelOwned' : 'groups.gate.channel');
+    else if (gr.join === 'open'){ msg = S('groups.gate.open', {name: gr.name}); showBtn = true; btnLabel = S('groups.join'); btnAction = go(backend.groupJoin, S('groups.joined', {name: gr.name})); }
+    else { msg = S('groups.gate.request', {name: gr.name}); showBtn = true; btnLabel = S('groups.requestJoin'); btnAction = go(backend.groupJoin, S('groups.requested')); } }
+  else if (pmUid(CHAT.active)){ var rel = PM.rels[pmUid(CHAT.active)];
+    if (!rel || rel.status === 'pending-out'){ msg = S('pm.waiting', {name: nameOf(pmUid(CHAT.active))}); showBtn = !!rel; btnLabel = S('pm.cancel'); btnAction = function(){ backend.pmRespond(pmUid(CHAT.active), 'cancel'); }; }
+    else if (rel.status === 'blocked') msg = S('pm.blockedGate'); }
   comp.hidden = !!msg; gate.hidden = !msg; updateAttach(); gb.hidden = !showBtn; gb.textContent = btnLabel; gb.onclick = btnAction;
+  var g2 = $('gateBtn2'); if (g2){ g2.hidden = !gb2; if (gb2){ g2.textContent = gb2.label; g2.onclick = gb2.action; } }
   if (msg){ gt.textContent = msg; clearReply(); }
 }
 
@@ -750,60 +864,98 @@ $('rulesAccept').onclick = function(){
   closeRules(); applyComposer(); toast(S('chat.welcome'), true); setTimeout(function(){ $('msgInput').focus({preventScroll:true}); }, 300);
 };
 
-/* ---------- Liquid open / close: the chat grows out of the button you tapped ---------- */
-var MORPH = {src:null, busy:false};
-document.addEventListener('click', function(e){ var a = e.target.closest && e.target.closest('a[href^="#chat"]'); if (a && !isOpen()) MORPH.src = a.getBoundingClientRect(); }, true);
-function rectOf(r){ return {x:r.left, y:r.top, w:r.width, h:r.height, rad:Math.min(r.height / 2, 28)}; }
-function morph(from, to, onShow, onDone){
-  var blob = $('liquid'); blob.style.setProperty('--liquid-bg', getComputedStyle($('messenger')).getPropertyValue('--c-side').trim() || '#0D2747'); blob.hidden = false; blob.classList.remove('fade');
-  var grow = to.w * to.h > from.w * from.h;
-  var x = Spring(from.x, .5, .84, .5), y = Spring(from.y, .5, .84, .5), w = Spring(from.w, grow ? .44 : .36, grow ? .72 : .9, .5), h = Spring(from.h, grow ? .58 : .32, grow ? .8 : .92, .5), rad = Spring(from.rad, .5, 1, .3);
-  var shown = false;
-  function draw(){ blob.style.transform = 'translate(' + x.v.toFixed(1) + 'px,' + y.v.toFixed(1) + 'px)'; blob.style.width = Math.max(0, w.v).toFixed(1) + 'px'; blob.style.height = Math.max(0, h.v).toFixed(1) + 'px'; blob.style.borderRadius = rad.v.toFixed(1) + 'px';
-    var p = Math.min(1, Math.abs(h.v - from.h) / Math.max(1, Math.abs(to.h - from.h)));
-    if (!shown && p > (grow ? .78 : .2)){ shown = true; if (onShow) onShow(); } }
-  [x, y, w, h, rad].forEach(function(s){ s.on(draw); }); draw();
-  x.to(to.x); y.to(to.y); w.to(to.w); rad.to(to.rad); h.to(to.h, function(){ blob.classList.add('fade'); setTimeout(function(){ blob.hidden = true; if (onDone) onDone(); }, 220); });
+/* ---------- The chat is a page: /<locale>/chat[/<room>] ----------
+   Own address for the room list and every room (refresh / share safe), browser Back works like on any site, no opening animation.
+   Rooms in the address: lounge, a match id, support, g-<id> (group), pm-<id> (private chat), sup-<id> (team thread, staff). */
+var CH = {base: '/' + cfg.locale + '/chat', site: '/' + cfg.locale, scroll: 0, title: cfg.siteName || document.title};
+// Next.js sets the page <title> after hydration: set ours now and once more right after
+function setTitle(t){ document.title = t; setTimeout(function(){ document.title = t; }, 0); setTimeout(function(){ document.title = t; }, 400); }
+function chatPathFor(id){ return id ? CH.base + '/' + encodeURIComponent(String(id).replace(/^(sup|pm|g):/, '$1-')) : CH.base; }
+function chatFromPath(){
+  var p = location.pathname.replace(/\/+$/, '');
+  if (p === CH.base) return {open:true, room:''};
+  if (p.indexOf(CH.base + '/') !== 0) return {open:false, room:''};
+  var seg = decodeURIComponent(p.slice(CH.base.length + 1)), m = /^(sup|pm|g)-([a-f0-9]{24})$/i.exec(seg);
+  return {open:true, room: m ? m[1] + ':' + m[2] : seg};
 }
+// old #chat… links (bookmarks, earlier versions) → the page address
+function fromOldHash(){ var h = location.hash.replace(/^#/, ''); if (h === 'chat' || h.indexOf('chat-') === 0){ var id = h === 'chat' || h === 'chat-dm' ? '' : roomFromHash(h); if (!isOpen()) CH.scroll = window.scrollY || 0; history.replaceState(isOpen() ? history.state : {oc: 1, depth: 1, fromSite: true}, '', chatPathFor(id)); return true; } return false; }
+fromOldHash();
+window.addEventListener('hashchange', function(){ if (fromOldHash()) route(); });
+/** Go to the chat (room list or a room). From the site it's a new page in the history; between rooms too (Back returns). */
+function goChat(id, opts){
+  opts = opts || {}; var url = chatPathFor(id), st = history.state || {};
+  if (location.pathname === url){ route(); return; }
+  if (!isOpen()){ CH.scroll = window.scrollY || 0; history.pushState({oc: 1, depth: 1, fromSite: true}, '', url); }
+  else if (opts.replace) history.replaceState(st, '', url);
+  else history.pushState({oc: 1, depth: (st.depth || 0) + 1, fromSite: !!st.fromSite}, '', url);
+  route();
+}
+/** Back to the site: undo the chat pages when we came from the site (keeps the scroll position), else open the home page. */
+function leaveChat(){
+  var st = history.state || {};
+  if (st.fromSite && st.depth){ history.go(-st.depth); return; }
+  CH.scroll = 0; history.pushState(null, '', CH.site); route();
+}
+function rectOf(r){ return {x:r.left, y:r.top, w:r.width, h:r.height, rad:Math.min(r.height / 2, 28)}; }
 function isOpen(){ return $('messenger').classList.contains('open'); }
+function siteInert(on){ ['.nav', 'main#top', 'footer', '.to-top'].forEach(function(q){ var e = document.querySelector(q); if (e){ if (on) e.setAttribute('inert', ''); else e.removeAttribute('inert'); } }); }
 function showMessenger(){ var m = $('messenger'); m.classList.add('open'); m.setAttribute('aria-hidden', 'false'); markSeen(); renderRooms(); setPresence(); setTimeout(function(){ placeSegPill(); placeRoomPill(); }, 30); }
 function route(){
-  var h = location.hash.replace(/^#/, ''), m = $('messenger');
-  if (h === 'chat' || h.indexOf('chat-') === 0){
-    var id = h.slice(5); if (id === 'dm') id = CHAT.pendingRoom || ''; var wasOpen = isOpen(), valid = id && rooms().some(function(r){ return r.id === id; });
+  var st = chatFromPath(), m = $('messenger');
+  if (st.open){
+    var id = st.room;
+    // staff: a fan's team thread can be opened even before it has messages
+    if (CHAT.canEdit && /^sup:[a-f0-9]{24}$/i.test(id) && !DM.threads[id.slice(4)]) DM.threads[id.slice(4)] = {lastTs: Date.now(), lastText: '', lastSeen: 0};
+    var wasOpen = isOpen() && document.body.classList.contains('chat-open'), valid = id && rooms().some(function(r){ return r.id === id; });
+    // after a refresh the private chats arrive a moment later: remember the room and come back to it
+    CHAT.wantRoom = !valid && /^(sup|pm|g):/.test(id) && !UI.ready ? id : null;
     if (valid && String(id).indexOf('sup:') === 0) ensureThread(id.slice(4));
-    if (valid){ CHAT.active = id; m.classList.add('in-convo'); } else { m.classList.remove('in-convo'); CHAT.active = CHAT.active || 'lounge'; }
+    if (valid){ CHAT.active = id; m.classList.add('in-convo'); } else { if (!CHAT.wantRoom) m.classList.remove('in-convo'); CHAT.active = CHAT.active || 'lounge'; }
     if (!wasOpen){
-      var sbw = window.innerWidth - document.documentElement.clientWidth; if (sbw > 0) document.documentElement.style.paddingRight = sbw + 'px';
       document.documentElement.classList.add('chat-open'); document.body.classList.add('chat-open'); if (lenis) lenis.stop();
-      var src = MORPH.src ? rectOf(MORPH.src) : {x: window.innerWidth / 2 - 80, y: window.innerHeight - 90, w: 160, h: 52, rad: 26}; MORPH.src = null;
-      if (REDUCE) showMessenger(); else morph(src, {x:0, y:0, w:window.innerWidth, h:window.innerHeight, rad:0}, showMessenger);
+      siteInert(true); showMessenger();
     }
-    clearReply(); closeCtx(true); renderRooms(); renderHeader(); renderConvo(); setPresence(); placeRoomPill(); updateAttach();
-    if (window.innerWidth > 820 && valid) setTimeout(function(){ if (!$('composer').hidden) $('msgInput').focus({preventScroll:true}); }, wasOpen ? 50 : 650);
+    clearReply(); closeCtx(true); renderRooms(); renderHeader(); renderConvo(); setPresence(); placeRoomPill(); applyComposer();
+    setTitle((valid ? roomById(id).title + ' · ' : '') + S('chat.title') + ' · ' + (cfg.siteName || ''));
+    if (window.innerWidth > 820 && valid) setTimeout(function(){ if (!$('composer').hidden) $('msgInput').focus({preventScroll:true}); }, 50);
+    UI.routed = true;
   } else if (isOpen()){
-    closeCtx(true); var target = document.querySelector('.nav a[href^="#chat"]') || document.querySelector('a[href^="#chat"]');
-    var r = target && target.getBoundingClientRect(), to = r && r.width ? rectOf(r) : {x: window.innerWidth / 2 - 80, y: window.innerHeight - 90, w: 160, h: 52, rad: 26};
+    UI.routed = true;
+    closeCtx(true);
     m.classList.remove('open', 'in-convo'); m.setAttribute('aria-hidden', 'true');
-    var done = function(){ document.documentElement.classList.remove('chat-open'); document.body.classList.remove('chat-open'); document.documentElement.style.paddingRight = ''; if (lenis) lenis.start(); };
-    if (REDUCE) done(); else morph({x:0, y:0, w:window.innerWidth, h:window.innerHeight, rad:0}, to, null, done);
+    document.documentElement.classList.remove('chat-open'); document.body.classList.remove('chat-open'); siteInert(false);
+    setTitle(CH.title);
+    // back where the visitor was on the site
+    if (lenis){ lenis.start(); lenis.scrollTo(CH.scroll, {immediate: true}); } else window.scrollTo(0, CH.scroll);
     setPresence(); renderRooms();
   }
 }
-window.addEventListener('hashchange', route);
+window.addEventListener('popstate', route);
+// links to the chat (nav button, lounge card, match "event chat" buttons…) open the chat page without reloading
+document.addEventListener('click', function(e){
+  if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  var a = e.target.closest && e.target.closest('a[href]'); if (!a) return;
+  var href = a.getAttribute('href');
+  if (a.id === 'chatClose'){ e.preventDefault(); leaveChat(); return; }
+  if (href === CH.base || href.indexOf(CH.base + '/') === 0){
+    e.preventDefault(); var seg = decodeURIComponent(href.slice(CH.base.length + 1)), mm = /^(sup|pm|g)-([a-f0-9]{24})$/i.exec(seg);
+    goChat(href === CH.base ? '' : (mm ? mm[1] + ':' + mm[2] : seg));
+  }
+});
 window.addEventListener('resize', function(){ placeSegPill(); placeRoomPill(); });
-$('backBtn').onclick = function(){ location.hash = 'chat'; };
+$('backBtn').onclick = function(){ var st = history.state || {}; if ((st.depth || 0) > 1) history.back(); else goChat('', {replace: true}); };
 document.addEventListener('keydown', function(e){
   if (e.key !== 'Escape') return;
   if (CTX.row){ closeCtx(); return; }
   if ($('rulesSheet').classList.contains('open')){ closeRules(); return; }
-  if (isOpen()){ if ($('replyWrap').classList.contains('show')) clearReply(); else location.hash = 'matchday'; }
+  if (isOpen()){ if ($('replyWrap').classList.contains('show')) clearReply(); else leaveChat(); }
 });
 
 /* ---------- Chat themes (per viewer; only the chat changes) ---------- */
 var THEMES = ['oddsclub','whatsapp','whatsapp-dark','telegram','imessage','messenger','discord','signal'].map(function(id){ return [id, S('theme.' + id + '.name'), S('theme.' + id + '.desc')]; });
 CHAT.theme = (function(){ var t = store('ps_chat_theme'); return THEMES.some(function(x){ return x[0] === t; }) ? t : 'oddsclub'; })();
-function setThemeAttr(id){ ['messenger','ctx','rulesSheet','themeSheet','authSheet'].forEach(function(k){ var e = $(k); if (e) e.setAttribute('data-ct', id); }); }
+function setThemeAttr(id){ ['messenger','ctx','rulesSheet','themeSheet','authSheet','personSheet','roomSheet'].forEach(function(k){ var e = $(k); if (e) e.setAttribute('data-ct', id); }); }
 function applyTheme(id, animate){
   if (id === CHAT.theme && !animate) { setThemeAttr(id); return; }
   var run = function(){ CHAT.theme = id; setThemeAttr(id); store('ps_chat_theme', id);
@@ -843,17 +995,18 @@ window.addEventListener('pagehide', touchSeen);
 /* ================= Data + chat backend ================= */
 LIVE.matches = (cfg.matches || []).map(function(m){ var o = Object.assign({}, m); o.kickoff = kickoffLabel(m.startsAt); return o; });
 renderSportTabs(); renderMatches(); updateTicker(); LIVE.dirty = true;
-function refreshChat(mode){ renderRooms(); if (isOpen()){ renderHeader(); renderConvo(mode); } }
+function refreshChat(mode){ renderRooms(); if (isOpen()){ renderHeader(); renderConvo(mode); } if (CHAT.wantRoom && rooms().some(function(r){ return r.id === CHAT.wantRoom; })){ CHAT.wantRoom = null; route(); } }
 function updateLounge(){
   var n = online(null), msgs = LIVE.messages.length;
   var info = CHAT.db ? S('lounge.online', {n: n}) : S('lounge.info');
-  $('loungeInfo').textContent = msgs ? S('lounge.withMessages', {info: info, n: msgs}) : info;
-  $('sideOnline').textContent = CHAT.db ? S('chat.onlineCount', {n: n}) : S('chat.liveLabel');
+  var li = $('loungeInfo'), so = $('sideOnline');   // may be missing if something rewrote the page (extensions)
+  if (li) li.textContent = msgs ? S('lounge.withMessages', {info: info, n: msgs}) : info;
+  if (so) so.textContent = CHAT.db ? S('chat.onlineCount', {n: n}) : S('chat.liveLabel');
 }
 var backend = createChatBackend(cfg, {
   S: S,
   ready: function(info){
-    CHAT.db = true; CHAT.user = backend; CHAT.uid = info.uid || null; CHAT.canPost = !!info.canPost; CHAT.canEdit = !!info.canEdit; LIVE.me = info.me || null;
+    CHAT.db = true; CHAT.user = backend; CHAT.uid = info.uid || null; UI.ready = true; CHAT.perms = info.perms || {}; CHAT.canPost = !!info.canPost; CHAT.canEdit = !!info.canEdit; LIVE.me = info.me || null;
     if (info.profiles) Object.assign(LIVE.profiles, info.profiles);
     UI.accepted = !!(info.rulesAccepted || (CHAT.uid && store('ps_rules_' + CHAT.uid)));
     applyComposer(); updateLounge(); refreshChat();
@@ -862,6 +1015,22 @@ var backend = createChatBackend(cfg, {
   profiles: function(p){ Object.assign(LIVE.profiles, p); refreshChat(); },
   messages: function(list, mode){ var firstLoad = !UI.loaded; UI.loaded = true; LIVE.messages = list; if (isOpen()) renderConvo(firstLoad ? undefined : mode); renderRooms(); renderMatches(); updateLounge(); LIVE.dirty = true; },
   myDm: function(list, mode){ DM.mine = list; refreshChat(CHAT.active === 'support' ? mode : undefined); },
+  pms: function(rels){ PM.rels = rels || {}; refreshChat(); if (pmUid(CHAT.active)) applyComposer(); if (CHAT.wantRoom) return;
+    // the chat I'm looking at was closed (blocked / cancelled / declined): back to the room list
+    if (pmUid(CHAT.active) && !PM.rels[pmUid(CHAT.active)] && isOpen() && chatFromPath().room === CHAT.active) goChat('', {replace: true}); },
+  groups: function(list){ GR.list = list || []; refreshChat(); if (grpId(CHAT.active)) applyComposer();
+    if (grpId(CHAT.active) && !grpOf(CHAT.active) && !CHAT.wantRoom && isOpen() && chatFromPath().room === CHAT.active) goChat('', {replace: true}); },
+  groupMsgs: function(id, list, mode){ GR.msgs[id] = list; refreshChat(CHAT.active === 'g:' + id ? mode : undefined); },
+  pmMsgs: function(uid, list, mode){ PM.msgs[uid] = list; refreshChat(CHAT.active === 'pm:' + uid ? mode : undefined); },
+  // "Message" from the people panel / person card
+  openChatWith: function(uid){
+    if (CHAT.canEdit){ if (!DM.threads[uid]) DM.threads[uid] = {lastTs: Date.now(), lastText: '', lastSeen: 0}; ensureThread(uid); openRoom('sup:' + uid); return; }
+    var p = LIVE.profiles[uid]; if (p && p.staff){ openRoom('support'); return; }
+    if (PM.rels[uid]) openRoom('pm:' + uid);
+  },
+  activeRoom: function(){ return CHAT.active; },
+  openRoom: function(id){ openRoom(id); },
+  nameOf: function(uid){ return nameOf(uid); },
   dm: function(uid, list, mode){ DM.msgs[uid] = list; refreshChat(CHAT.active === 'sup:' + uid ? mode : undefined); },
   threads: function(t){ DM.threads = t || {}; refreshChat(); if (String(CHAT.active).indexOf('sup:') === 0) ensureThread(CHAT.active.slice(4)); },
   agent: function(a){ DM.agent.uid = (a && a.uid) || null; DM.agent.lastSeen = Number(a && a.lastSeen) || 0; if (a && a.profile && a.uid) LIVE.profiles[a.uid] = a.profile; refreshChat(); },
@@ -870,7 +1039,7 @@ var backend = createChatBackend(cfg, {
   reports: function(counts){ UI.reports = counts || {}; if (isOpen()) renderConvo(); },
   matches: function(list){ LIVE.matches = list.map(function(m){ var o = Object.assign({}, m); o.kickoff = kickoffLabel(m.startsAt); return o; });
     renderSportTabs(); renderMatches(); updateTicker(); renderRooms(); if (isOpen()) renderHeader(); LIVE.dirty = true;
-    if (/^#chat-/.test(location.hash) && location.hash !== '#chat-dm' && UI.renderedRoom !== location.hash.slice(6)) route(); },
+    if (chatFromPath().room && UI.renderedRoom !== chatFromPath().room) route(); },
   peers: function(peers){ CHAT.peers = peers || []; updateLounge(); clearTimeout(window.__ocPeerT); window.__ocPeerT = setTimeout(function(){ renderRooms(); if (isOpen()){ renderHeader(); renderConvo(); } }, 120); },
   toast: function(msg, ok){ toast(msg, ok); }
 });

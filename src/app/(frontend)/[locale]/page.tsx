@@ -1,7 +1,6 @@
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
-import Site from '@/site/Site'
-import { LanguageSwitcher } from '@/site/LanguageSwitcher'
+import { renderSite } from '@/site/render-site'
 import { loadSite, payloadClient } from '@/i18n/data'
 import { getBrand, seoDescription, siteUrl } from '@/lib/brand'
 
@@ -54,26 +53,5 @@ function plainText(v: string) {
 
 export default async function Page({ params }: Params) {
   const { locale } = await params
-  const data = await loadSite(locale)
-  if (!data) notFound()
-  const switcher = (
-    <LanguageSwitcher
-      current={locale}
-      label={data.cfg.strings['nav.language'] || 'Language'}
-      languages={data.languages.map((l) => ({ code: l.code, nativeName: l.nativeName, iconUrl: l.iconUrl }))}
-    />
-  )
-  const brand = await getBrand(await payloadClient())
-  const base = siteUrl()
-  // structured data: lets search engines show the site name and logo
-  const jsonLd = [
-    { '@context': 'https://schema.org', '@type': 'Organization', name: data.cfg.siteName, url: base, logo: base + '/brand/icon/512' },
-    { '@context': 'https://schema.org', '@type': 'WebSite', name: data.cfg.siteName, url: base + '/' + locale, inLanguage: locale },
-  ]
-  return (
-    <>
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, '\\u003c') }} />
-      <Site cfg={data.cfg} initial={data.initial} extras={data.extras} languageSwitcher={switcher} logoUrl={brand.logoUrl} />
-    </>
-  )
+  return renderSite(locale)
 }

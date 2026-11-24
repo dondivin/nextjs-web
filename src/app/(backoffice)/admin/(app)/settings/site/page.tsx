@@ -23,7 +23,7 @@ export default async function SiteSettingsPage() {
       languages={languages}
       partners={partners.docs.map((p) => ({ id: String(p.id), name: p.name, active: !!p.active }))}
       updatedAt={site.updatedAt || null}
-      brand={{ logoUrl: brand.logoUrl, shareUrl: brand.shareUrl, siteUrl: siteUrl() }}
+      brand={{ logoUrl: brand.logoUrl, shareUrl: brand.shareUrl, heroUrl: brand.hero?.url || null, siteUrl: siteUrl() }}
       initial={{
         siteName: site.siteName || 'OddsClub',
         defaultPartner: dp ? String(typeof dp === 'object' ? dp.id : dp) : null,

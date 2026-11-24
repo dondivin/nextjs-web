@@ -17,7 +17,7 @@ export type WireMsg = {
   clientId?: string
 }
 export type ChatImage = { url: string; w: number; h: number }
-export type Profile = { name: string; color?: string; gradient?: string; avatarUrl?: string; staff?: boolean }
+export type Profile = { name: string; color?: string; gradient?: string; avatarUrl?: string; staff?: boolean; badge?: { label: string; color: string } }
 
 const relId = (x: unknown): string | null =>
   x && typeof x === 'object' && 'id' in x ? String((x as { id: unknown }).id) : x ? String(x) : null
@@ -102,7 +102,8 @@ export async function profilesFor(payload: Payload, ids: (string | null | undefi
   ])
   for (const m of members.docs) {
     const av = m.avatar && typeof m.avatar === 'object' ? m.avatar.url : null
-    out[String(m.id)] = { name: m.displayName, color: m.color || undefined, gradient: m.avatarGradient || undefined, avatarUrl: av || undefined }
+    const pr = await permsOf(payload, m.memberRole)
+    out[String(m.id)] = { name: m.displayName, color: m.color || undefined, gradient: m.avatarGradient || undefined, avatarUrl: av || undefined, ...(pr.showBadge ? { badge: { label: pr.role, color: pr.color } } : {}) }
   }
   for (const u of staff.docs) {
     const av = u.chatAvatar && typeof u.chatAvatar === 'object' ? u.chatAvatar.url : null
@@ -213,4 +214,36 @@ export function toEngineMatch(m: any): EngineMatch {
 export async function activeMatches(payload: Payload, req?: PayloadRequest): Promise<EngineMatch[]> {
   const res = await payload.find({ collection: 'matches', where: { active: { equals: true } }, sort: 'order', pagination: false, depth: 0, overrideAccess: true, req })
   return res.docs.map(toEngineMatch)
+}
+
+/* ---------- member roles (rights in the chat) ---------- */
+export type Perms = {
+  roleId: string | null; role: string; color: string
+  createGroups: boolean; createChannels: boolean; maxRooms: number; sendPictures: boolean; privateChats: boolean; showBadge: boolean
+}
+const BASIC: Perms = { roleId: null, role: 'Member', color: '#3E63DD', createGroups: false, createChannels: false, maxRooms: 0, sendPictures: false, privateChats: true, showBadge: false }
+export const STAFF_PERMS: Perms = { roleId: null, role: 'Team', color: '#3E63DD', createGroups: true, createChannels: true, maxRooms: 1000, sendPictures: true, privateChats: false, showBadge: false }
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function toPerms(r: any): Perms {
+  return {
+    roleId: String(r.id), role: r.name, color: r.color || '#3E63DD',
+    createGroups: !!r.createGroups, createChannels: !!r.createChannels, maxRooms: Number(r.maxRooms ?? 3),
+    sendPictures: !!r.sendPictures, privateChats: r.privateChats !== false, showBadge: !!r.showBadge,
+  }
+}
+/** All roles (cached 30 s; cleared when a role changes). */
+export function rolesTable(payload: Payload) {
+  return cached('roles', 30_000, async () => {
+    const res = await payload.find({ collection: 'member-roles', pagination: false, depth: 0, overrideAccess: true })
+    const byId = new Map(res.docs.map((r) => [String(r.id), toPerms(r)]))
+    const def = res.docs.find((r) => r.isDefault)
+    return { byId, def: def ? toPerms(def) : BASIC }
+  })
+}
+/** The rights of one member (their role, else the default role). */
+export async function permsOf(payload: Payload, memberRole: unknown): Promise<Perms> {
+  const t = await rolesTable(payload)
+  const id = memberRole && typeof memberRole === 'object' && 'id' in memberRole ? String((memberRole as { id: unknown }).id) : memberRole ? String(memberRole) : null
+  return (id && t.byId.get(id)) || t.def
 }

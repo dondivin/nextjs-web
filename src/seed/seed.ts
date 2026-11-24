@@ -20,15 +20,6 @@ function today(h: number, m: number) {
   return d.toISOString()
 }
 
-const MATCHES = [
-  { sport: 'football', league: 'Example league', home: 'Riverside FC', away: 'North Harbour', status: 'live', minute: 63, scoreHome: 1, scoreAway: 1, oddsHome: 2.4, oddsDraw: 3.1, oddsAway: 2.9, startsAt: today(19, 0), order: 1 },
-  { sport: 'football', league: 'Example league', home: 'Lakeview United', away: 'Hillcrest Town', status: 'upcoming', oddsHome: 1.95, oddsDraw: 3.4, oddsAway: 3.8, startsAt: today(20, 45), order: 2 },
-  { sport: 'basketball', league: 'Example league', home: 'Harbor Hawks', away: 'Summit Kings', status: 'live', minute: 31, scoreHome: 58, scoreAway: 54, oddsHome: 1.72, oddsAway: 2.1, startsAt: today(19, 30), order: 3 },
-  { sport: 'tennis', league: 'Example open', home: 'A. Moreau', away: 'K. Lindqvist', status: 'upcoming', oddsHome: 1.85, oddsAway: 1.95, startsAt: today(21, 0), order: 4 },
-  { sport: 'esports', league: 'Example cup', home: 'Nova Esports', away: 'Polar Five', status: 'upcoming', oddsHome: 1.6, oddsAway: 2.25, startsAt: today(22, 0), order: 5 },
-  { sport: 'hockey', league: 'Example league', home: 'Ice Wolves', away: 'Granite Bears', status: 'upcoming', oddsHome: 2.2, oddsDraw: 4.1, oddsAway: 2.6, startsAt: today(22, 30), order: 6 },
-] as const
-
 const RULES = [
   { icon: 'age', en: ['18+ only', 'This chat is for adults. Betting talk is for people aged 18 and over.'], fr: ['18+ uniquement', 'Ce chat est réservé aux adultes. Les discussions sur les paris sont réservées aux 18 ans et plus.'] },
   { icon: 'heart', en: ['Respect everyone', 'No insults, hate, threats or harassment. Banter about teams is fine, abuse of people is not.'], fr: ['Respectez tout le monde', 'Pas d’insultes, de haine, de menaces ni de harcèlement. Chambrer les équipes, oui ; attaquer les personnes, non.'] },
@@ -88,11 +79,13 @@ export async function seed(payload: Payload, opts: { forceStrings?: boolean } = 
     log('partner ' + p.name)
   }
 
-  // matches (only when there are none)
-  const mc = await payload.count({ collection: 'matches' })
-  if (!mc.totalDocs) {
-    for (const m of MATCHES) await payload.create({ collection: 'matches', data: { ...m, active: true } })
-    log('matches: ' + MATCHES.length)
+  // matches: none are seeded (no sample data) — the team adds real matches in the back office (/admin/matches)
+
+  // member roles: the default one (a setting, not sample data) — more roles are made in the back office (/admin/roles)
+  const rc = await payload.count({ collection: 'member-roles', overrideAccess: true })
+  if (!rc.totalDocs) {
+    await payload.create({ collection: 'member-roles', overrideAccess: true, data: { name: 'Member', description: 'Everyone, by default', color: '#3E63DD', isDefault: true, order: 0, createGroups: false, createChannels: false, maxRooms: 0, sendPictures: false, privateChats: true, showBadge: false } })
+    log('member role: Member (default)')
   }
 
   // site settings

@@ -19,10 +19,14 @@ export default async function ModerationPage() {
     payload.find({ collection: 'matches', pagination: false, depth: 0, select: { home: true, away: true } }),
   ])
   const matchTitle = new Map(matches.docs.map((m) => [String(m.id), `${m.home} v ${m.away}`]))
+  const groupRooms = await payload.find({ collection: 'chat-rooms', pagination: false, depth: 0, select: { name: true } })
+  const roomName = new Map(groupRooms.docs.map((r) => [String(r.id), r.name]))
   const memberName = new Map(members.docs.map((m) => [String(m.id), m.displayName]))
   const roomTitle = (room?: string | null) => {
     if (!room || room === 'lounge') return 'Community lounge'
     if (room.startsWith('dm:')) return 'Direct chat · ' + (memberName.get(room.slice(3)) || 'member')
+    if (room.startsWith('g:')) return 'Group · ' + (roomName.get(room.slice(2)) || 'group')
+    if (room.startsWith('pm:')) return 'Private chat · ' + room.slice(3).split('_').map((id) => memberName.get(id) || 'member').join(' & ')
     return matchTitle.get(room) || 'Event room'
   }
 
@@ -67,12 +71,13 @@ export default async function ModerationPage() {
     name: m.displayName,
     email: m.email,
     hasPhoto: !!m.avatar,
-    role: (m.role || 'fan') as ModMember['role'],
+    roleId: m.memberRole ? String(typeof m.memberRole === 'object' ? m.memberRole.id : m.memberRole) : null,
     status: (m.status || 'active') as ModMember['status'],
     mutedUntil: m.mutedUntil || null,
     lastSeenAt: m.lastSeenAt || null,
     createdAt: m.createdAt,
   }))
 
-  return <ModerationView reports={[...byMessage.values()]} messages={msgs} members={mems} />
+  const roles = await payload.find({ collection: 'member-roles', sort: 'order', pagination: false, depth: 0, select: { name: true, isDefault: true, color: true } })
+  return <ModerationView reports={[...byMessage.values()]} messages={msgs} members={mems} roles={roles.docs.map((r) => ({ id: String(r.id), name: r.name, isDefault: !!r.isDefault, color: r.color || null }))} />
 }

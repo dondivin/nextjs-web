@@ -10,7 +10,7 @@ export type ViewerKind = 'anon' | 'member' | 'staff'
 export type Viewer = { kind: ViewerKind; uid: string | null }
 export type Presence = { room: string | null; typing: boolean }
 export type ChatEvent = { type: string; [k: string]: unknown }
-export type Client = { id: string; viewer: Viewer; presence: Presence; send: (e: ChatEvent) => void }
+export type Client = { id: string; viewer: Viewer; presence: Presence; send: (e: ChatEvent) => void; seen?: number; close?: () => void }
 
 type Hub = {
   clients: Map<string, Client>
@@ -49,8 +49,35 @@ export function schedulePeers() {
 }
 
 export function addClient(c: Client) {
+  c.seen = Date.now()
   hub.clients.set(c.id, c)
   schedulePeers()
+  startSweep()
+}
+
+/*
+ * Dead connections: a closed tab doesn't always tell the server (dev server, flaky networks), which left "ghost" people
+ * online. Every open chat checks in at least once a minute (presence keep-alive); connections silent for 150 s are dropped.
+ */
+const STALE_MS = 150_000
+const g2 = globalThis as unknown as { __ocChatSweep?: ReturnType<typeof setInterval> }
+function startSweep() {
+  if (g2.__ocChatSweep) return
+  g2.__ocChatSweep = setInterval(() => {
+    const now = Date.now()
+    for (const c of hub.clients.values()) if (now - (c.seen || 0) > STALE_MS) dropClient(c.id)
+  }, 30_000)
+}
+export function dropClient(id: string) {
+  const c = hub.clients.get(id)
+  if (!c) return
+  hub.clients.delete(id)
+  try { c.close?.() } catch {}
+  schedulePeers()
+}
+/** Close every connection of one account (deleted / banned). */
+export function dropUid(uid: string) {
+  for (const c of hub.clients.values()) if (c.viewer.uid === uid) dropClient(c.id)
 }
 
 export function removeClient(id: string) {
@@ -60,6 +87,7 @@ export function removeClient(id: string) {
 export function setPresence(id: string, uid: string | null, p: Partial<Presence>) {
   const c = hub.clients.get(id)
   if (!c || c.viewer.uid !== uid) return false
+  c.seen = Date.now()
   if (p.room !== undefined) c.presence.room = p.room
   if (p.typing !== undefined) c.presence.typing = p.typing
   schedulePeers()

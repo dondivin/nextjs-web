@@ -108,3 +108,34 @@ export async function storeBrandImage(payload: Payload, file: File, kind: 'logo'
   })
   return doc.id
 }
+
+/**
+ * First-screen person picture: transparency kept (WebP with alpha), longest side ≤ 1800 px, empty margins trimmed so the
+ * person stands on the bottom edge. Reports whether the picture really has a transparent background.
+ */
+export async function storeHeroImage(payload: Payload, file: File) {
+  if (!file || typeof file.arrayBuffer !== 'function') throw new AvatarError('missing')
+  if (file.size > 10 * 1024 * 1024) throw new AvatarError('tooBig')
+  if (file.type && !['image/png', 'image/webp', 'image/avif', 'image/jpeg', 'image/heic', 'image/heif'].includes(file.type)) throw new AvatarError('type')
+  let out: Buffer, transparent = false
+  try {
+    const src = sharp(Buffer.from(await file.arrayBuffer()), { limitInputPixels: 80_000_000, animated: false }).rotate()
+    const meta = await src.metadata()
+    if (meta.hasAlpha) {
+      const stats = await src.clone().stats()
+      transparent = (stats.channels[3]?.min ?? 255) < 250 // some pixels really are see-through
+    }
+    let img = src
+    if (transparent) img = img.trim({ threshold: 1 }) // cut empty transparent margins
+    out = await img.resize(1800, 1800, { fit: 'inside', withoutEnlargement: true }).webp({ quality: 88, alphaQuality: 95 }).toBuffer()
+  } catch {
+    throw new AvatarError('type')
+  }
+  const doc = await payload.create({
+    collection: 'media',
+    overrideAccess: true,
+    data: { alt: 'First screen picture' },
+    file: { data: out, mimetype: 'image/webp', name: `brand-hero-${Date.now()}.webp`, size: out.length },
+  })
+  return { id: doc.id, transparent }
+}

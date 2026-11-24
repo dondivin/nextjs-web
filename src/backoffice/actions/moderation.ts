@@ -56,11 +56,12 @@ export async function setMemberStatus(id: string, status: 'active' | 'muted' | '
   })
 }
 
-export async function setMemberRole(id: string, role: 'fan' | 'agent' | 'moderator') {
+/** Give a member a role (null = the default role). */
+export async function setMemberRole(id: string, roleId: string | null) {
   return run(async () => {
     await actionUser('moderator')
     const payload = await payloadClient()
-    await payload.update({ collection: 'members', id, data: { role } })
+    await payload.update({ collection: 'members', id, data: { memberRole: roleId || null } })
     revalidatePath('/admin/moderation')
   })
 }

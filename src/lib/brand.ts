@@ -2,7 +2,7 @@ import type { Payload } from 'payload'
 import { pickLocalized } from '../fields/localizedText'
 
 /** Platform brand (logo, share image, search description) from Site settings. Server only. */
-export type Brand = { siteName: string; logoUrl: string | null; logoId: string | null; shareUrl: string | null; shareId: string | null; night: string; navy: string; blue: string }
+export type Brand = { siteName: string; logoUrl: string | null; logoId: string | null; shareUrl: string | null; shareId: string | null; night: string; navy: string; blue: string; hero: { url: string; w: number; h: number } | null }
 
 const urlOf = (x: unknown) => (x && typeof x === 'object' && 'url' in x ? ((x as { url?: string | null }).url || null) : null)
 const idOf = (x: unknown) => (x && typeof x === 'object' && 'id' in x ? String((x as { id: unknown }).id) : x ? String(x) : null)
@@ -19,6 +19,7 @@ export async function getBrand(payload: Payload): Promise<Brand> {
     night: dp?.colors?.night || '#081A30',
     navy: dp?.colors?.navy || '#0D2747',
     blue: dp?.colors?.blue || '#2F6FE0',
+    hero: site.heroImage && typeof site.heroImage === 'object' && site.heroImage.url ? { url: site.heroImage.url, w: site.heroImage.width || 0, h: site.heroImage.height || 0 } : null,
   }
 }
 

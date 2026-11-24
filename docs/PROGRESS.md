@@ -211,3 +211,94 @@ See `docs/HANDOFF.md` §4.
 - **Production must set `NEXT_PUBLIC_SERVER_URL`** (e.g. https://oddsclub.example) — share images, canonical URLs, sitemap and
   structured data are absolute and currently fall back to http://localhost:3000. After launch: submit /sitemap.xml in Google Search Console.
 - Verified with a temporary test logo (then removed): nav, chat sidebar, login, favicon, generated share image all switched.
+
+### 2026-11-24 (session 6) — first-screen person picture
+- Owner: big cut-out person picture (no background) on the first screen, managed in the back office. Choices: **left side, in front of
+  the headline** (phone stays in front), **one picture for the whole site** (not per partner).
+- `site-settings.heroImage` (media). Back office: Site settings → **First screen picture** (upload / replace / remove, desktop preview).
+  `storeHeroImage()`: PNG/WebP/AVIF (JPG accepted), ≤ 10 MB, transparency kept (WebP with alpha), empty transparent margins trimmed,
+  longest side ≤ 1800 px; reports whether the picture really is transparent → warning toast if it still has a background.
+- Site: `<img class="hero-person">` in the hero (z 2: above headline, below the phone canvas z 3 and the intro/buttons z 4), bottom fades
+  out (mask) so the intro text stays readable, rise-in on load (none with reduced motion). Phones / portrait tablets: starts under the
+  partner bar, aligned with the phone slot, partly behind the phone. (A drop-shadow + mask drew a visible box → removed.)
+- Verified with a temporary test figure (then removed) on desktop 1440, tablet 1024 portrait, phone 390; transparency check true for a
+  cut-out PNG and false for a JPG with background.
+- Back-to-top slowed down (owner): duration grows with distance, `min(3, 1.6 + scrollY/4500)` s (≈2.8 s from the bottom), with an
+  ease-in-out curve (was a fixed 1.6 s with a fast start). The 3D phone hold (`__phoneJump`) uses the same duration.
+- Hydration warning on `<html>` (`lang="fr"` vs `"en"` + class `translated-ltr`) = Chrome's page translation editing the tag before React
+  loads, not a bug. Added `suppressHydrationWarning` on the public `<html>` (that element's attributes only). Translation stays allowed.
+
+### 2026-11-24 (session 6, later) — people, online list, fan-to-fan private chats
+- Explained to owner: the "football" rooms are the seeded sample matches (Example league) — real rooms; delete/disable them in
+  /admin/matches. Previously the only private chat was fan ↔ partner team; nobody could search or start a conversation.
+- Owner decisions: **fans → fans only if both agree** (request → accept / decline / block), staff can message any fan directly;
+  **online list for everyone**.
+- Server: `chat-requests` collection + `src/chat/pm.ts`; service `people` (username search, signed-in only), `chatRequest`
+  (rules: accepted house rules, not muted; note ≤ 140 chars checked like messages; ≤ 10 open / 20 per day; 7 days after a decline;
+  asking back = accepting), `chatRespond` (accept / decline / block / cancel / unblock); `send` with `pmTo` only for accepted pairs.
+  Private rooms excluded from the public room list, REST read access and chat-image access; hooks send pm messages and request
+  changes only to the two fans (each gets their own view; decline/block invisible to the other side).
+- Browser: people panel in the chat sidebar (`#people`): chat requests (Accept / Decline / Block), "Online now" strip (staff first,
+  MOD tag, +N guests), people results when searching (the room search now also finds people). Person card (`#personSheet`):
+  request with optional note / waiting / accept / open chat / block / unblock; staff get "Message" (opens the fan's team thread);
+  fans clicking staff get "Message the team". Engine: `pm:<uid>` rooms (waiting state + gate, typing, header block button),
+  hooks `pms`, `pmMsgs`, `openChatWith`.
+- Verified: API (12 checks incl. privacy: anonymous stream + public REST never see private messages; block stops messages and
+  requests) and two browsers (request → card on the other side → accept → chat opens → message delivered). Test data removed.
+  Not verified in a browser: the staff "Message" flow (no staff login available to Claude).
+
+### 2026-11-24 (session 6, later) — sample matches removed
+- Owner: no sample conversations. The 6 seeded sample matches (Example league…) are removed from `src/seed/seed.ts` (the seed used
+  to re-add them whenever the matches table was empty) and deleted from the database (no messages/pictures were in their rooms).
+  The chat now shows the lounge + private chats until real matches are added in /admin/matches.
+- Chrome translation turned initials into words ("LU" → "READ", "NE" → "BORN"): team badges, avatar initials and scores are now
+  marked `translate="no"` / `notranslate` (engine `el()` + people panel avatars). ("DIRECT" was the French LIVE label, not a bug.)
+
+### 2026-11-24 (session 6, later) — no "Fan" label, chat survives a refresh
+- "Fan" was a fallback name (profile not loaded yet) and a role label. Now: unknown names are fetched on demand (`fetchName`,
+  '…' meanwhile), "Deleted account" when the account no longer exists, "Guest" for visitors; headers / person cards show
+  Online now / Offline (staff: Partner team). Default wording "fans" → "members / the community" (en + fr); 14 untouched DB texts
+  updated the same way (edited texts left alone).
+- Refresh: private and team chats now have their own address (`#chat-pm-<id>`, `#chat-sup-<id>`, was a shared `#chat-dm` kept in
+  memory) → a refresh reopens the same conversation once its data arrives (`CHAT.wantRoom`). Opening from a refresh / link shows
+  the chat at once (no morph animation; the morph stays for taps). Staff can open a fan's team thread by address even before it
+  has messages. Verified in the browser (refresh inside a private chat → same chat, opened instantly). Test data removed.
+
+### 2026-11-24 (session 6, later) — groups & channels
+- Owner decisions: **staff create/edit rooms**; two kinds: **group** (members post) and **channel** (only the team posts, members
+  read + react); joining rules per room: **open** (anyone reads, one tap to join), **request** (visible, team approves),
+  **invite** (hidden, invited people accept) + **auto-add new members** (and "Add all members" for existing accounts).
+- Collections `chat-rooms`, `chat-room-members`; `src/chat/groups.ts` (visibility / read / post rules, `roomsFor`, `roomAccess`,
+  `setMembership`). Service: snapshot `groups` + `gMsgs`, actions `groups` (refresh after a `groups` event), `group-join`,
+  `group-leave`; `send` to `g:<id>` checked; signup auto-joins auto-add rooms. Hooks: group messages go to everyone for open rooms,
+  else members + team only; any room/membership change → `groups` event (clients refetch). Public REST never returns `g:` messages.
+- Back office: **/admin/groups** (list: kind, join rule, auto-add, members / waiting / invited, archived) + "New group or channel"
+  sheet; **/admin/groups/[id]**: settings (shared `group-fields.tsx`), members with tabs Members / Waiting (accept, decline) /
+  Invited, invite by username (or add directly), "Add all members", delete (room + memberships + messages). Nav: Community.
+- Chat: rooms list after the lounge (icon, CHANNEL tag, status lines: invited / request sent / members only), header "Group ·
+  N members", leave button, room rules in the pinned bar, gate with Join / Request to join / Cancel request / Join + Decline (invite),
+  "Members only" placeholder, "No announcements yet" for empty channels. Address `#chat-g-<id>` (survives a refresh).
+- Ghost "online" people: closed tabs weren't always noticed. Now every chat sends a keep-alive each minute, the server drops
+  connections silent for 150 s, and deleting an account closes its connections.
+- Verified: API (visibility for anonymous / members, auto-add, channel posting refused, request → accepted → can post, invite →
+  accept, invite-only messages never reach non-members / anonymous / public API, leave) and the browser (channel + request flow).
+  Test rooms/accounts removed. Not verified signed in: the back-office pages (no staff login for Claude).
+
+### 2026-11-24 (session 6, later) — the chat is a page
+- Owner: no "sheet / dialog" opening animation; the chat should be a page. Now `/[locale]/chat` (room list) and
+  `/[locale]/chat/<room>` (lounge, match id, support, g-<id>, pm-<id>, sup-<id>) — route `app/(frontend)/[locale]/chat/[[...room]]`
+  renders the same site with the chat already open (`renderSite(locale, { room })` in `src/site/render-site.tsx`; chat pages are
+  noindex). The engine navigates with history.pushState (`goChat`, `leaveChat`, `chatFromPath`, popstate): no morph, browser Back
+  goes room → list → site and restores the site's scroll position; the close button / Escape do the same; tab title = room.
+  The site behind is `inert` while the chat is open. Old `#chat…` links are converted to the new addresses (on load and in-page).
+- Verified in the browser (desktop + phone): open from the nav, room, Back ×2 (scroll restored to 4800 px), direct load already
+  open before scripts, close → /en, titles, old hash link.
+- Browser translation turned OFF for the public site (`<html translate="no" class="notranslate">` + `<meta name="google"
+  content="notranslate">`). Chrome translating /fr into English rewrote the page before React loaded (`<font>` wrappers, changed
+  aria-labels) → "Hydration failed", React rebuilt the tree and the chat engine hit missing elements ("Cannot set properties of
+  null" in updateLounge). The site's own language switcher replaces it. `updateLounge` is null-safe too.
+- Chat picture viewer animated (owner: "grow bigger to full screen and return where it was"): a frame grows from the bubble's exact
+  rect to the full-screen fit (bubble crop opens into the whole picture, corners round off, background fades in, bubble copy hidden),
+  and closing (tap, ✕, Escape) shrinks it back into the re-measured bubble; if the bubble scrolled away it fades/scales out.
+  Drag down/up to close (follows the finger, background fades; < 110 px springs back). Reduced motion: instant. Resize-aware.
+  Verified: frame measured at bubble → 694×582 → 817×685 → 859×720 and back to the bubble; drag-to-close.

@@ -1,6 +1,6 @@
 import type { CollectionConfig } from 'payload'
 import { hasRole } from '../../access'
-import { onMemberChange } from '../../chat/hooks'
+import { onMemberChange, onMemberDelete } from '../../chat/hooks'
 import { gradientColor, isGradient, randomGradient } from '../../chat/gradient'
 
 // role / status / mute fields can only be set by back-office moderators (also on create: the public sign-up must not pick its own role)
@@ -27,6 +27,7 @@ export const Members: CollectionConfig = {
       },
     ],
     afterChange: [onMemberChange],
+    afterDelete: [onMemberDelete],
   },
   access: {
     read: ({ req }) => hasRole(req.user as never, 'moderator') || (req.user?.collection === 'members' ? { id: { equals: req.user.id } } : false),
@@ -41,8 +42,8 @@ export const Members: CollectionConfig = {
     { name: 'avatarGradient', type: 'text', admin: { description: 'CSS gradient used when there is no photo, e.g. linear-gradient(135deg, #FF7A18, #AF002D). Picked at random on sign-up.' } },
     { name: 'color', type: 'text', admin: { readOnly: true, description: 'Name colour in the chat (first colour of the gradient, set automatically)' } },
     {
-      name: 'role', type: 'select', defaultValue: 'fan', saveToJWT: true,
-      options: [{ label: 'Fan', value: 'fan' }, { label: 'Partner team (agent)', value: 'agent' }, { label: 'Moderator', value: 'moderator' }],
+      name: 'memberRole', type: 'relationship', relationTo: 'member-roles', index: true,
+      admin: { description: 'What this member may do in the chat (empty = the default role)' },
       access: { create: modOnly, update: modOnly },
     },
     {

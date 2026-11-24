@@ -6,6 +6,7 @@ Browser ──► Next.js 16 (App Router)
              ├─ /[locale]            public site (server component loads data → client component runs the animations)
              ├─ /admin               custom back office (dashboard, moderation, password resets, partners, translations, chat profile)
              ├─ /cms                 Payload's own admin (raw data editor)
+             ├─ /[locale]/chat[/room] the chat as a page (same app, opened on the server; rooms: lounge, <matchId>, support, g-<id>, pm-<id>, sup-<id>)
              ├─ /chat-api/stream     live chat feed (Server-Sent Events), one per open tab
              ├─ /chat-api/<action>   chat actions (JSON; pictures/avatars as multipart)
              └─ /api/*               Payload REST (also serves uploaded files: /api/media/file/…, /api/chat-images/file/…)
@@ -37,6 +38,9 @@ Payload 3 ──► MongoDB (all content, translations, chat)
 | `members` | fan chat accounts (auth: email + password) | displayName (unique, via nameKey), avatar (media) / avatarGradient, color, role, status (active / muted / banned), mutedUntil, rulesAcceptedAt, lastSeenAt |
 | `chat-messages` | messages | room ('lounge' \| match id \| 'dm:<memberId>'), author (member) or staffAuthor (user), text, image (chat-images), reply{id,by,text}, reactions (json), isMod, deleted |
 | `chat-images` | pictures sent in the chat (never public: the file URL checks the same rule as the room) | room |
+| `chat-requests` | fan → fan private chat consent (one per pair) | pairKey, from, to, status (pending / accepted / declined / blocked), blockedBy, note; messages of an accepted pair: chat-messages room `pm:<idA>_<idB>`, sent only to those two |
+| `chat-rooms` | groups & channels made by the team | name, description, rules, kind (group / channel), join (open / request / invite), autoAdd, gradient, active, order; messages: room `g:<id>` |
+| `chat-room-members` | memberships | key (`<room>_<member>`), room, member, status (member / requested / invited) |
 | `chat-reports` | reports | message, reporter, room, text snapshot, reason, status |
 | `password-resets` | "forgot password" requests approved in the back office (no email service) | kind (member / staff), email, member / user, note, status, tokenHash, expiresAt |
 

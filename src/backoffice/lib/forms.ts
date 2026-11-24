@@ -76,3 +76,32 @@ export const accountSchema = z.object({
   currentPassword: z.string(),
 })
 export type AccountForm = z.infer<typeof accountSchema>
+
+/* ---------- groups & channels ---------- */
+export const groupSchema = z.object({
+  name: z.string().trim().min(2, 'At least 2 characters').max(60),
+  description: z.string().max(300),
+  rules: z.string().max(1000),
+  kind: z.enum(['group', 'channel']),
+  join: z.enum(['open', 'request', 'invite']),
+  autoAdd: z.boolean(),
+  active: z.boolean(),
+  order: z.number({ error: 'Enter a number' }).int(),
+})
+export type GroupForm = z.infer<typeof groupSchema>
+
+/* ---------- member roles ---------- */
+export const roleSchema = z.object({
+  name: z.string().trim().min(2, 'At least 2 characters').max(30),
+  description: z.string().max(140),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Use a 6-digit hex colour'),
+  isDefault: z.boolean(),
+  order: z.number({ error: 'Enter a number' }).int(),
+  createGroups: z.boolean(),
+  createChannels: z.boolean(),
+  maxRooms: z.number({ error: 'Enter a number' }).int().min(0).max(100),
+  sendPictures: z.boolean(),
+  privateChats: z.boolean(),
+  showBadge: z.boolean(),
+})
+export type RoleForm = z.infer<typeof roleSchema>

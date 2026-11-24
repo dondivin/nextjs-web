@@ -1,5 +1,7 @@
 import type { CollectionAfterChangeHook, CollectionAfterDeleteHook } from 'payload'
-import { broadcast, hub, toStaff, toUid } from './hub'
+import { broadcast, dropUid, hub, toStaff, toUid } from './hub'
+import { pmMembers, relView } from './pm'
+import { groupIdOf, memberUids } from './groups'
 import { activeMatches, imagesFor, mutedMap, myReports, profilesFor, reportCounts, toWire } from './data'
 
 /*
@@ -27,6 +29,21 @@ export const onMessageChange: CollectionAfterChangeHook = async ({ doc, req, ope
   if (nobodyListening()) return doc
   try {
     const m = toWire(doc, await imagesFor(req.payload, [doc], req))
+    const gid = groupIdOf(m.room)
+    if (gid) {
+      const room = await req.payload.findByID({ collection: 'chat-rooms', id: gid, depth: 0, overrideAccess: true, disableErrors: true, req })
+      if (!room) return doc
+      const profiles = operation === 'create' ? await profilesFor(req.payload, [m.by, m.reply?.by], req) : undefined
+      // open rooms are readable by everyone; the others only by their members and the team
+      const allowed = room.join === 'open' ? null : new Set(await memberUids(req.payload, gid, req))
+      broadcast({ type: 'msg', m, profiles }, allowed ? (c) => toStaff(c) || (!!c.viewer.uid && allowed.has(c.viewer.uid)) : undefined)
+      return doc
+    }
+    const pair = pmMembers(m.room)
+    if (m.room.startsWith('pm:')) {
+      if (pair) broadcast({ type: 'msg', m, profiles: operation === 'create' ? await profilesFor(req.payload, [m.by, m.reply?.by], req) : undefined }, (c) => !!c.viewer.uid && pair.includes(c.viewer.uid))
+      return doc
+    }
     const dmMember = m.room.startsWith('dm:') ? m.room.slice(3) : null
     const profiles = operation === 'create' ? await profilesFor(req.payload, [m.by, m.reply?.by], req) : undefined
     // direct chats only go to that member and to staff; room messages go to everyone
@@ -54,7 +71,9 @@ export const onMemberChange: CollectionAfterChangeHook = async ({ doc, previousD
       // the member's own tabs: refresh what they are allowed to do
       broadcast({ type: 'access', canPost: doc.status !== 'banned' }, toUid(id))
     }
-    if (doc.displayName !== previousDoc?.displayName || doc.avatarGradient !== previousDoc?.avatarGradient || relKey(doc.avatar) !== relKey(previousDoc?.avatar)) {
+    const roleChanged = relKey(doc.memberRole) !== relKey(previousDoc?.memberRole)
+    if (roleChanged) broadcast({ type: 'rolesChanged' }, toUid(id)) // their chat reloads its rights
+    if (roleChanged || doc.displayName !== previousDoc?.displayName || doc.avatarGradient !== previousDoc?.avatarGradient || relKey(doc.avatar) !== relKey(previousDoc?.avatar)) {
       broadcast({ type: 'profiles', profiles: await profilesFor(req.payload, [id], req) })
     }
   } catch (e) {
@@ -82,5 +101,60 @@ export const onMatchesChange: CollectionAfterChangeHook & CollectionAfterDeleteH
   } catch (e) {
     req.payload.logger.error({ err: e, msg: '[chat] matches broadcast failed' })
   }
+  return doc
+}
+
+/** A chat request changed → each of the two fans gets their own view of it (declined / blocked stay invisible to the other side). */
+export const onRequestChange: CollectionAfterChangeHook = async ({ doc, req }) => {
+  if (nobodyListening()) return doc
+  try {
+    const from = typeof doc.from === 'object' ? String(doc.from.id) : String(doc.from)
+    const to = typeof doc.to === 'object' ? String(doc.to.id) : String(doc.to)
+    const profiles = await profilesFor(req.payload, [from, to], req)
+    for (const [me, other] of [[from, to], [to, from]]) {
+      broadcast({ type: 'pm', uid: other, rel: relView(doc, me) || { uid: other, status: 'none' }, profiles }, toUid(me))
+    }
+  } catch (e) {
+    req.payload.logger.error({ err: e, msg: '[chat] request broadcast failed' })
+  }
+  return doc
+}
+
+/** A request was deleted (cancelled / unblocked) → both fans: no relation any more. */
+export const onRequestDelete: CollectionAfterDeleteHook = async ({ doc }) => {
+  if (nobodyListening()) return doc
+  const from = typeof doc.from === 'object' ? String(doc.from.id) : String(doc.from)
+  const to = typeof doc.to === 'object' ? String(doc.to.id) : String(doc.to)
+  broadcast({ type: 'pm', uid: to, rel: { uid: to, status: 'none' } }, toUid(from))
+  broadcast({ type: 'pm', uid: from, rel: { uid: from, status: 'none' } }, toUid(to))
+  return doc
+}
+
+/** A group / channel or a membership changed → every open chat refreshes its room list (cheap: one small request each). */
+let groupsTimer: ReturnType<typeof setTimeout> | null = null
+function announceGroups() {
+  if (groupsTimer) return
+  groupsTimer = setTimeout(() => { groupsTimer = null; broadcast({ type: 'groups' }) }, 200)
+}
+export const onRoomChange: CollectionAfterChangeHook & CollectionAfterDeleteHook = async ({ doc }) => {
+  if (!nobodyListening()) announceGroups()
+  return doc
+}
+export const onRoomMemberChange: CollectionAfterChangeHook & CollectionAfterDeleteHook = async ({ doc }) => {
+  if (!nobodyListening()) announceGroups()
+  return doc
+}
+
+/** An account was deleted → close its live connections (otherwise it would still look "online"). */
+export const onMemberDelete: CollectionAfterDeleteHook = async ({ doc }) => {
+  dropUid(String(doc.id))
+  return doc
+}
+
+/** A member role changed → forget cached rights; every open chat refreshes (rights, badges). */
+export const onRolesChange: CollectionAfterChangeHook & CollectionAfterDeleteHook = async ({ doc }) => {
+  const g = globalThis as unknown as { __ocChatCache?: Map<string, unknown> }
+  g.__ocChatCache?.delete('roles')
+  if (!nobodyListening()) broadcast({ type: 'rolesChanged' })
   return doc
 }

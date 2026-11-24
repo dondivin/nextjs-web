@@ -4,10 +4,12 @@ import { hasRole } from '../access'
 import { getDictionary, getLanguages } from '../i18n/data'
 import type { Member, User } from '../payload-types'
 import { isGradient, randomGradient } from './gradient'
+import { findPair, pmMembers, pmRoom, relationsOf, relView, pairKey } from './pm'
+import { groupIdOf, groupRoom, roomAccess, roomsFor, setMembership, setRoomAdmin } from './groups'
 import { AvatarError, dropMedia, prepareChatImage, storeAvatar } from './avatar'
 import { broadcast, hub, peersList, setPresence, type Viewer } from './hub'
 import {
-  agentInfo, cached, chatConfig, imagesFor, isObjectId, mutedMap, myReports, profilesFor, reportCounts, threadsFor, toWire, type ChatConfig,
+  agentInfo, cached, chatConfig, imagesFor, isObjectId, mutedMap, permsOf, STAFF_PERMS, type Perms, myReports, profilesFor, reportCounts, threadsFor, toWire, type ChatConfig,
 } from './data'
 
 /** Thrown by actions; `message` is already in the visitor's language and is shown as a toast. */
@@ -17,10 +19,10 @@ export class ChatError extends Error {
   }
 }
 
-export type Ctx = { payload: Payload; viewer: Viewer; member: Member | null; staff: User | null; t: (k: string, v?: Record<string, string | number>) => string }
+export type Ctx = { payload: Payload; viewer: Viewer; member: Member | null; staff: User | null; perms: Perms; t: (k: string, v?: Record<string, string | number>) => string }
 
 const REACTIONS = new Set(['goal', 'fire', 'laugh', 'clap', 'wow'])
-const ROOM_RE = /^(lounge|support|sup:[a-f0-9]{24}|[a-f0-9]{24})$/i
+const ROOM_RE = /^(lounge|support|(sup|pm|g):[a-f0-9]{24}|[a-f0-9]{24})$/i
 
 /* ---------- who is asking ---------- */
 export async function dictionary(payload: Payload, locale: string) {
@@ -39,9 +41,9 @@ export async function context(payload: Payload, headers: Headers, locale: string
   try {
     user = (await payload.auth({ headers })).user as Authed
   } catch {}
-  if (user?.collection === 'users' && hasRole(user, 'moderator')) return { payload, t, viewer: { kind: 'staff', uid: String(user.id) }, member: null, staff: user }
-  if (user?.collection === 'members') return { payload, t, viewer: { kind: 'member', uid: String(user.id) }, member: user, staff: null }
-  return { payload, t, viewer: { kind: 'anon', uid: null }, member: null, staff: null }
+  if (user?.collection === 'users' && hasRole(user, 'moderator')) return { payload, t, viewer: { kind: 'staff', uid: String(user.id) }, member: null, staff: user, perms: STAFF_PERMS }
+  if (user?.collection === 'members') return { payload, t, viewer: { kind: 'member', uid: String(user.id) }, member: user, staff: null, perms: await permsOf(payload, user.memberRole) }
+  return { payload, t, viewer: { kind: 'anon', uid: null }, member: null, staff: null, perms: { ...STAFF_PERMS, createGroups: false, createChannels: false, maxRooms: 0, sendPictures: false, privateChats: false } }
 }
 
 function isMuted(m: Member | null) {
@@ -55,7 +57,7 @@ export async function snapshot(ctx: Ctx, connId: string) {
   const { payload, viewer, member, staff } = ctx
   const roomMsgs = await payload.find({
     collection: 'chat-messages',
-    where: { and: [{ deleted: { not_equals: true } }, { room: { not_like: 'dm:' } }] },
+    where: { and: [{ deleted: { not_equals: true } }, { room: { not_like: 'dm:' } }, { room: { not_like: 'pm:' } }, { room: { not_like: 'g:' } }] },
     sort: '-createdAt',
     limit: 400,
     depth: 0,
@@ -76,7 +78,20 @@ export async function snapshot(ctx: Ctx, connId: string) {
     staff ? reportCounts(payload) : Promise.resolve(undefined),
     member ? myReports(payload, String(member.id)) : Promise.resolve([]),
   ])
-  const ids = [...messages, ...myDm].flatMap((m) => [m.by, m.reply?.by])
+  // fan-to-fan private chats: requests, accepted chats (+ their latest messages), people they blocked
+  let pms: Awaited<ReturnType<typeof relationsOf>> = []
+  const pmMsgs: Record<string, ReturnType<typeof toWire>[]> = {}
+  if (member) {
+    pms = await relationsOf(payload, String(member.id))
+    const open = pms.filter((r) => r.status === 'accepted').slice(0, 40)
+    await Promise.all(open.map(async (r) => {
+      const res = await payload.find({ collection: 'chat-messages', where: { and: [{ room: { equals: pmRoom(String(member.id), r.uid) } }, { deleted: { not_equals: true } }] }, sort: '-createdAt', limit: 60, depth: 0, overrideAccess: true })
+      pmMsgs[r.uid] = res.docs.map((d) => toWire(d)).reverse()
+    }))
+  }
+  const { groups, gMsgs } = await groupsWithMessages(ctx, [])
+  const ids = [...messages, ...myDm, ...Object.values(pmMsgs).flat(), ...Object.values(gMsgs).flat()].flatMap((m) => [m.by, m.reply?.by])
+  ids.push(...pms.map((r) => r.uid))
   if (threads) ids.push(...Object.keys(threads))
   const peers = peersList()
   ids.push(...peers.map((p) => p.by))
@@ -93,6 +108,11 @@ export async function snapshot(ctx: Ctx, connId: string) {
     rulesAccepted: viewer.kind === 'staff' || !!member?.rulesAcceptedAt,
     messages,
     myDm,
+    perms: ctx.perms,
+    pms,
+    pmMsgs,
+    groups,
+    gMsgs,
     threads,
     agent,
     muted,
@@ -142,6 +162,9 @@ function needStaff(ctx: Ctx) {
 }
 /** Can this viewer see that message? (direct chats: only the member and staff) */
 function canSee(ctx: Ctx, room: string) {
+  const pair = pmMembers(room)
+  if (pair) return !!ctx.viewer.uid && pair.includes(ctx.viewer.uid) // private chats: only the two fans
+  if (room.startsWith('pm:')) return false
   if (!room.startsWith('dm:')) return true
   return ctx.viewer.kind === 'staff' || room.slice(3) === ctx.viewer.uid
 }
@@ -149,6 +172,8 @@ async function loadMessage(ctx: Ctx, id: unknown) {
   if (!isObjectId(id)) throw new ChatError(ctx.t('chat.quoteGone'), 404)
   const doc = await ctx.payload.findByID({ collection: 'chat-messages', id, depth: 0, overrideAccess: true, disableErrors: true })
   if (!doc || doc.deleted || !canSee(ctx, String(doc.room))) throw new ChatError(ctx.t('chat.quoteGone'), 404)
+  const gid = groupIdOf(String(doc.room))
+  if (gid && !(await roomAccess(ctx.payload, ctx.viewer, gid))?.canRead) throw new ChatError(ctx.t('chat.quoteGone'), 404)
   return doc
 }
 
@@ -168,7 +193,20 @@ async function prepareSend(ctx: Ctx, b: Body, text: string) {
   // where does it go?
   let room: string
   const dmTo = b.dmTo ? str(b.dmTo, 40) : null
-  if (dmTo) {
+  const pmTo = b.pmTo ? str(b.pmTo, 40) : null
+  if (pmTo) {
+    // fan → fan: only inside an accepted private chat
+    if (ctx.viewer.kind !== 'member' || !isObjectId(pmTo)) throw new ChatError(ctx.t('chat.err.notAllowed'), 403)
+    const pair = await findPair(ctx.payload, ctx.viewer.uid as string, pmTo)
+    if (!pair || pair.status !== 'accepted') throw new ChatError(ctx.t('pm.err.notAccepted'), 403)
+    room = pmRoom(ctx.viewer.uid as string, pmTo)
+  } else if (b.room && groupIdOf(str(b.room, 40))) {
+    const gid = groupIdOf(str(b.room, 40)) as string
+    const acc = await roomAccess(ctx.payload, ctx.viewer, gid)
+    if (!acc) throw new ChatError(ctx.t('chat.err.notAllowed'), 404)
+    if (!acc.canPost) throw new ChatError(acc.room.kind === 'channel' && acc.status === 'member' ? ctx.t(acc.room.owner ? 'groups.err.channelOwned' : 'groups.err.channel') : ctx.t('groups.err.join'), 403)
+    room = groupRoom(gid)
+  } else if (dmTo) {
     if (ctx.viewer.kind === 'member' && dmTo !== ctx.viewer.uid) throw new ChatError(ctx.t('chat.err.notAllowed'), 403)
     if (ctx.viewer.kind === 'staff') {
       if (!isObjectId(dmTo)) throw new ChatError(ctx.t('chat.err.notAllowed'), 400)
@@ -237,7 +275,7 @@ export async function sendImage(ctx: Ctx, form: FormData) {
   const b: Body = Object.fromEntries([...form.entries()].filter(([, v]) => typeof v === 'string'))
   const text = str(b.text, 5000).trim()
   const p = await prepareSend(ctx, b, text)
-  if (ctx.viewer.kind !== 'staff' && p.room !== 'dm:' + ctx.viewer.uid) throw new ChatError(ctx.t('chat.err.imagesDmOnly'), 403)
+  if (ctx.viewer.kind !== 'staff' && p.room !== 'dm:' + ctx.viewer.uid && !(ctx.perms.sendPictures && !p.room.startsWith('pm:'))) throw new ChatError(ctx.t('chat.err.imagesDmOnly'), 403)
   const file = form.get('file')
   let data: Buffer
   try {
@@ -381,6 +419,8 @@ export async function signUp(ctx: Ctx, b: Body) {
     // no gradient picked → a random one, straight away
     data: { displayName, email, password, avatarGradient: isGradient(b.gradient) ? b.gradient : randomGradient() },
   })
+  const created = await ctx.payload.find({ collection: 'members', where: { email: { equals: email } }, limit: 1, depth: 0, overrideAccess: true })
+  if (created.docs[0]) await autoJoin(ctx.payload, String(created.docs[0].id))
   return logIn(ctx, { email, password })
 }
 
@@ -495,4 +535,221 @@ export async function resetPassword(ctx: Ctx, b: Body) {
   } catch {}
   await ctx.payload.update({ collection: 'password-resets', id: doc.id, data: { status: 'done' }, overrideAccess: true })
   return logIn(ctx, { email: m.email, password })
+}
+
+/* ---------- people: search, chat requests (fan → fan, consent first) ---------- */
+const PM_PENDING_MAX = 10 // open requests a fan may have waiting at once
+const PM_DAY_MAX = 20 // requests a fan may send per 24 h
+const PM_RETRY_MS = 7 * 86400e3 // after a decline, wait a week before asking the same person again
+
+/** Find fans by username (signed-in viewers only). */
+export async function people(ctx: Ctx, b: Body) {
+  if (!ctx.viewer.uid) throw new ChatError(ctx.t('chat.signInToJoin'), 401)
+  const q = str(b.q, 40).trim().toLowerCase()
+  if (q.length < 2) return { people: [] }
+  const res = await ctx.payload.find({
+    collection: 'members',
+    where: { and: [{ nameKey: { like: q } }, { status: { not_equals: 'banned' } }, { id: { not_equals: ctx.viewer.uid } }] },
+    limit: 20,
+    depth: 0,
+    overrideAccess: true,
+    select: { displayName: true },
+  })
+  const ids = res.docs.map((m) => String(m.id))
+  const profs = await profilesFor(ctx.payload, ids)
+  return { people: ids.map((uid) => ({ uid, ...profs[uid] })), profiles: profs }
+}
+
+export async function chatRequest(ctx: Ctx, b: Body) {
+  needPoster(ctx)
+  if (ctx.viewer.kind !== 'member') throw new ChatError(ctx.t('pm.err.staff'), 403)
+  if (!ctx.perms.privateChats) throw new ChatError(ctx.t('roles.err.noPrivateChats'), 403)
+  const me = ctx.viewer.uid as string
+  const to = str(b.to, 40)
+  if (!isObjectId(to) || to === me) throw new ChatError(ctx.t('chat.err.notAllowed'))
+  const target = await ctx.payload.findByID({ collection: 'members', id: to, depth: 0, overrideAccess: true, disableErrors: true })
+  if (!target || target.status === 'banned') throw new ChatError(ctx.t('pm.err.unavailable'), 404)
+  const note = str(b.note, 140).trim()
+  if (note) {
+    const problem = checkText(ctx, await chatConfig(ctx.payload), note)
+    if (problem) throw new ChatError(problem)
+  }
+  const pair = await findPair(ctx.payload, me, to)
+  if (pair) {
+    if (pair.status === 'accepted') return { status: 'accepted' }
+    if (pair.status === 'blocked') throw new ChatError(ctx.t('pm.err.unavailable'), 403)
+    if (pair.status === 'pending') {
+      // they already asked me: asking back = accepting
+      if (String(pair.to) === me) { await ctx.payload.update({ collection: 'chat-requests', id: pair.id, data: { status: 'accepted', respondedAt: new Date().toISOString() }, overrideAccess: true }); return { status: 'accepted' } }
+      return { status: 'pending-out' }
+    }
+    if (pair.status === 'declined' && String(pair.from) === me && Date.parse(pair.respondedAt || pair.updatedAt) + PM_RETRY_MS > Date.now()) throw new ChatError(ctx.t('pm.err.tooSoon'), 429)
+  }
+  const [open, today] = await Promise.all([
+    ctx.payload.count({ collection: 'chat-requests', where: { and: [{ from: { equals: me } }, { status: { equals: 'pending' } }] }, overrideAccess: true }),
+    ctx.payload.count({ collection: 'chat-requests', where: { and: [{ from: { equals: me } }, { updatedAt: { greater_than: new Date(Date.now() - 86400e3).toISOString() } }] }, overrideAccess: true }),
+  ])
+  if (open.totalDocs >= PM_PENDING_MAX || today.totalDocs >= PM_DAY_MAX) throw new ChatError(ctx.t('pm.err.tooMany'), 429)
+  const data = { from: me, to, status: 'pending' as const, note: note || null, blockedBy: null, respondedAt: null }
+  if (pair) await ctx.payload.update({ collection: 'chat-requests', id: pair.id, data, overrideAccess: true })
+  else await ctx.payload.create({ collection: 'chat-requests', data: { ...data, pairKey: pairKey(me, to) }, overrideAccess: true })
+  return { status: 'pending-out' }
+}
+
+/** accept | decline | block (incoming request or an open chat) | cancel (my own request) | unblock. */
+export async function chatRespond(ctx: Ctx, b: Body) {
+  if (ctx.viewer.kind !== 'member') throw new ChatError(ctx.t('chat.err.notAllowed'), 403)
+  const me = ctx.viewer.uid as string
+  const other = str(b.uid, 40)
+  const action = str(b.action, 10)
+  if (!isObjectId(other)) throw new ChatError(ctx.t('chat.err.notAllowed'))
+  const pair = await findPair(ctx.payload, me, other)
+  if (!pair) throw new ChatError(ctx.t('pm.err.gone'), 404)
+  const incoming = String(pair.to) === me
+  const now = new Date().toISOString()
+  const set = (data: Record<string, unknown>) => ctx.payload.update({ collection: 'chat-requests', id: pair.id, data, overrideAccess: true })
+  if (action === 'accept' && pair.status === 'pending' && incoming) await set({ status: 'accepted', respondedAt: now })
+  else if (action === 'decline' && pair.status === 'pending' && incoming) await set({ status: 'declined', respondedAt: now })
+  else if (action === 'cancel' && pair.status === 'pending' && !incoming) await ctx.payload.delete({ collection: 'chat-requests', id: pair.id, overrideAccess: true })
+  else if (action === 'block' && pair.status !== 'blocked') await set({ status: 'blocked', blockedBy: me, respondedAt: now })
+  else if (action === 'unblock' && pair.status === 'blocked' && String(pair.blockedBy) === me) await ctx.payload.delete({ collection: 'chat-requests', id: pair.id, overrideAccess: true })
+  else throw new ChatError(ctx.t('pm.err.gone'), 409)
+  return {}
+}
+
+export { relView }
+
+/* ---------- groups & channels ---------- */
+/** Rooms this viewer sees + recent messages of the ones they can read (skipping rooms the browser already has). */
+async function groupsWithMessages(ctx: Ctx, have: string[]) {
+  const groups = await roomsFor(ctx.payload, ctx.viewer)
+  const gMsgs: Record<string, ReturnType<typeof toWire>[]> = {}
+  await Promise.all(groups.filter((g) => g.canRead && !have.includes(g.id)).slice(0, 30).map(async (g) => {
+    const res = await ctx.payload.find({ collection: 'chat-messages', where: { and: [{ room: { equals: groupRoom(g.id) } }, { deleted: { not_equals: true } }] }, sort: '-createdAt', limit: 80, depth: 0, overrideAccess: true })
+    const imgs = await imagesFor(ctx.payload, res.docs)
+    gMsgs[g.id] = res.docs.map((d) => toWire(d, imgs)).reverse()
+  }))
+  return { groups, gMsgs }
+}
+
+/** The browser asks again after a 'groups' event (a room or a membership changed). */
+export async function groups(ctx: Ctx, b: Body) {
+  const have = Array.isArray(b.have) ? (b.have as unknown[]).map(String).slice(0, 200) : []
+  const r = await groupsWithMessages(ctx, have)
+  const ids = Object.values(r.gMsgs).flat().flatMap((m) => [m.by, m.reply?.by])
+  return { ...r, profiles: await profilesFor(ctx.payload, ids) }
+}
+
+/** join: open → member · request → asks the team · invited → accepts the invite. */
+export async function groupJoin(ctx: Ctx, b: Body) {
+  needPoster(ctx)
+  if (ctx.viewer.kind !== 'member') return {}
+  const acc = await roomAccess(ctx.payload, ctx.viewer, str(b.id, 40))
+  if (!acc) throw new ChatError(ctx.t('chat.err.notAllowed'), 404)
+  if (acc.status === 'member') return { status: 'member' }
+  const next = acc.room.join === 'open' || acc.status === 'invited' ? 'member' : acc.room.join === 'request' ? 'requested' : null
+  if (!next) throw new ChatError(ctx.t('groups.err.inviteOnly'), 403)
+  await setMembership(ctx.payload, String(acc.room.id), ctx.viewer.uid as string, next)
+  return { status: next }
+}
+
+/** leave the room / cancel my request / decline an invite. */
+export async function groupLeave(ctx: Ctx, b: Body) {
+  if (ctx.viewer.kind !== 'member') return {}
+  const id = str(b.id, 40)
+  if (!isObjectId(id)) throw new ChatError(ctx.t('chat.err.notAllowed'))
+  await setMembership(ctx.payload, id, ctx.viewer.uid as string, null)
+  return {}
+}
+
+/** Add a new account to every room with "auto-add new members". */
+export async function autoJoin(payload: Payload, memberId: string) {
+  const rooms = await payload.find({ collection: 'chat-rooms', where: { and: [{ autoAdd: { equals: true } }, { active: { equals: true } }] }, pagination: false, depth: 0, overrideAccess: true })
+  for (const r of rooms.docs) await setMembership(payload, String(r.id), memberId, 'member')
+}
+
+/* ---------- rooms made by members (rights come from their role) ---------- */
+const JOINS = ['open', 'request', 'invite']
+async function adminOf(ctx: Ctx, id: unknown, ownerOnly = false) {
+  const acc = await roomAccess(ctx.payload, ctx.viewer, str(id, 40))
+  if (!acc || !(ownerOnly ? acc.isOwner || ctx.viewer.kind === 'staff' : acc.isAdmin)) throw new ChatError(ctx.t('chat.err.notAllowed'), 403)
+  return acc
+}
+async function roomFields(ctx: Ctx, b: Body, kindAllowed: (k: string) => boolean) {
+  const cfg = await chatConfig(ctx.payload)
+  const name = str(b.name, 100).trim().replace(/\s+/g, ' ')
+  if (name.length < 2 || name.length > 60) throw new ChatError(ctx.t('rooms.err.name'))
+  for (const t of [name, str(b.description, 300), str(b.rules, 1000)]) { const bad = t && checkText(ctx, cfg, t); if (bad) throw new ChatError(bad) }
+  const kind = b.kind === 'channel' ? 'channel' : 'group'
+  if (!kindAllowed(kind)) throw new ChatError(ctx.t('rooms.err.kind'), 403)
+  const join = JOINS.includes(String(b.join)) ? String(b.join) : 'open'
+  return { name, description: str(b.description, 300).trim(), rules: str(b.rules, 1000).trim(), kind: kind as 'group' | 'channel', join: join as 'open' | 'request' | 'invite' }
+}
+
+export async function roomCreate(ctx: Ctx, b: Body) {
+  needPoster(ctx)
+  const p = ctx.perms
+  if (!p.createGroups && !p.createChannels) throw new ChatError(ctx.t('rooms.err.noRight'), 403)
+  const data = await roomFields(ctx, b, (k) => (k === 'channel' ? p.createChannels : p.createGroups))
+  let owner: string | undefined
+  if (ctx.viewer.kind === 'member') {
+    owner = ctx.viewer.uid as string
+    const owned = await ctx.payload.count({ collection: 'chat-rooms', where: { owner: { equals: owner } }, overrideAccess: true })
+    if (owned.totalDocs >= p.maxRooms) throw new ChatError(ctx.t('rooms.err.max', { n: p.maxRooms }), 429)
+  }
+  const room = await ctx.payload.create({
+    collection: 'chat-rooms', overrideAccess: true,
+    data: { ...data, autoAdd: false, active: true, order: 100, ...(owner ? { owner } : { createdBy: ctx.staff?.id }) },
+  })
+  if (owner) { await setMembership(ctx.payload, String(room.id), owner, 'member'); await setRoomAdmin(ctx.payload, String(room.id), owner, true) }
+  return { id: String(room.id) }
+}
+
+export async function roomUpdate(ctx: Ctx, b: Body) {
+  const acc = await adminOf(ctx, b.id)
+  const p = ctx.perms, staff = ctx.viewer.kind === 'staff'
+  // changing group ↔ channel needs the right for the new kind
+  const data = await roomFields(ctx, b, (k) => staff || k === acc.room.kind || (k === 'channel' ? p.createChannels : p.createGroups))
+  await ctx.payload.update({ collection: 'chat-rooms', id: acc.room.id, data, overrideAccess: true })
+  return {}
+}
+
+/** archive (hidden, history kept) or delete (room + members + messages). Owner (or the team) only. */
+export async function roomRemove(ctx: Ctx, b: Body) {
+  const acc = await adminOf(ctx, b.id, true)
+  const id = String(acc.room.id)
+  if (b.mode === 'delete') {
+    await ctx.payload.delete({ collection: 'chat-room-members', where: { room: { equals: id } }, overrideAccess: true })
+    await ctx.payload.delete({ collection: 'chat-messages', where: { room: { equals: groupRoom(id) } }, overrideAccess: true })
+    await ctx.payload.delete({ collection: 'chat-rooms', id, overrideAccess: true })
+  } else await ctx.payload.update({ collection: 'chat-rooms', id, data: { active: false }, overrideAccess: true })
+  return {}
+}
+
+/** Members of a room, for its admins (members, waiting, invited; who is admin; who owns it). */
+export async function roomMembers(ctx: Ctx, b: Body) {
+  const acc = await adminOf(ctx, b.id)
+  const res = await ctx.payload.find({ collection: 'chat-room-members', where: { room: { equals: acc.room.id } }, sort: '-updatedAt', pagination: false, depth: 0, overrideAccess: true })
+  const owner = acc.room.owner ? String(typeof acc.room.owner === 'object' ? acc.room.owner.id : acc.room.owner) : null
+  const list = res.docs.map((d) => ({ uid: String(d.member), status: d.status, admin: !!d.admin, owner: String(d.member) === owner }))
+  return { list, owner, profiles: await profilesFor(ctx.payload, list.map((x) => x.uid)) }
+}
+
+/** invite · accept · decline · remove · admin · unadmin (admin rights: owner / the team only). */
+export async function roomMember(ctx: Ctx, b: Body) {
+  const action = str(b.action, 12), uid = str(b.uid, 40)
+  const acc = await adminOf(ctx, b.id, action === 'admin' || action === 'unadmin')
+  if (!isObjectId(uid)) throw new ChatError(ctx.t('chat.err.notAllowed'))
+  const id = String(acc.room.id), owner = acc.room.owner ? String(typeof acc.room.owner === 'object' ? acc.room.owner.id : acc.room.owner) : null
+  if (uid === owner && action !== 'invite') throw new ChatError(ctx.t('rooms.err.owner'), 403)
+  if (action === 'invite') {
+    const target = await ctx.payload.findByID({ collection: 'members', id: uid, depth: 0, overrideAccess: true, disableErrors: true })
+    if (!target || target.status === 'banned') throw new ChatError(ctx.t('pm.err.unavailable'), 404)
+    const cur = (await roomAccess(ctx.payload, { kind: 'member', uid }, id))?.status
+    if (cur !== 'member') await setMembership(ctx.payload, id, uid, cur === 'requested' ? 'member' : 'invited')
+  } else if (action === 'accept') await setMembership(ctx.payload, id, uid, 'member')
+  else if (action === 'decline' || action === 'remove') await setMembership(ctx.payload, id, uid, null)
+  else if (action === 'admin' || action === 'unadmin') { if (!(await setRoomAdmin(ctx.payload, id, uid, action === 'admin'))) throw new ChatError(ctx.t('rooms.err.notMember')) }
+  else throw new ChatError(ctx.t('chat.err.notAllowed'))
+  return {}
 }

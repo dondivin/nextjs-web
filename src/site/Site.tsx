@@ -9,7 +9,7 @@ import { rich, plain } from '@/i18n/rich'
 import { startEngine } from './engine/engine'
 import type { EngineConfig } from './engine/types'
 
-type Props = { cfg: EngineConfig; initial: { bookmaker: string; promo: string; bonus: string; payments: string }; extras: { helpline: string; company: string; year: number }; languageSwitcher?: React.ReactNode; logoUrl?: string | null }
+type Props = { cfg: EngineConfig; initial: { bookmaker: string; promo: string; bonus: string; payments: string }; extras: { helpline: string; company: string; year: number }; languageSwitcher?: React.ReactNode; logoUrl?: string | null; hero?: { url: string; w: number; h: number } | null; chat?: { room: string | null } }
 
 const I = {
   chat: <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" />,
@@ -72,7 +72,8 @@ function BrandMark({ logoUrl }: { logoUrl?: string | null }) {
   )
 }
 
-export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl }: Props) {
+export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl, hero, chat }: Props) {
+  const chatBase = `/${cfg.locale}/chat`
   const s = cfg.strings
   const t = (k: string) => (s[k] != null ? s[k] : k)
   const p = (k: string, v: Record<string, string | number> = {}) => plain(t(k), v)
@@ -113,7 +114,7 @@ export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl }
           <a href="#join">{t('nav.bonus')}</a>
           <a href="#matchday">{t('nav.odds')}</a>
           {languageSwitcher}
-          <a href="#chat" className="btn btn-primary">
+          <a href={chatBase} className="btn btn-primary">
             <Icon>{I.chat}</Icon>
             {t('nav.openChat')}
           </a>
@@ -125,6 +126,11 @@ export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl }
           <div className="pitch-lines" aria-hidden="true"></div>
           <div className="beam l" aria-hidden="true"></div>
           <div className="beam r" aria-hidden="true"></div>
+          {hero && (
+            // first-screen person picture (Site settings → First screen picture): decorative
+            // eslint-disable-next-line @next/next/no-img-element
+            <img className="hero-person" src={hero.url} alt="" aria-hidden="true" width={hero.w || undefined} height={hero.h || undefined} fetchPriority="high" decoding="async" />
+          )}
           <div className="partners" id="partners" role="group" aria-label={t('hero.partnersAria')}>
             <span className="lbl">{t('hero.partnerLabel')}</span>
             <span className="p-pill" id="pPill" aria-hidden="true"></span>
@@ -291,7 +297,7 @@ export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl }
                   <span id="loungeInfo">{t('lounge.info')}</span>
                 </div>
               </div>
-              <a className="btn btn-primary" href="#chat-lounge">
+              <a className="btn btn-primary" href={`${chatBase}/lounge`}>
                 {t('nav.openChat')}
               </a>
             </div>
@@ -318,8 +324,7 @@ export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl }
       </footer>
 
       {/* ================= MESSENGER ================= */}
-      <div className="liquid" id="liquid" hidden aria-hidden="true"></div>
-      <div className="messenger" id="messenger" data-ct="oddsclub" role="dialog" aria-modal="true" aria-labelledby="chatsTitle" aria-hidden="true">
+      <div className={'messenger' + (chat ? ' open' + (chat.room ? ' in-convo' : '') : '')} id="messenger" data-ct="oddsclub" role="region" aria-labelledby="chatsTitle" aria-hidden={chat ? 'false' : 'true'}>
         <aside className="m-side">
           <div className="side-head">
             <div className="side-brand">
@@ -330,13 +335,18 @@ export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl }
               </div>
             </div>
             <div className="side-tools">
+              <button className="iconbtn" type="button" id="newRoom" hidden aria-label={t('rooms.newAria')} title={t('rooms.newAria')}>
+                <Icon>
+                  <path d="M12 5v14M5 12h14" />
+                </Icon>
+              </button>
               <button className="iconbtn" type="button" id="chatAccount" hidden aria-label={t('auth.accountAria')}>
                 <Icon>{I.user}</Icon>
               </button>
               <button className="iconbtn" type="button" data-open-themes="" aria-label={t('chat.themeAria')}>
                 <Icon>{I.palette}</Icon>
               </button>
-              <a className="iconbtn" href="#matchday" aria-label={t('chat.closeAria')}>
+              <a className="iconbtn" id="chatClose" href={`/${cfg.locale}`} aria-label={t('chat.closeAria')}>
                 <Icon>{I.close}</Icon>
               </a>
             </div>
@@ -347,7 +357,7 @@ export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl }
               <circle cx="11" cy="11" r="7" />
               <path d="M20 20l-3.5-3.5" />
             </Icon>
-            <input id="roomSearch" type="search" placeholder={t('chat.searchPlaceholder')} autoComplete="off" />
+            <input id="roomSearch" type="search" placeholder={t('chat.searchPlaceholder2')} autoComplete="off" />
           </label>
           <div className="seg" id="seg" role="group" aria-label={t('chat.filterAria')}>
             <span className="pill" id="segPill" aria-hidden="true"></span>
@@ -361,6 +371,20 @@ export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl }
               {t('chat.filter.upcoming')}
             </button>
           </div>
+          <section className="people" id="people" aria-label={t('people.aria')} hidden>
+            <div id="pplReq"></div>
+            <div className="ppl-online" id="pplOnline" hidden>
+              <div className="ppl-h">
+                {t('people.online')}
+                <b id="pplCount">0</b>
+              </div>
+              <div className="ppl-strip" id="pplRow"></div>
+            </div>
+            <div className="ppl-search" id="pplSearch" hidden>
+              <div className="ppl-h">{t('people.title')}</div>
+              <ul id="pplResults"></ul>
+            </div>
+          </section>
           <ul className="rooms" id="rooms">
             <li className="pill" id="roomPill" aria-hidden="true"></li>
           </ul>
@@ -383,6 +407,23 @@ export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl }
                 <span id="cSub">{t('chat.connecting')}</span>
               </div>
               <div id="cScore"></div>
+              <button className="iconbtn" id="cManage" type="button" aria-label={t('rooms.manageAria')} title={t('rooms.manageAria')} hidden>
+                <Icon>
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3h.1a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
+                </Icon>
+              </button>
+              <button className="iconbtn" id="cLeave" type="button" aria-label={t('groups.leave')} title={t('groups.leave')} hidden>
+                <Icon>
+                  <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l-5-5 5-5M5 12h11" />
+                </Icon>
+              </button>
+              <button className="iconbtn" id="cBlock" type="button" aria-label={t('pm.block')} title={t('pm.block')} hidden>
+                <Icon>
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M5.6 5.6l12.8 12.8" />
+                </Icon>
+              </button>
               <button className="iconbtn" type="button" data-open-themes="" aria-label={t('chat.themeAria')}>
                 <Icon>{I.palette}</Icon>
               </button>
@@ -460,6 +501,7 @@ export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl }
             </form>
             <div className="gate glass" id="gate" hidden>
               <p id="gateText"></p>
+              <button className="btn btn-secondary" id="gateBtn2" type="button" hidden></button>
               <button className="btn btn-primary" id="gateBtn" type="button">
                 {t('chat.readRules')}
               </button>
@@ -596,6 +638,26 @@ export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl }
               </button>
             </div>
           </div>
+        </div>
+      </div>
+      <div className="sheet-wrap" id="roomSheet" data-ct="oddsclub" role="dialog" aria-modal="true" aria-labelledby="rsTitle" aria-hidden="true">
+        <div className="sheet glass room-sheet" id="rsBody"></div>
+      </div>
+      <div className="sheet-wrap" id="personSheet" data-ct="oddsclub" role="dialog" aria-modal="true" aria-labelledby="psName" aria-hidden="true">
+        <div className="sheet glass person-sheet">
+          <div className="ps-head">
+            <div id="psAvatar"></div>
+            <div>
+              <h3 id="psName"></h3>
+              <span id="psSub"></span>
+            </div>
+          </div>
+          <p className="ps-msg" id="psMsg" hidden></p>
+          <label className="field ps-note" id="psNoteRow" hidden>
+            <span>{t('pm.noteLabel')}</span>
+            <input id="psNote" type="text" maxLength={140} placeholder={t('pm.notePlaceholder')} autoComplete="off" />
+          </label>
+          <div className="sheet-actions ps-actions" id="psActions"></div>
         </div>
       </div>
       <div className="toast" id="toast" role="status" aria-live="polite">

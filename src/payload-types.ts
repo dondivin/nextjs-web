@@ -79,6 +79,10 @@ export interface Config {
     'chat-reports': ChatReport;
     'password-resets': PasswordReset;
     'chat-images': ChatImage;
+    'chat-requests': ChatRequest;
+    'chat-rooms': ChatRoom;
+    'chat-room-members': ChatRoomMember;
+    'member-roles': MemberRole;
     'payload-kv': PayloadKv;
     'payload-locked-documents': PayloadLockedDocument;
     'payload-preferences': PayloadPreference;
@@ -97,6 +101,10 @@ export interface Config {
     'chat-reports': ChatReportsSelect<false> | ChatReportsSelect<true>;
     'password-resets': PasswordResetsSelect<false> | PasswordResetsSelect<true>;
     'chat-images': ChatImagesSelect<false> | ChatImagesSelect<true>;
+    'chat-requests': ChatRequestsSelect<false> | ChatRequestsSelect<true>;
+    'chat-rooms': ChatRoomsSelect<false> | ChatRoomsSelect<true>;
+    'chat-room-members': ChatRoomMembersSelect<false> | ChatRoomMembersSelect<true>;
+    'member-roles': MemberRolesSelect<false> | MemberRolesSelect<true>;
     'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
     'payload-preferences': PayloadPreferencesSelect<false> | PayloadPreferencesSelect<true>;
@@ -441,7 +449,10 @@ export interface Member {
    * Name colour in the chat (first colour of the gradient, set automatically)
    */
   color?: string | null;
-  role?: ('fan' | 'agent' | 'moderator') | null;
+  /**
+   * What this member may do in the chat (empty = the default role)
+   */
+  memberRole?: (string | null) | MemberRole;
   status?: ('active' | 'muted' | 'banned') | null;
   mutedUntil?: string | null;
   moderationNote?: string | null;
@@ -466,6 +477,44 @@ export interface Member {
     | null;
   password?: string | null;
   collection: 'members';
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "member-roles".
+ */
+export interface MemberRole {
+  id: string;
+  name: string;
+  description?: string | null;
+  /**
+   * Badge colour (hex)
+   */
+  color?: string | null;
+  /**
+   * Given to every new account (and to members without a role)
+   */
+  isDefault?: boolean | null;
+  order?: number | null;
+  createGroups?: boolean | null;
+  createChannels?: boolean | null;
+  /**
+   * How many groups/channels one member may own
+   */
+  maxRooms?: number | null;
+  /**
+   * Pictures in rooms and groups (everyone can send pictures to the partner team)
+   */
+  sendPictures?: boolean | null;
+  /**
+   * Send chat requests to other members
+   */
+  privateChats?: boolean | null;
+  /**
+   * Show the role name next to their name in the chat
+   */
+  showBadge?: boolean | null;
+  updatedAt: string;
+  createdAt: string;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
@@ -591,6 +640,80 @@ export interface PasswordReset {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "chat-requests".
+ */
+export interface ChatRequest {
+  id: string;
+  pairKey: string;
+  from: string | Member;
+  to: string | Member;
+  status: 'pending' | 'accepted' | 'declined' | 'blocked';
+  blockedBy?: (string | null) | Member;
+  /**
+   * Short message sent with the request
+   */
+  note?: string | null;
+  respondedAt?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "chat-rooms".
+ */
+export interface ChatRoom {
+  id: string;
+  name: string;
+  description?: string | null;
+  /**
+   * Room rules, shown at the top of the room (on top of the site’s house rules)
+   */
+  rules?: string | null;
+  kind: 'group' | 'channel';
+  join: 'open' | 'request' | 'invite';
+  /**
+   * Add every new account automatically
+   */
+  autoAdd?: boolean | null;
+  /**
+   * Room picture colours
+   */
+  gradient?: string | null;
+  /**
+   * Off = archived: hidden from the chat, messages kept
+   */
+  active?: boolean | null;
+  order?: number | null;
+  /**
+   * Team account that created it
+   */
+  createdBy?: (string | null) | User;
+  /**
+   * Member who created it from the chat (manages it there). Empty = a team room.
+   */
+  owner?: (string | null) | Member;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "chat-room-members".
+ */
+export interface ChatRoomMember {
+  id: string;
+  key: string;
+  room: string | ChatRoom;
+  member: string | Member;
+  status: 'member' | 'requested' | 'invited';
+  /**
+   * Room admin: manages the room from the chat (and posts in a channel)
+   */
+  admin?: boolean | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "payload-kv".
  */
 export interface PayloadKv {
@@ -656,6 +779,22 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'chat-images';
         value: string | ChatImage;
+      } | null)
+    | ({
+        relationTo: 'chat-requests';
+        value: string | ChatRequest;
+      } | null)
+    | ({
+        relationTo: 'chat-rooms';
+        value: string | ChatRoom;
+      } | null)
+    | ({
+        relationTo: 'chat-room-members';
+        value: string | ChatRoomMember;
+      } | null)
+    | ({
+        relationTo: 'member-roles';
+        value: string | MemberRole;
       } | null);
   globalSlug?: string | null;
   user:
@@ -865,7 +1004,7 @@ export interface MembersSelect<T extends boolean = true> {
   avatar?: T;
   avatarGradient?: T;
   color?: T;
-  role?: T;
+  memberRole?: T;
   status?: T;
   mutedUntil?: T;
   moderationNote?: T;
@@ -973,6 +1112,72 @@ export interface ChatImagesSelect<T extends boolean = true> {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "chat-requests_select".
+ */
+export interface ChatRequestsSelect<T extends boolean = true> {
+  pairKey?: T;
+  from?: T;
+  to?: T;
+  status?: T;
+  blockedBy?: T;
+  note?: T;
+  respondedAt?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "chat-rooms_select".
+ */
+export interface ChatRoomsSelect<T extends boolean = true> {
+  name?: T;
+  description?: T;
+  rules?: T;
+  kind?: T;
+  join?: T;
+  autoAdd?: T;
+  gradient?: T;
+  active?: T;
+  order?: T;
+  createdBy?: T;
+  owner?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "chat-room-members_select".
+ */
+export interface ChatRoomMembersSelect<T extends boolean = true> {
+  key?: T;
+  room?: T;
+  member?: T;
+  status?: T;
+  admin?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "member-roles_select".
+ */
+export interface MemberRolesSelect<T extends boolean = true> {
+  name?: T;
+  description?: T;
+  color?: T;
+  isDefault?: T;
+  order?: T;
+  createGroups?: T;
+  createChannels?: T;
+  maxRooms?: T;
+  sendPictures?: T;
+  privateChats?: T;
+  showBadge?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "payload-kv_select".
  */
 export interface PayloadKvSelect<T extends boolean = true> {
@@ -1050,6 +1255,10 @@ export interface SiteSetting {
    * Square logo (stored as 512×512 PNG). Used in the nav, chat, back office, browser tab, home-screen icon and search engines.
    */
   logo?: (string | null) | Media;
+  /**
+   * Big cut-out picture of a person (no background) on the left of the first screen, in front of the headline.
+   */
+  heroImage?: (string | null) | Media;
   /**
    * Optional 1200×630 image for link previews (WhatsApp, Facebook, X…). Without it one is made from the logo.
    */
@@ -1145,6 +1354,7 @@ export interface SiteSettingsSelect<T extends boolean = true> {
         id?: T;
       };
   logo?: T;
+  heroImage?: T;
   shareImage?: T;
   seoDescription?:
     | T

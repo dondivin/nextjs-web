@@ -15,7 +15,7 @@ export const ChatMessages: CollectionConfig = {
     read: ({ req }) => {
       if (hasRole(req.user as never, 'moderator')) return true
       // public: non-deleted room messages; direct chats are only served through the chat API
-      const w: Where = { and: [{ deleted: { not_equals: true } }, { room: { not_like: 'dm:' } }] }
+      const w: Where = { and: [{ deleted: { not_equals: true } }, { room: { not_like: 'dm:' } }, { room: { not_like: 'pm:' } }, { room: { not_like: 'g:' } }] }
       return w
     },
     create: ({ req }) => hasRole(req.user as never, 'moderator'),

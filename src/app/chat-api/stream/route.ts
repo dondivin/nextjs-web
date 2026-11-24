@@ -43,7 +43,7 @@ export async function GET(req: Request) {
 
       let queue: ChatEvent[] | null = []
       const send = (e: ChatEvent) => (queue ? queue.push(e) : write(`data: ${JSON.stringify(e)}\n\n`))
-      addClient({ id, viewer: ctx.viewer, presence: { room: null, typing: false }, send })
+      addClient({ id, viewer: ctx.viewer, presence: { room: null, typing: false }, send, close: cleanup })
       try {
         const hello = await snapshot(ctx, id)
         write(`retry: 3000\ndata: ${JSON.stringify({ type: 'hello', ...hello })}\n\n`)

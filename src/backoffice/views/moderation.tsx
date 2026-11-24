@@ -29,7 +29,7 @@ export type ModReport = {
   reporterName: string; reasons: string[]; count: number; createdAt: string
 }
 export type ModMessage = { id: string; text: string; imageUrl?: string | null; room: string; authorId: string | null; authorName: string; deleted: boolean; deletedBy: string | null; isMod: boolean; createdAt: string }
-export type ModMember = { id: string; name: string; email: string; hasPhoto?: boolean; role: 'fan' | 'agent' | 'moderator'; status: 'active' | 'muted' | 'banned'; mutedUntil: string | null; lastSeenAt: string | null; createdAt: string }
+export type ModMember = { id: string; name: string; email: string; hasPhoto?: boolean; roleId: string | null; status: 'active' | 'muted' | 'banned'; mutedUntil: string | null; lastSeenAt: string | null; createdAt: string }
 
 const REASON: Record<string, string> = { spam: 'Spam', abuse: 'Abuse', scam: 'Scam / paid tips', promo: 'Other promo code', other: 'Other' }
 const MUTES = [['1h', '1 hour'], ['24h', '24 hours'], ['7d', '7 days'], ['forever', 'Until unmuted']] as const
@@ -50,7 +50,9 @@ function StatusBadge({ status, mutedUntil }: { status: string; mutedUntil?: stri
   return <Badge variant="outline" className="text-success">Active</Badge>
 }
 
-export function ModerationView({ reports, messages, members }: { reports: ModReport[]; messages: ModMessage[]; members: ModMember[] }) {
+export type ModRole = { id: string; name: string; isDefault: boolean; color: string | null }
+export function ModerationView({ reports, messages, members, roles = [] }: { reports: ModReport[]; messages: ModMessage[]; members: ModMember[]; roles?: ModRole[] }) {
+  const defaultRole = roles.find((r) => r.isDefault)
   const router = useRouter()
   const [pending, start] = useTransition()
   const [confirm, setConfirm] = useState<null | { title: string; body: string; action: string; run: () => Promise<{ ok: boolean; error?: string }>; done: string }>(null)
@@ -141,14 +143,13 @@ export function ModerationView({ reports, messages, members }: { reports: ModRep
   const memberCols: Col<ModMember>[] = useMemo(() => [
     { id: 'name', header: 'Member', accessorFn: (m) => m.name + ' ' + m.email, cell: ({ row: { original: m } }) => <Who name={m.name} sub={m.email} /> },
     {
-      id: 'role', header: 'Role', accessorFn: (m) => m.role, size: 170,
+      id: 'role', header: 'Role', accessorFn: (m) => (roles.find((r) => r.id === m.roleId) || defaultRole)?.name || '', size: 190,
       cell: ({ row: { original: m } }) => (
-        <Select value={m.role} onValueChange={(v) => act(() => setMemberRole(m.id, v as ModMember['role']), `${m.name} is now ${v}`)} disabled={pending}>
-          <SelectTrigger size="sm" className="w-36"><SelectValue /></SelectTrigger>
+        <Select value={m.roleId || 'default'} onValueChange={(v) => act(() => setMemberRole(m.id, v === 'default' ? null : v), `${m.name}: ${v === 'default' ? (defaultRole?.name || 'default role') : roles.find((r) => r.id === v)?.name}`)} disabled={pending}>
+          <SelectTrigger size="sm" className="w-40"><SelectValue /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="fan">Fan</SelectItem>
-            <SelectItem value="agent">Partner team</SelectItem>
-            <SelectItem value="moderator">Moderator</SelectItem>
+            <SelectItem value="default">{defaultRole ? `${defaultRole.name} (default)` : 'Default'}</SelectItem>
+            {roles.filter((r) => !r.isDefault).map((r) => <SelectItem key={r.id} value={r.id}><span className="inline-block size-2 rounded-full" style={{ background: r.color || '#888' }} />{r.name}</SelectItem>)}
           </SelectContent>
         </Select>
       ),
@@ -180,7 +181,7 @@ export function ModerationView({ reports, messages, members }: { reports: ModRep
   ], [pending]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const muted = members.filter((m) => m.status !== 'active').length
-  const staff = members.filter((m) => m.role !== 'fan').length
+  const staff = members.filter((m) => m.roleId && m.roleId !== defaultRole?.id).length
 
   return (
     <>
@@ -189,7 +190,7 @@ export function ModerationView({ reports, messages, members }: { reports: ModRep
         <Stat icon={ShieldAlert} label="Open reports" value={reports.length} tone={reports.length ? 'danger' : undefined} />
         <Stat icon={MessagesSquare} label="Recent messages" value={messages.length} />
         <Stat icon={VolumeX} label="Muted or banned" value={muted} />
-        <Stat icon={Crown} label="Staff in chat" value={staff} />
+        <Stat icon={Crown} label="Members with a special role" value={staff} />
       </div>
       <Tabs defaultValue={reports.length ? 'reports' : 'messages'}>
         <TabsList>

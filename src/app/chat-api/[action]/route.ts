@@ -21,6 +21,17 @@ const ACTIONS: Record<string, Handler> = {
   forgot: chat.forgot,
   'reset-status': chat.resetStatus,
   profile: chat.updateProfile,
+  people: chat.people,
+  'chat-request': chat.chatRequest,
+  'chat-respond': chat.chatRespond,
+  groups: chat.groups,
+  'group-join': chat.groupJoin,
+  'group-leave': chat.groupLeave,
+  'room-create': chat.roomCreate,
+  'room-update': chat.roomUpdate,
+  'room-remove': chat.roomRemove,
+  'room-members': chat.roomMembers,
+  'room-member': chat.roomMember,
 }
 
 /**

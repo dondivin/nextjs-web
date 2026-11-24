@@ -19,6 +19,10 @@ import { ChatMessages } from './collections/chat/ChatMessages'
 import { ChatReports } from './collections/chat/ChatReports'
 import { PasswordResets } from './collections/chat/PasswordResets'
 import { ChatImages } from './collections/chat/ChatImages'
+import { ChatRequests } from './collections/chat/ChatRequests'
+import { ChatRooms } from './collections/chat/ChatRooms'
+import { ChatRoomMembers } from './collections/chat/ChatRoomMembers'
+import { MemberRoles } from './collections/chat/MemberRoles'
 import { seed } from './seed/seed'
 
 const filename = fileURLToPath(import.meta.url)
@@ -64,7 +68,7 @@ export default buildConfig({
       baseDir: path.resolve(dirname),
     },
   },
-  collections: [Users, Media, Partners, Matches, Languages, Translations, Members, ChatMessages, ChatReports, PasswordResets, ChatImages],
+  collections: [Users, Media, Partners, Matches, Languages, Translations, Members, ChatMessages, ChatReports, PasswordResets, ChatImages, ChatRequests, ChatRooms, ChatRoomMembers, MemberRoles],
   globals: [SiteSettings, ChatSettings],
   editor: lexicalEditor(),
   secret: process.env.PAYLOAD_SECRET || '',

@@ -7,7 +7,7 @@ import { useTheme } from '@/backoffice/components/theme-provider'
 import {
   LayoutDashboard, Palette, Trophy, Languages, ShieldAlert, Settings2, MessagesSquare, UserCog, Database,
   ExternalLink, LogOut, Search, Moon, Sun, ChevronsUpDown, Monitor,
-  KeyRound, CircleUserRound,
+  KeyRound, CircleUserRound, Users2, BadgeCheck,
 } from 'lucide-react'
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarInset,
@@ -25,7 +25,7 @@ import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbP
 type ShellUser = { name: string; email: string; roles: string[] }
 type NavItem = { title: string; href: string; icon: React.ComponentType<{ className?: string }>; external?: boolean; badge?: number }
 
-const LABELS: Record<string, string> = { admin: 'Dashboard', partners: 'Partners', translations: 'Translations', moderation: 'Moderation', resets: 'Password resets', profile: 'Chat profile', matches: 'Matches', settings: 'Settings', site: 'Site', chat: 'Chat', team: 'Team accounts', account: 'My account' }
+const LABELS: Record<string, string> = { admin: 'Dashboard', partners: 'Partners', translations: 'Translations', moderation: 'Moderation', resets: 'Password resets', profile: 'Chat profile', matches: 'Matches', settings: 'Settings', site: 'Site', chat: 'Chat', team: 'Team accounts', account: 'My account', groups: 'Groups & channels', roles: 'Member roles' }
 
 export function AppShell({ user, openReports, pendingResets = 0, partners, brand, children }: { user: ShellUser; openReports: number; pendingResets?: number; brand?: { logoUrl: string | null; siteName: string }; partners: { id: string; name: string }[]; children: React.ReactNode }) {
   const pathname = usePathname()
@@ -46,6 +46,8 @@ export function AppShell({ user, openReports, pendingResets = 0, partners, brand
       label: 'Community',
       items: [
         { title: 'Moderation', href: '/admin/moderation', icon: ShieldAlert, badge: openReports },
+        { title: 'Groups & channels', href: '/admin/groups', icon: Users2 },
+        { title: 'Member roles', href: '/admin/roles', icon: BadgeCheck },
         { title: 'Password resets', href: '/admin/resets', icon: KeyRound, badge: pendingResets },
         { title: 'My chat profile', href: '/admin/profile', icon: CircleUserRound },
         { title: 'Chat settings', href: '/admin/settings/chat', icon: MessagesSquare },

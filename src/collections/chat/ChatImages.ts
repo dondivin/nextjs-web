@@ -15,7 +15,7 @@ export const ChatImages: CollectionConfig = {
     read: ({ req }) => {
       const u = req.user as { collection?: string; id?: string | number } | null
       if (hasRole(u as never, 'moderator')) return true
-      const rooms: Where = { room: { not_like: 'dm:' } }
+      const rooms: Where = { and: [{ room: { not_like: 'dm:' } }, { room: { not_like: 'pm:' } }] }
       if (u?.collection === 'members') return { or: [rooms, { room: { equals: 'dm:' + u.id } }] }
       return rooms
     },
