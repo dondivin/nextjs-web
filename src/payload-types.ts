@@ -64,11 +64,19 @@ export type SupportedTimezones =
 export interface Config {
   auth: {
     users: UserAuthOperations;
+    members: MemberAuthOperations;
   };
   blocks: {};
   collections: {
     users: User;
     media: Media;
+    partners: Partner;
+    matches: Match;
+    languages: Language;
+    translations: Translation;
+    members: Member;
+    'chat-messages': ChatMessage;
+    'chat-reports': ChatReport;
     'payload-kv': PayloadKv;
     'payload-locked-documents': PayloadLockedDocument;
     'payload-preferences': PayloadPreference;
@@ -78,6 +86,13 @@ export interface Config {
   collectionsSelect: {
     users: UsersSelect<false> | UsersSelect<true>;
     media: MediaSelect<false> | MediaSelect<true>;
+    partners: PartnersSelect<false> | PartnersSelect<true>;
+    matches: MatchesSelect<false> | MatchesSelect<true>;
+    languages: LanguagesSelect<false> | LanguagesSelect<true>;
+    translations: TranslationsSelect<false> | TranslationsSelect<true>;
+    members: MembersSelect<false> | MembersSelect<true>;
+    'chat-messages': ChatMessagesSelect<false> | ChatMessagesSelect<true>;
+    'chat-reports': ChatReportsSelect<false> | ChatReportsSelect<true>;
     'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
     'payload-preferences': PayloadPreferencesSelect<false> | PayloadPreferencesSelect<true>;
@@ -87,13 +102,19 @@ export interface Config {
     defaultIDType: string;
   };
   fallbackLocale: null;
-  globals: {};
-  globalsSelect: {};
+  globals: {
+    'site-settings': SiteSetting;
+    'chat-settings': ChatSetting;
+  };
+  globalsSelect: {
+    'site-settings': SiteSettingsSelect<false> | SiteSettingsSelect<true>;
+    'chat-settings': ChatSettingsSelect<false> | ChatSettingsSelect<true>;
+  };
   locale: null;
   widgets: {
     collections: CollectionsWidget;
   };
-  user: User;
+  user: User | Member;
   jobs: {
     tasks: unknown;
     workflows: unknown;
@@ -117,12 +138,32 @@ export interface UserAuthOperations {
     password: string;
   };
 }
+export interface MemberAuthOperations {
+  forgotPassword: {
+    email: string;
+    password: string;
+  };
+  login: {
+    email: string;
+    password: string;
+  };
+  registerFirstUser: {
+    email: string;
+    password: string;
+  };
+  unlock: {
+    email: string;
+    password: string;
+  };
+}
 /**
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "users".
  */
 export interface User {
   id: string;
+  name?: string | null;
+  roles?: ('owner' | 'editor' | 'translator' | 'moderator')[] | null;
   updatedAt: string;
   createdAt: string;
   email: string;
@@ -164,6 +205,296 @@ export interface Media {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "partners".
+ */
+export interface Partner {
+  id: string;
+  /**
+   * As shown in the switcher and on the phone, e.g. 1xBet
+   */
+  name: string;
+  /**
+   * Lowercase id used in links (#b-slug)
+   */
+  slug: string;
+  order?: number | null;
+  active?: boolean | null;
+  /**
+   * The promo code visitors copy
+   */
+  promoCode?: string | null;
+  /**
+   * Affiliate sign-up link (https://…)
+   */
+  signupUrl?: string | null;
+  /**
+   * Bonus terms link (optional)
+   */
+  termsUrl?: string | null;
+  texts?:
+    | {
+        locale: string;
+        /**
+         * Welcome bonus, e.g. 100% up to €130
+         */
+        bonus?: string | null;
+        /**
+         * Payment methods, e.g. mobile money, cards
+         */
+        payments?: string | null;
+        id?: string | null;
+      }[]
+    | null;
+  /**
+   * Optional. Only use a logo you have permission to use.
+   */
+  logo?: (string | null) | Media;
+  colors: {
+    /**
+     * Darkest background
+     */
+    night: string;
+    /**
+     * Main surfaces
+     */
+    navy: string;
+    /**
+     * Raised surfaces, phone back
+     */
+    navy2: string;
+    /**
+     * Cards
+     */
+    panel: string;
+    /**
+     * Gradients, phone camera plate
+     */
+    blue: string;
+    /**
+     * Light accent, phone rim light
+     */
+    sky: string;
+    /**
+     * Main buttons and the partner pill
+     */
+    cta: string;
+    /**
+     * Text on primary buttons
+     */
+    ink: string;
+    /**
+     * Numbers on odds buttons
+     */
+    odds: string;
+    /**
+     * Odds buttons
+     */
+    oddBg: string;
+    /**
+     * Light section background
+     */
+    tint: string;
+    /**
+     * Footer and deep areas
+     */
+    deep: string;
+    /**
+     * Secondary text
+     */
+    mute: string;
+    /**
+     * Top bar and partner switcher
+     */
+    nav: string;
+  };
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "matches".
+ */
+export interface Match {
+  id: string;
+  title?: string | null;
+  sport: 'football' | 'basketball' | 'tennis' | 'esports' | 'hockey' | 'volleyball' | 'other';
+  league?: string | null;
+  order?: number | null;
+  active?: boolean | null;
+  home: string;
+  away: string;
+  status: 'upcoming' | 'live' | 'ft';
+  startsAt?: string | null;
+  minute?: number | null;
+  scoreHome?: number | null;
+  scoreAway?: number | null;
+  /**
+   * 1
+   */
+  oddsHome?: number | null;
+  /**
+   * X — leave empty for sports without a draw
+   */
+  oddsDraw?: number | null;
+  /**
+   * 2
+   */
+  oddsAway?: number | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Languages offered in the site language switcher. Add one, then translate its texts in Translations.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "languages".
+ */
+export interface Language {
+  id: string;
+  /**
+   * Short code used in the address, e.g. en, fr, sw, pt-br
+   */
+  code: string;
+  /**
+   * Name in English, e.g. French
+   */
+  name: string;
+  /**
+   * Name as shown in the switcher, e.g. Français
+   */
+  nativeName: string;
+  dir?: ('ltr' | 'rtl') | null;
+  order?: number | null;
+  enabled?: boolean | null;
+  /**
+   * Used when a text has no translation
+   */
+  isDefault?: boolean | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Text markup: **bold**, __highlight__, and {placeholders} which are filled in automatically — keep placeholders exactly as they are.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "translations".
+ */
+export interface Translation {
+  id: string;
+  /**
+   * Code name used by the site, e.g. hero.headline.1. Do not rename existing keys.
+   */
+  key: string;
+  namespace?: string | null;
+  /**
+   * Where this text appears (help for translators)
+   */
+  context?: string | null;
+  values?:
+    | {
+        locale: string;
+        value?: string | null;
+        id?: string | null;
+      }[]
+    | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "members".
+ */
+export interface Member {
+  id: string;
+  displayName: string;
+  /**
+   * Avatar colour (hex). Picked automatically on sign-up.
+   */
+  color?: string | null;
+  avatar?: (string | null) | Media;
+  role?: ('fan' | 'agent' | 'moderator') | null;
+  status?: ('active' | 'muted' | 'banned') | null;
+  mutedUntil?: string | null;
+  moderationNote?: string | null;
+  rulesAcceptedAt?: string | null;
+  lastSeenAt?: string | null;
+  updatedAt: string;
+  createdAt: string;
+  email: string;
+  resetPasswordToken?: string | null;
+  resetPasswordExpiration?: string | null;
+  salt?: string | null;
+  hash?: string | null;
+  resetPasswordRequestedAt?: string | null;
+  loginAttempts?: number | null;
+  lockUntil?: string | null;
+  sessions?:
+    | {
+        id: string;
+        createdAt?: string | null;
+        expiresAt: string;
+      }[]
+    | null;
+  password?: string | null;
+  collection: 'members';
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "chat-messages".
+ */
+export interface ChatMessage {
+  id: string;
+  room: string;
+  author?: (string | null) | Member;
+  text: string;
+  isMod?: boolean | null;
+  reply?: {
+    id?: string | null;
+    author?: (string | null) | Member;
+    text?: string | null;
+  };
+  /**
+   * { reactionKey: { memberId: true } }
+   */
+  reactions?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  deleted?: boolean | null;
+  deletedBy?: string | null;
+  deletedAt?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "chat-reports".
+ */
+export interface ChatReport {
+  id: string;
+  message: string | ChatMessage;
+  /**
+   * Snapshot of the text when it was reported
+   */
+  messageText?: string | null;
+  messageAuthor?: (string | null) | Member;
+  room?: string | null;
+  reporter?: (string | null) | Member;
+  reason?: ('spam' | 'abuse' | 'scam' | 'promo' | 'other') | null;
+  note?: string | null;
+  status?: ('open' | 'dismissed' | 'actioned') | null;
+  handledBy?: (string | null) | User;
+  handledAt?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "payload-kv".
  */
 export interface PayloadKv {
@@ -193,12 +524,45 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'media';
         value: string | Media;
+      } | null)
+    | ({
+        relationTo: 'partners';
+        value: string | Partner;
+      } | null)
+    | ({
+        relationTo: 'matches';
+        value: string | Match;
+      } | null)
+    | ({
+        relationTo: 'languages';
+        value: string | Language;
+      } | null)
+    | ({
+        relationTo: 'translations';
+        value: string | Translation;
+      } | null)
+    | ({
+        relationTo: 'members';
+        value: string | Member;
+      } | null)
+    | ({
+        relationTo: 'chat-messages';
+        value: string | ChatMessage;
+      } | null)
+    | ({
+        relationTo: 'chat-reports';
+        value: string | ChatReport;
       } | null);
   globalSlug?: string | null;
-  user: {
-    relationTo: 'users';
-    value: string | User;
-  };
+  user:
+    | {
+        relationTo: 'users';
+        value: string | User;
+      }
+    | {
+        relationTo: 'members';
+        value: string | Member;
+      };
   updatedAt: string;
   createdAt: string;
 }
@@ -208,10 +572,15 @@ export interface PayloadLockedDocument {
  */
 export interface PayloadPreference {
   id: string;
-  user: {
-    relationTo: 'users';
-    value: string | User;
-  };
+  user:
+    | {
+        relationTo: 'users';
+        value: string | User;
+      }
+    | {
+        relationTo: 'members';
+        value: string | Member;
+      };
   key?: string | null;
   value?:
     | {
@@ -241,6 +610,8 @@ export interface PayloadMigration {
  * via the `definition` "users_select".
  */
 export interface UsersSelect<T extends boolean = true> {
+  name?: T;
+  roles?: T;
   updatedAt?: T;
   createdAt?: T;
   email?: T;
@@ -276,6 +647,177 @@ export interface MediaSelect<T extends boolean = true> {
   height?: T;
   focalX?: T;
   focalY?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "partners_select".
+ */
+export interface PartnersSelect<T extends boolean = true> {
+  name?: T;
+  slug?: T;
+  order?: T;
+  active?: T;
+  promoCode?: T;
+  signupUrl?: T;
+  termsUrl?: T;
+  texts?:
+    | T
+    | {
+        locale?: T;
+        bonus?: T;
+        payments?: T;
+        id?: T;
+      };
+  logo?: T;
+  colors?:
+    | T
+    | {
+        night?: T;
+        navy?: T;
+        navy2?: T;
+        panel?: T;
+        blue?: T;
+        sky?: T;
+        cta?: T;
+        ink?: T;
+        odds?: T;
+        oddBg?: T;
+        tint?: T;
+        deep?: T;
+        mute?: T;
+        nav?: T;
+      };
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "matches_select".
+ */
+export interface MatchesSelect<T extends boolean = true> {
+  title?: T;
+  sport?: T;
+  league?: T;
+  order?: T;
+  active?: T;
+  home?: T;
+  away?: T;
+  status?: T;
+  startsAt?: T;
+  minute?: T;
+  scoreHome?: T;
+  scoreAway?: T;
+  oddsHome?: T;
+  oddsDraw?: T;
+  oddsAway?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "languages_select".
+ */
+export interface LanguagesSelect<T extends boolean = true> {
+  code?: T;
+  name?: T;
+  nativeName?: T;
+  dir?: T;
+  order?: T;
+  enabled?: T;
+  isDefault?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "translations_select".
+ */
+export interface TranslationsSelect<T extends boolean = true> {
+  key?: T;
+  namespace?: T;
+  context?: T;
+  values?:
+    | T
+    | {
+        locale?: T;
+        value?: T;
+        id?: T;
+      };
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "members_select".
+ */
+export interface MembersSelect<T extends boolean = true> {
+  displayName?: T;
+  color?: T;
+  avatar?: T;
+  role?: T;
+  status?: T;
+  mutedUntil?: T;
+  moderationNote?: T;
+  rulesAcceptedAt?: T;
+  lastSeenAt?: T;
+  updatedAt?: T;
+  createdAt?: T;
+  email?: T;
+  resetPasswordToken?: T;
+  resetPasswordExpiration?: T;
+  salt?: T;
+  hash?: T;
+  resetPasswordRequestedAt?: T;
+  loginAttempts?: T;
+  lockUntil?: T;
+  sessions?:
+    | T
+    | {
+        id?: T;
+        createdAt?: T;
+        expiresAt?: T;
+      };
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "chat-messages_select".
+ */
+export interface ChatMessagesSelect<T extends boolean = true> {
+  room?: T;
+  author?: T;
+  text?: T;
+  isMod?: T;
+  reply?:
+    | T
+    | {
+        id?: T;
+        author?: T;
+        text?: T;
+      };
+  reactions?: T;
+  deleted?: T;
+  deletedBy?: T;
+  deletedAt?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "chat-reports_select".
+ */
+export interface ChatReportsSelect<T extends boolean = true> {
+  message?: T;
+  messageText?: T;
+  messageAuthor?: T;
+  room?: T;
+  reporter?: T;
+  reason?: T;
+  note?: T;
+  status?: T;
+  handledBy?: T;
+  handledAt?: T;
+  updatedAt?: T;
+  createdAt?: T;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
@@ -316,6 +858,162 @@ export interface PayloadMigrationsSelect<T extends boolean = true> {
   batch?: T;
   updatedAt?: T;
   createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "site-settings".
+ */
+export interface SiteSetting {
+  id: string;
+  siteName: string;
+  /**
+   * Partner shown to first-time visitors
+   */
+  defaultPartner?: (string | null) | Partner;
+  /**
+   * Name visitors see in the direct chat with your team
+   */
+  agentName?: string | null;
+  /**
+   * Shown in the footer’s responsible-gambling note, per language.
+   */
+  helpline?:
+    | {
+        locale: string;
+        value?: string | null;
+        id?: string | null;
+      }[]
+    | null;
+  /**
+   * Footer line with company and licence details, per language.
+   */
+  companyLine?:
+    | {
+        locale: string;
+        value?: string | null;
+        id?: string | null;
+      }[]
+    | null;
+  updatedAt?: string | null;
+  createdAt?: string | null;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "chat-settings".
+ */
+export interface ChatSetting {
+  id: string;
+  /**
+   * Seconds a member must wait between messages (0 = off)
+   */
+  slowModeSeconds?: number | null;
+  /**
+   * Maximum characters per message
+   */
+  maxLength?: number | null;
+  /**
+   * Shown in the house rules sheet. Members must accept them before posting.
+   */
+  rules?:
+    | {
+        icon: 'age' | 'heart' | 'nolink' | 'shield' | 'tag' | 'clock' | 'ball';
+        /**
+         * One row per language (use the language code, e.g. en, fr).
+         */
+        title?:
+          | {
+              locale: string;
+              value?: string | null;
+              id?: string | null;
+            }[]
+          | null;
+        /**
+         * One row per language (use the language code, e.g. en, fr).
+         */
+        body?:
+          | {
+              locale: string;
+              value?: string | null;
+              id?: string | null;
+            }[]
+          | null;
+        id?: string | null;
+      }[]
+    | null;
+  /**
+   * Messages containing these (also with l33t spelling like 1d10t) are blocked.
+   */
+  bannedWords?:
+    | {
+        word: string;
+        id?: string | null;
+      }[]
+    | null;
+  updatedAt?: string | null;
+  createdAt?: string | null;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "site-settings_select".
+ */
+export interface SiteSettingsSelect<T extends boolean = true> {
+  siteName?: T;
+  defaultPartner?: T;
+  agentName?: T;
+  helpline?:
+    | T
+    | {
+        locale?: T;
+        value?: T;
+        id?: T;
+      };
+  companyLine?:
+    | T
+    | {
+        locale?: T;
+        value?: T;
+        id?: T;
+      };
+  updatedAt?: T;
+  createdAt?: T;
+  globalType?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "chat-settings_select".
+ */
+export interface ChatSettingsSelect<T extends boolean = true> {
+  slowModeSeconds?: T;
+  maxLength?: T;
+  rules?:
+    | T
+    | {
+        icon?: T;
+        title?:
+          | T
+          | {
+              locale?: T;
+              value?: T;
+              id?: T;
+            };
+        body?:
+          | T
+          | {
+              locale?: T;
+              value?: T;
+              id?: T;
+            };
+        id?: T;
+      };
+  bannedWords?:
+    | T
+    | {
+        word?: T;
+        id?: T;
+      };
+  updatedAt?: T;
+  createdAt?: T;
+  globalType?: T;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema

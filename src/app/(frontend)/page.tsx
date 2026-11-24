@@ -1,59 +1,21 @@
-import { headers as getHeaders } from 'next/headers.js'
-import Image from 'next/image'
-import { getPayload } from 'payload'
-import React from 'react'
-import { fileURLToPath } from 'url'
+import { cookies, headers } from 'next/headers'
+import { redirect } from 'next/navigation'
+import { getLanguages } from '@/i18n/data'
 
-import config from '@/payload.config'
-import './styles.css'
+export const dynamic = 'force-dynamic'
 
-export default async function HomePage() {
-  const headers = await getHeaders()
-  const payloadConfig = await config
-  const payload = await getPayload({ config: payloadConfig })
-  const { user } = await payload.auth({ headers })
-
-  const fileURL = `vscode://file/${fileURLToPath(import.meta.url)}`
-
-  return (
-    <div className="home">
-      <div className="content">
-        <picture>
-          <source srcSet="https://raw.githubusercontent.com/payloadcms/payload/3.x/packages/ui/src/assets/payload-favicon.svg" />
-          <Image
-            alt="Payload Logo"
-            height={65}
-            src="https://raw.githubusercontent.com/payloadcms/payload/3.x/packages/ui/src/assets/payload-favicon.svg"
-            width={65}
-          />
-        </picture>
-        {!user && <h1>Welcome to your new project.</h1>}
-        {user && <h1>Welcome back, {user.email}</h1>}
-        <div className="links">
-          <a
-            className="admin"
-            href={payloadConfig.routes.admin}
-            rel="noopener noreferrer"
-            target="_blank"
-          >
-            Go to admin panel
-          </a>
-          <a
-            className="docs"
-            href="https://payloadcms.com/docs"
-            rel="noopener noreferrer"
-            target="_blank"
-          >
-            Documentation
-          </a>
-        </div>
-      </div>
-      <div className="footer">
-        <p>Update this page by editing</p>
-        <a className="codeLink" href={fileURL}>
-          <code>app/(frontend)/page.tsx</code>
-        </a>
-      </div>
-    </div>
-  )
+/** "/" → the visitor's saved language, else the browser's language, else the default language. */
+export default async function Root() {
+  const languages = await getLanguages()
+  const codes = languages.map((l) => l.code)
+  const saved = (await cookies()).get('oc_locale')?.value
+  if (saved && codes.includes(saved)) redirect('/' + saved)
+  const accept = (await headers()).get('accept-language') || ''
+  for (const part of accept.split(',')) {
+    const tag = part.split(';')[0].trim().toLowerCase()
+    if (codes.includes(tag)) redirect('/' + tag)
+    const base = tag.split('-')[0]
+    if (codes.includes(base)) redirect('/' + base)
+  }
+  redirect('/' + (languages.find((l) => l.isDefault)?.code || codes[0] || 'en'))
 }
