@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { requireUser, payloadClient } from '@/backoffice/lib/server'
 import { ChatSettingsView } from '@/backoffice/views/chat-settings'
 import { fillLanguages } from '@/backoffice/lib/localized'
+import { mediaUsage } from '@/chat/cleanup'
 
 export const metadata: Metadata = { title: 'Chat settings' }
 export const dynamic = 'force-dynamic'
@@ -18,9 +19,12 @@ export default async function ChatSettingsPage() {
     <ChatSettingsView
       languages={languages}
       updatedAt={chat.updatedAt || null}
+      usage={await mediaUsage(payload)}
       initial={{
-        slowModeSeconds: chat.slowModeSeconds ?? 5,
+        slowModeSeconds: chat.slowModeSeconds ?? 0,
         maxLength: chat.maxLength ?? 400,
+        voiceMaxSeconds: chat.voiceMaxSeconds ?? 120,
+        mediaRetentionDays: chat.mediaRetentionDays ?? 0,
         rules: (chat.rules || []).map((r) => ({ icon: r.icon || 'shield', title: fillLanguages(r.title, languages), body: fillLanguages(r.body, languages) })),
         bannedWords: (chat.bannedWords || []).map((w) => w.word).filter(Boolean).join('\n'),
       }}

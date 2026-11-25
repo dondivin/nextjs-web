@@ -155,7 +155,7 @@ function MatchSheet({ match, onClose, onSaved }: { match: MatchRow | 'new' | nul
         <form onSubmit={handleSubmit(onSubmit, () => toast.error('Some fields need fixing'))} className="flex min-h-full flex-col" noValidate>
           <SheetHeader>
             <SheetTitle>{match === 'new' ? 'Add match' : 'Edit match'}</SheetTitle>
-            <SheetDescription>Teams, kick-off, live score and odds.</SheetDescription>
+            <SheetDescription>Teams, start time, live score and odds.</SheetDescription>
           </SheetHeader>
           <div className="grid gap-5 px-4 pb-4">
             <div className="grid grid-cols-2 gap-3">
@@ -170,7 +170,7 @@ function MatchSheet({ match, onClose, onSaved }: { match: MatchRow | 'new' | nul
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="m-league">League</Label>
-                <Input id="m-league" placeholder="e.g. Premier League" {...register('league')} />
+                <Input id="m-league" placeholder="Competition" {...register('league')} />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -200,7 +200,7 @@ function MatchSheet({ match, onClose, onSaved }: { match: MatchRow | 'new' | nul
                 )} />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="m-start">Kick-off</Label>
+                <Label htmlFor="m-start">Start time</Label>
                 <Controller control={control} name="startsAt" render={({ field }) => (
                   <Input id="m-start" type="datetime-local" value={toLocal(field.value)} onChange={(ev) => field.onChange(fromLocal(ev.target.value))} />
                 )} />

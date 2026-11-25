@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic'
 
 type Rel = string | { id: string; displayName?: string; status?: string | null } | null | undefined
 const relId = (r: Rel) => (r && typeof r === 'object' ? String(r.id) : r ? String(r) : null)
-const relName = (r: Rel) => (r && typeof r === 'object' ? r.displayName || 'Fan' : 'Deleted member')
+const relName = (r: Rel) => (r && typeof r === 'object' ? r.displayName || 'Member' : 'Deleted member')
 
 export default async function ModerationPage() {
   await requireUser('moderator')

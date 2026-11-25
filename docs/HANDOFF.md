@@ -84,7 +84,18 @@ Run from the project folder. Use **pnpm** (never npm).
 | `pnpm admin:reset-password` | Shows which account is the main admin | Server, recovery |
 | `pnpm admin:reset-password <main-admin-email>` | New password for the **main admin** (the first account created), typed hidden; `--generate` prints a random one instead. Unlocks it and keeps it an owner. Refuses every other account (they use "Forgot your password?" + owner approval) | Server, when the main admin is locked out |
 
-Environment variables: see `.env.example` (MongoDB, `PAYLOAD_SECRET`, `NEXT_PUBLIC_SERVER_URL`, Cloudflare R2 `R2_*`).
+Environment variables: see `.env.example` (MongoDB, `PAYLOAD_SECRET`, `NEXT_PUBLIC_SERVER_URL`, Cloudflare R2 `R2_*`,
+`CHAT_MASTER_KEY`).
+
+**`CHAT_MASTER_KEY` — message encryption (critical; full guide: `docs/ENCRYPTION.md`).** Message texts are encrypted at rest (master key → one key per
+conversation, see ARCHITECTURE "Message encryption"). The key must be in every environment (local `.env`, production
+settings) and **backed up somewhere safe**: losing it makes every stored message text unreadable, for good. Never commit
+it, never change it by hand — to change it use `pnpm chat:crypto --rotate` (set `CHAT_MASTER_KEY_OLD` = previous key).
+Without it the server keeps working but stores new texts unencrypted (warning in the log).
+
+| `pnpm data:export` | Save the WHOLE database (content, settings, accounts, chat history, encryption keys) into `seed-data/snapshot/` (git-ignored — personal data). Files stay on R2 | Before moving to a new database (`docs/MOVING-DATA.md`) |
+| `pnpm seed` on an empty database | Restores `seed-data/snapshot/` when present (needs the same `CHAT_MASTER_KEY`); `pnpm seed --restore --yes` replaces a non-empty database's data | Moving / resetting a database |
+| `pnpm chat:crypto` | Status of message encryption; `--encrypt [--dry-run]` encrypts plain texts, `--decrypt` reverts, `--rotate` re-locks the conversation keys after changing the master key | After restoring an old backup, before removing the feature, when changing the master key |
 
 ## 6. How to continue
 1. Read `docs/PROGRESS.md` → find the first unchecked item.

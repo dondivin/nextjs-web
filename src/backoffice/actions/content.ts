@@ -76,12 +76,25 @@ export async function saveChatSettings(input: ChatForm) {
       data: {
         slowModeSeconds: d.slowModeSeconds,
         maxLength: d.maxLength,
+        voiceMaxSeconds: d.voiceMaxSeconds,
+        mediaRetentionDays: d.mediaRetentionDays,
         rules: d.rules.map((r) => ({ icon: r.icon as never, title: clean(r.title), body: clean(r.body) })).filter((r) => r.title.length || r.body.length),
         bannedWords: words.map((word) => ({ word })),
       },
     })
     clearChatCache()
     revalidatePath('/admin', 'layout')
+  })
+}
+
+/** Media clean-up now (moderators): deletes chat pictures / voice messages older than the saved number of days. */
+export async function runMediaCleanupNow() {
+  return run(async () => {
+    await actionUser('moderator')
+    const { runMediaCleanup } = await import('@/chat/cleanup')
+    const r = await runMediaCleanup(await payloadClient())
+    revalidatePath('/admin/settings/chat')
+    return r
   })
 }
 

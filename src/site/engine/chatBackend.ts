@@ -6,22 +6,24 @@
  * The first stream event (`hello`) carries everything; later events are deltas that this adapter folds into full lists,
  * because the engine's hooks (h.messages, h.myDm, h.dm …) always take the whole list.
  *
- * Rooms: the server stores direct chats as 'dm:<memberId>'. The engine calls a fan's own direct chat 'support'
- * and, for staff, each fan's chat 'sup:<memberId>'. view() translates.
+ * Rooms: the server stores direct chats as 'dm:<memberId>'. The engine calls a member's own direct chat 'support'
+ * and, for staff, each member's chat 'sup:<memberId>'. view() translates.
  *
  * Also owns the sign-in / sign-up / account sheet (#authSheet) and the account button in the chat sidebar (#chatAccount).
  */
 import type { EngineConfig } from './types'
-import { randomGradient } from '../../chat/gradient'
+import { randomGradient, ROOM_COLORS } from '../../chat/gradient'
 
 export function createChatBackend(cfg: EngineConfig, h) {
   const base = cfg.apiBase || '/chat-api'
   const S = h.S
   let es = null, conn = null, helloAt = 0, failTimer = 0, retryTimer = 0
   let me = { uid: null, staff: false }, info = null
-  const st = { messages: [], myDm: [], dms: {}, watching: {}, threads: {}, pms: {}, pm: {}, peers: [], groups: [], g: {} }
+  const st = { messages: [], myDm: [], dms: {}, watching: {}, threads: {}, pms: {}, pm: {}, peers: [], groups: [], g: {}, rc: {}, grc: {} }
+  // grc['g:<id>'][memberId] = {delivered, read}: each other member's position in a group / channel
+  // rc[browserRoom] = {delivered, read}: how far the OTHER side of a one-to-one chat has received / seen it (message times)
   // groups = rooms made by the team that this viewer sees; g[id] = messages of the ones they can read
-  // pms[uid] = relation with that fan ({status, note, at, lastSeen}); pm[uid] = messages of our private chat
+  // pms[uid] = relation with that member ({status, note, at, lastSeen}); pm[uid] = messages of our private chat
   const known = {} // every profile seen so far (id → {name, gradient, avatarUrl, …})
   const learn = (p) => { if (p) Object.assign(known, p); return p }
   const pres = { room: null, typing: false }, sent = { conn: null, room: undefined, typing: undefined }
@@ -42,9 +44,9 @@ export function createChatBackend(cfg: EngineConfig, h) {
     let room = w.room
     if (room.indexOf('dm:') === 0) { const uid = room.slice(3); room = !me.staff && uid === me.uid ? 'support' : 'sup:' + uid }
     else if (room.indexOf('pm:') === 0) room = 'pm:' + pmOther(room)
-    return { id: w.id, by: w.by, text: w.text, ts: w.ts, room, reply: w.reply || null, reactions: w.reactions || {}, image: w.image || undefined, mod: w.mod || undefined, clientId: w.clientId }
+    return { id: w.id, by: w.by, text: w.text, ts: w.ts, room, reply: w.reply || null, reactions: w.reactions || {}, image: w.image || undefined, voice: w.voice || undefined, expired: w.expired || undefined, locked: w.locked || undefined, nosave: w.nosave || undefined, mod: w.mod || undefined, clientId: w.clientId }
   }
-  // the other fan of a stored private room 'pm:<a>_<b>'
+  // the other member of a stored private room 'pm:<a>_<b>'
   function pmOther(room) { const [a, b] = room.slice(3).split('_'); return a === me.uid ? b : a }
   // which list a stored room belongs to: ['messages'] | ['myDm'] | ['dm', uid] | ['pm', uid]
   function slot(room) {
@@ -67,7 +69,7 @@ export function createChatBackend(cfg: EngineConfig, h) {
     if (i >= 0) { list[i] = m; return false }
     list.push(m)
     if (list.length > 1 && list[list.length - 2].ts > m.ts) list.sort((a, b) => a.ts - b.ts)
-    if (list.length > 500) list.splice(0, list.length - 500)
+    if (list.length > 3000) list.splice(0, list.length - 3000)   // (older pages loaded by scrolling up stay)
     return true
   }
   function peers(list) { return (list || []).map((p) => ({ kind: 'viewer', by: p.by, isMe: p.c === conn, presence: p.presence })) }
@@ -110,6 +112,8 @@ export function createChatBackend(cfg: EngineConfig, h) {
         h.pms(Object.assign({}, st.pms))
         for (const uid in d.pmMsgs || {}) { st.pm[uid] = d.pmMsgs[uid].map(view); h.pmMsgs(uid, st.pm[uid].slice()) }
         applyGroups(d.groups || [], d.gMsgs || {}, true)
+        st.rc = {}; st.grc = {}; (d.receipts || []).forEach(applyReceipt); pushReceipts()
+        deliveredAll()
         st.peers = d.peers || []
         h.peers(peers(d.peers))
         watched.forEach(watchThread)
@@ -121,6 +125,7 @@ export function createChatBackend(cfg: EngineConfig, h) {
       case 'msg': {
         const s = slot(d.m.room); if (!s) return
         if (d.profiles && Object.keys(d.profiles).length) h.profiles(learn(d.profiles))
+        if (!d.m.deleted && d.m.by !== me.uid) gotOne(s, d.m)
         if (s[0] === 'dm' && !st.dms[s[1]]) return // staff: thread not open yet, its list loads on watchThread
         const list = getList(s), m = view(d.m)
         if (d.m.deleted) { const i = list.findIndex((x) => x.id === m.id); if (i < 0) return; list.splice(i, 1); emit(s); return }
@@ -139,7 +144,8 @@ export function createChatBackend(cfg: EngineConfig, h) {
       case 'myReports': h.myReports(d.ids || []); break
       case 'matches': h.matches(d.matches || []); break
       case 'peers': st.peers = d.peers || []; h.peers(peers(d.peers)); learnPeers(); renderPeople(); break
-      case 'groups': refreshGroups(); if (rs.open && rs.id) loadMembers(); break
+      case 'receipt': applyReceipt(d.receipt); pushReceipts(); break
+      case 'groups': refreshGroups(); if (rs.open && rs.id) loadMembers(); if (gi.open) loadGroupInfo(); break
       case 'rolesChanged': reconnect(); break // our role (or its rights) changed: fresh hello with the new rights and badges
       case 'pm': {
         if (d.profiles) h.profiles(learn(d.profiles))
@@ -158,12 +164,70 @@ export function createChatBackend(cfg: EngineConfig, h) {
     }
   }
 
+  /* ---------- delivery / read receipts (one-to-one chats: private chats and the direct chat with the team) ----------
+     Incoming: the other side's position per room → the engine draws ✓ / ✓✓ / ✓✓ read on our messages.
+     Outgoing: this device received a message (delivered) or the conversation was on screen (read, sent by the engine). */
+  function rcRoom(stored) {
+    if (stored.indexOf('pm:') === 0) return stored.slice(3).split('_').includes(me.uid) ? 'pm:' + pmOther(stored) : null
+    if (stored.indexOf('dm:') === 0) { const id = stored.slice(3); return me.staff ? 'sup:' + id : id === me.uid ? 'support' : null }
+    return null
+  }
+  function pushReceipts() { h.receipts(Object.assign({}, st.rc), JSON.parse(JSON.stringify(st.grc))) }
+  const isMemberOf = (gid) => { const g = st.groups.find((x) => x.id === gid); return !!(g && (g.status === 'member' || g.isOwner)) }   // the owner of a team-made room has no membership row
+  function applyReceipt(r) {
+    if (!r || r.reader === me.uid || (me.staff && r.reader === 'team')) return   // our own position: not shown to us
+    if (r.room.indexOf('g:') === 0) {   // group / channel: keep every member's position
+      const g = (st.grc[r.room] = st.grc[r.room] || {}), cur = g[r.reader] || { delivered: 0, read: 0 }
+      g[r.reader] = { delivered: Math.max(cur.delivered, r.delivered || 0, r.read || 0), read: Math.max(cur.read, r.read || 0) }
+      return
+    }
+    const room = rcRoom(r.room); if (!room) return
+    const cur = st.rc[room] || { delivered: 0, read: 0 }
+    st.rc[room] = { delivered: Math.max(cur.delivered, r.delivered || 0, r.read || 0), read: Math.max(cur.read, r.read || 0) }
+  }
+  const rcSent = {}, rcQueue = {}
+  let rcTimer = 0
+  function queueReceipt(room, kind, ts) {
+    if (!room || !ts || !me.uid) return
+    const k = room + '|' + kind
+    if ((rcSent[k] || 0) >= ts || (rcQueue[k] && rcQueue[k].ts >= ts)) return
+    rcQueue[k] = { room, kind, ts }
+    clearTimeout(rcTimer); rcTimer = setTimeout(flushReceipts, kind === 'read' ? 120 : 350)   // short wait only to bundle several rooms in one request
+  }
+  function flushReceipts() {
+    const items = Object.values(rcQueue); if (!items.length) return
+    for (const k in rcQueue) delete rcQueue[k]
+    items.forEach((it) => { rcSent[it.room + '|' + it.kind] = Math.max(rcSent[it.room + '|' + it.kind] || 0, it.ts) })
+    post('receipt', { items }).catch(() => { items.forEach((it) => { delete rcSent[it.room + '|' + it.kind] }) })
+  }
+  // a message from the other side reached this device
+  function gotOne(s, m) {
+    if (s[0] === 'pm') queueReceipt('pm:' + s[1], 'delivered', m.ts)
+    else if (s[0] === 'myDm') queueReceipt('support', 'delivered', m.ts)
+    else if (s[0] === 'dm' && m.by === s[1]) queueReceipt('sup:' + s[1], 'delivered', m.ts)   // staff: the member wrote
+    else if (s[0] === 'g' && isMemberOf(s[1])) queueReceipt('g:' + s[1], 'delivered', m.ts)   // a group we joined
+  }
+  // after connecting: everything loaded counts as received
+  function deliveredAll() {
+    const newest = (list, skip) => list.reduce((t, m) => (!skip(m) && m.ts > t ? m.ts : t), 0)
+    for (const uid in st.pm) queueReceipt('pm:' + uid, 'delivered', newest(st.pm[uid], (m) => m.by === me.uid))
+    if (!me.staff) queueReceipt('support', 'delivered', newest(st.myDm, (m) => m.by === me.uid))
+    for (const gid in st.g) if (isMemberOf(gid)) queueReceipt('g:' + gid, 'delivered', newest(st.g[gid], (m) => m.by === me.uid))
+  }
+
   /* ---------- groups & channels ---------- */
   function applyGroups(list, msgs, fresh) {
-    const before = {}; st.groups.forEach((g) => { before[g.id] = g.status })
+    const before = {}, mediaBefore = {}; st.groups.forEach((g) => { before[g.id] = g.status; mediaBefore[g.id] = JSON.stringify(g.media || null) })
+    // a group's picture / voice rule changed: forget its messages so they load again with the new rule
+    let reload = false
+    if (!fresh) list.forEach((g) => { if (mediaBefore[g.id] !== undefined && mediaBefore[g.id] !== JSON.stringify(g.media || null) && st.g[g.id] && !msgs[g.id]) { delete st.g[g.id]; reload = true } })
+    if (reload) setTimeout(refreshGroups, 0)
     st.groups = list
     if (fresh) st.g = {}
-    for (const id in msgs) { st.g[id] = msgs[id].map(view); h.groupMsgs(id, st.g[id].slice()) }
+    for (const id in msgs) {
+      st.g[id] = msgs[id].map(view); h.groupMsgs(id, st.g[id].slice())
+      if (!fresh && isMemberOf(id)) queueReceipt('g:' + id, 'delivered', st.g[id].reduce((t, m) => (m.by !== me.uid && m.ts > t ? m.ts : t), 0))   // a group's messages loaded later (joined, refreshed)
+    }
     // rooms this viewer can't read any more: forget their messages
     for (const id of Object.keys(st.g)) { const g = list.find((x) => x.id === id); if (!g || !g.canRead) { delete st.g[id]; h.groupMsgs(id, []) } }
     h.groups(list.slice())
@@ -203,6 +267,7 @@ export function createChatBackend(cfg: EngineConfig, h) {
     post('thread', { uid }).then((d) => {
       if (d.profiles) h.profiles(d.profiles)
       st.dms[uid] = (d.list || []).map(view); emit(['dm', uid])
+      queueReceipt('sup:' + uid, 'delivered', st.dms[uid].reduce((t, m) => (m.by === uid && m.ts > t ? m.ts : t), 0))
     }, () => { delete st.watching[uid] })
   }
 
@@ -232,7 +297,9 @@ export function createChatBackend(cfg: EngineConfig, h) {
     }
     const tt = mode === 'notice' ? N[notice] : T[mode]
     $('authTitle').textContent = tt[0]
-    $('authIntro').textContent = tt[1]; show('authIntro', !!tt[1])
+    $('authIntro').textContent = guest && mode === 'signin' ? S('auth.guestIntro') : tt[1]; show('authIntro', !!tt[1])
+    // opened by itself when the chat opens: the way out is "Continue as guest"
+    $('authCancel').textContent = guest ? S('auth.asGuest') : S('auth.notNow')
     show('authForm', form); show('authAccount', mode === 'account'); show('authNotice', mode === 'notice')
     const named = mode === 'signup' || mode === 'profile'
     show('authNameRow', named); $('authName').required = named; show('authAvatarRow', named)
@@ -262,9 +329,10 @@ export function createChatBackend(cfg: EngineConfig, h) {
     const f = mode === 'profile' ? $('authName') : mode === 'account' ? $('authDone') : mode === 'notice' ? $('authNoticePrimary') : mode === 'signup' ? $('authName') : mode === 'newpass' ? $('authPassword') : $('authEmail')
     if (f) f.focus({ preventScroll: true })
   }
+  let guest = false   // the sheet opened by itself on opening the chat (not from a "Sign in" button)
   function setMode(m, n) { mode = m; notice = n || null; if (m === 'signup' || m === 'profile') resetPick(); renderAuth(); focusFirst() }
-  function openAuth(m, n) {
-    mode = m; notice = n || null; lastFocus = document.activeElement
+  function openAuth(m, n, asGuest) {
+    mode = m; notice = n || null; lastFocus = document.activeElement; guest = !!asGuest
     if (m === 'signup' || m === 'profile') resetPick()
     if (m === 'profile') $('authName').value = (info && info.me && info.me.name) || ''
     renderAuth()
@@ -318,13 +386,19 @@ export function createChatBackend(cfg: EngineConfig, h) {
     }
     return st
   }
-  async function openSignIn() {
+  async function openSignIn(asGuest) {
     // a reset request from this browser takes priority over the normal sign-in
     const st = getReset() ? await checkReset(false) : null
     if (st === 'approved') openAuth('newpass')
     else if (st === 'pending') openAuth('notice', 'waiting')
     else if (st === 'denied' || st === 'expired') openAuth('notice', st)
-    else openAuth('signin')
+    else openAuth('signin', null, asGuest === true)
+  }
+  /** Opening the chat signed out: offer to sign in, every time the chat is opened; "Continue as guest" closes it. */
+  function promptSignIn() {
+    if (me.uid) return
+    if (document.querySelector('.sheet-wrap.open')) return   // something else is open already
+    openSignIn(true)
   }
   if ($('authSheet')) {
     $('authSwitch').onclick = () => setMode(mode === 'signin' ? 'signup' : 'signin')
@@ -367,7 +441,7 @@ export function createChatBackend(cfg: EngineConfig, h) {
         const d = await post(signup ? 'signup' : 'login', { name: $('authName').value, email: $('authEmail').value, password: $('authPassword').value, gradient: signup ? pick.gradient : undefined })
         $('authPassword').value = ''
         closeAuth(); h.toast(S('auth.welcome', { name: d.name || '' }), true)
-        // the account exists now: add the photo (if it fails, the gradient stays and the fan can try again from "Edit profile")
+        // the account exists now: add the photo (if it fails, the gradient stays and the member can try again from "Edit profile")
         if (file) { try { await uploadPhoto(file) } catch (x) { h.toast(x.message) } }
         reconnect()
       } catch (err) {
@@ -401,7 +475,7 @@ export function createChatBackend(cfg: EngineConfig, h) {
   }
 
   /* ---------- people: who's online, chat requests, search, person card ----------
-     Fans need the other fan's consent before a private chat opens (request → accept). Staff message any fan directly. */
+     Members need the other member's consent before a private chat opens (request → accept). Staff message any member directly. */
   const P = (id) => document.getElementById(id)
   let cardUid = null, searchTimer = 0, searchSeq = 0, results = null
   const ini = (n) => String(n || '').trim().split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('') || '?'
@@ -455,7 +529,7 @@ export function createChatBackend(cfg: EngineConfig, h) {
         const acts = document.createElement('div'); acts.className = 'ppl-req-acts'
         acts.appendChild(btn(S('pm.accept'), 'ppl-btn primary', () => respond(r.uid, 'accept')))
         acts.appendChild(btn(S('pm.decline'), 'ppl-btn', () => respond(r.uid, 'decline')))
-        acts.appendChild(btn(S('pm.block'), 'ppl-btn text', () => { if (window.confirm(S('pm.blockConfirm', { name: nameOfUid(r.uid) }))) respond(r.uid, 'block') }))
+        acts.appendChild(btn(S('pm.block'), 'ppl-btn text', () => { h.confirm(S('pm.blockConfirm', { name: nameOfUid(r.uid) }), S('pm.block'), true).then((y) => { if (y) respond(r.uid, 'block') }) }))
         mid.appendChild(acts); card.appendChild(mid); req.appendChild(card)
       })
     }
@@ -509,6 +583,9 @@ export function createChatBackend(cfg: EngineConfig, h) {
     if (!cardUid) return
     const uid = cardUid, p = known[uid] || {}, rel = st.pms[uid], online = onlineUids().includes(uid)
     const av = P('psAvatar'); av.textContent = ''; av.appendChild(avatar(uid, 72))
+    const pim = av.querySelector('img'), purl = (known[uid] || {}).avatarUrl
+    av.classList.toggle('zoomable', !!(pim && purl)); av.onclick = pim && purl ? () => h.viewPhoto(purl, pim) : null
+    if (pim && purl) { av.setAttribute('role', 'button'); av.tabIndex = 0; av.setAttribute('aria-label', S('rooms.photoView')); av.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); h.viewPhoto(purl, pim) } } } else { av.removeAttribute('role'); av.removeAttribute('tabindex'); av.onkeydown = null }
     P('psName').textContent = p.name || nameOfUid(uid)
     P('psSub').textContent = p.staff ? S('pm.team') + (online ? ' · ' + S('pm.onlineNow') : '') : online ? S('people.onlineNow') : S('chat.offline')
     const noteRow = P('psNoteRow'), note = P('psNote'), msg = P('psMsg'), acts = P('psActions')
@@ -530,10 +607,10 @@ export function createChatBackend(cfg: EngineConfig, h) {
       say(S('pm.sent', { name: p.name || nameOfUid(uid) })); secondary(S('pm.cancel'), () => respond(uid, 'cancel')); primary(S('auth.done'), closeCard)
     } else if (status === 'pending-in') {
       say(rel.note ? '“' + rel.note + '”' : S('people.wantsToChat'))
-      tertiary(S('pm.block'), () => { if (window.confirm(S('pm.blockConfirm', { name: p.name || nameOfUid(uid) }))) { respond(uid, 'block'); closeCard() } })
+      tertiary(S('pm.block'), () => { h.confirm(S('pm.blockConfirm', { name: p.name || nameOfUid(uid) }), S('pm.block'), true).then((y) => { if (y) { respond(uid, 'block'); closeCard() } }) })
       secondary(S('pm.decline'), () => { respond(uid, 'decline'); closeCard() }); primary(S('pm.accept'), () => respond(uid, 'accept'))
     } else if (status === 'accepted') {
-      tertiary(S('pm.block'), () => { if (window.confirm(S('pm.blockConfirm', { name: p.name || nameOfUid(uid) }))) { respond(uid, 'block'); closeCard() } })
+      tertiary(S('pm.block'), () => { h.confirm(S('pm.blockConfirm', { name: p.name || nameOfUid(uid) }), S('pm.block'), true).then((y) => { if (y) { respond(uid, 'block'); closeCard() } }) })
       secondary(S('auth.notNow'), closeCard); primary(S('pm.openChat'), () => { closeCard(); h.openChatWith(uid) })
     } else if (status === 'blocked') {
       say(S('pm.blockedGate')); secondary(S('pm.unblock'), () => { respond(uid, 'unblock'); closeCard() }); primary(S('auth.done'), closeCard)
@@ -558,9 +635,10 @@ export function createChatBackend(cfg: EngineConfig, h) {
   function openRoomSheet(id) {
     const g = id ? groupOf(id) : null
     if (id && !(g && g.isAdmin)) return
-    rs.open = true; rs.id = id || null; rs.tab = g && g.requests ? 'members' : 'settings'; rs.members = null; rs.results = null; rs.q = ''; rs.err = ''; rs.busy = false
-    rs.data = g ? { name: g.name, description: g.description || '', rules: g.rules || '', kind: g.kind, join: g.join }
-      : { name: '', description: '', rules: '', kind: perms().createGroups || me.staff ? 'group' : 'channel', join: 'open' }
+    rs.open = true; rs.id = id || null; rs.link = undefined; rs.anim = null; rs.slide = null; rs.tab = g && g.requests ? 'members' : 'settings'; rs.members = null; rs.results = null; rs.q = ''; rs.err = ''; rs.busy = false
+    if (P('rsBody')) P('rsBody').textContent = ''   // a fresh sheet: nothing carried over from last time (pill position, scroll)
+    rs.data = g ? { name: g.name, description: g.description || '', rules: g.rules || '', kind: g.kind, join: g.join, visibility: g.vis || (g.join === 'invite' ? 'hidden' : 'public'), preview: typeof g.preview === 'boolean' ? g.preview : g.join === 'open' }
+      : { name: '', description: '', rules: '', kind: perms().createGroups || me.staff ? 'group' : 'channel', join: 'open', visibility: 'public', preview: true }
     rs.lastFocus = document.activeElement
     renderRoomSheet()
     P('rsBody').scrollTop = 0
@@ -570,7 +648,7 @@ export function createChatBackend(cfg: EngineConfig, h) {
   }
   function closeRoomSheet() {
     const w = P('roomSheet'); if (!w || !rs.open) return
-    rs.open = false; clearTimeout(rsSearchTimer)
+    rs.open = false; clearTimeout(rsSearchTimer); dropDraft()
     w.classList.remove('open'); w.setAttribute('aria-hidden', 'true')
     if (rs.lastFocus && rs.lastFocus.focus) rs.lastFocus.focus({ preventScroll: true })
   }
@@ -597,26 +675,51 @@ export function createChatBackend(cfg: EngineConfig, h) {
     const body = P('rsBody'); if (!body) return
     const g = rs.id ? groupOf(rs.id) : null, d = rs.data
     if (rs.id && !g) { closeRoomSheet(); return } // gone (archived / deleted / no longer admin)
+    // the sheet redraws on every data change: remember where the tab pill is right now (even mid-slide) and the scroll,
+    // so a redraw never replays the pill's slide or jumps the content
+    const oldPill = body.querySelector('.rs-pill')
+    const prevPill = oldPill ? { x: new DOMMatrix(getComputedStyle(oldPill).transform).m41, w: oldPill.getBoundingClientRect().width } : null
+    const prevScroll = body.scrollTop
+    let anim_ = false
     body.textContent = ''
     const head = mk('div', 'rs-head')
     const title = mk('h3', null, rs.id ? d.name || g.name : S('rooms.newTitle')); title.id = 'rsTitle'; head.appendChild(title)
-    head.appendChild(mk('p', null, rs.id ? (g.isOwner ? S('rooms.youOwn') : me.staff && !g.owned ? S('rooms.teamRoom') : S('rooms.youAdmin')) : S('rooms.newIntro', { n: me.staff ? '∞' : perms().maxRooms })))
+    head.appendChild(mk('p', null, rs.id ? (g.isOwner ? S('rooms.youOwn') : me.staff && !g.owned ? S('rooms.teamRoom') : S('rooms.youAdmin')) : me.staff ? S('rooms.newIntroTeam') : S('rooms.newIntro', { n: perms().maxRooms })))   // the team has no room limit
     body.appendChild(head)
     if (rs.id) {
+      // tabs: a pill slides from the old tab to the new one; the content slides in from that side
       const tabs = mk('div', 'rs-tabs'); tabs.setAttribute('role', 'tablist')
-      ;[['settings', S('rooms.tabSettings')], ['members', S('rooms.tabMembers')]].forEach(([k, l]) => {
-        const b = mk('button', null, l); b.type = 'button'; b.setAttribute('role', 'tab'); b.setAttribute('aria-selected', String(rs.tab === k))
+      const pill = mk('span', 'rs-pill'); tabs.appendChild(pill)
+      const order = ['settings', 'members'], btns = {}
+      order.forEach((k) => {
+        const b = mk('button', null, k === 'settings' ? S('rooms.tabSettings') : S('rooms.tabMembers')); b.type = 'button'; b.setAttribute('role', 'tab'); b.setAttribute('aria-selected', String(rs.tab === k))
         if (k === 'members' && g.requests) { const c = mk('i', null, String(g.requests)); b.appendChild(c) }
-        b.onclick = () => { if (rs.tab !== k) { rs.tab = k; rs.err = ''; renderRoomSheet(); P('rsBody').scrollTop = 0 } }
-        tabs.appendChild(b)
+        b.onclick = () => { if (rs.tab !== k) { rs.anim = { from: rs.tab, to: k }; rs.tab = k; rs.err = ''; renderRoomSheet(); P('rsBody').scrollTop = 0 } }
+        tabs.appendChild(b); btns[k] = b
       })
       body.appendChild(tabs)
+      const anim = rs.anim; rs.anim = null; anim_ = !!anim
+      const place = (b) => { pill.style.width = b.offsetWidth + 'px'; pill.style.transform = 'translateX(' + (b.offsetLeft - 4) + 'px)' }
+      // start where the pill is now (or on the old tab), without a transition; then glide to the selected tab
+      pill.style.transition = 'none'
+      if (prevPill && prevPill.w) { pill.style.width = prevPill.w + 'px'; pill.style.transform = 'translateX(' + prevPill.x + 'px)' }
+      else place(btns[anim && btns[anim.from] ? anim.from : rs.tab])
+      void pill.offsetWidth; pill.style.transition = ''
+      place(btns[rs.tab])
+      // the tab redraws when its data arrives (members, invite link): keep the slide going from where it was, not restart or cut it
+      if (anim) rs.slide = { cls: order.indexOf(anim.to) > order.indexOf(anim.from) ? 'from-right' : 'from-left', t: performance.now() }
+      var pane = mk('div', 'rs-pane')
+      const sl = rs.slide, el = sl ? performance.now() - sl.t : 1e9
+      if (sl && el < 340) { pane.classList.add(sl.cls); pane.style.animationDelay = -el + 'ms' } else rs.slide = null
+      body.appendChild(pane)
     }
-    if (rs.tab === 'members' && rs.id) renderMembersTab(body, g)
-    else renderSettingsTab(body, g)
+    if (rs.tab === 'members' && rs.id) renderMembersTab(pane || body, g)
+    else renderSettingsTab(pane || body, g)
+    if (!anim_ && prevScroll) body.scrollTop = prevScroll
   }
   function renderSettingsTab(body, g) {
     const d = rs.data
+    if (g) body.appendChild(roomPictureBox(g))   // the room's picture (saved at once)
     const f = mk('form', 'auth-form rs-form'); f.noValidate = true
     const field = (label, input) => { const l = mk('label', 'field'); l.appendChild(mk('span', null, label)); l.appendChild(input); return l }
     const name = document.createElement('input'); name.id = 'rsName'; name.maxLength = 60; name.autocomplete = 'off'; name.placeholder = S('rooms.namePh'); name.value = d.name
@@ -628,6 +731,14 @@ export function createChatBackend(cfg: EngineConfig, h) {
     const kinds = mk('fieldset', 'rs-set'); kinds.appendChild(mk('legend', null, S('rooms.kind')))
     ;['group', 'channel'].forEach((k) => kinds.appendChild(choice('rsKind', k, d.kind, S('rooms.kind.' + k), S('rooms.kind.' + k + 'Hint'), !kindAllowed(k), (v) => { d.kind = v })))
     f.appendChild(kinds)
+    // who sees it · can people read before joining · how they join (three separate choices)
+    const viss = mk('fieldset', 'rs-set'); viss.appendChild(mk('legend', null, S('rooms.vis')))
+    ;['public', 'members', 'hidden'].forEach((k) => viss.appendChild(choice('rsVis', k, d.visibility, S('rooms.vis.' + k), S('rooms.vis.' + k + 'Hint'), false, (v) => { d.visibility = v; renderRoomSheet() })))
+    f.appendChild(viss)
+    const pv = mk('label', 'rs-switch' + (d.visibility === 'hidden' ? ' dim' : ''))
+    const pvi = document.createElement('input'); pvi.type = 'checkbox'; pvi.checked = !!d.preview; pvi.onchange = () => { d.preview = pvi.checked }
+    const pvt = mk('span'); pvt.appendChild(mk('b', null, S('rooms.preview'))); pvt.appendChild(mk('small', null, S(d.visibility === 'hidden' ? 'rooms.previewHiddenHint' : 'rooms.previewHint')))
+    pv.appendChild(pvi); pv.appendChild(pvt); f.appendChild(pv)
     const joins = mk('fieldset', 'rs-set'); joins.appendChild(mk('legend', null, S('rooms.join')))
     ;['open', 'request', 'invite'].forEach((k) => joins.appendChild(choice('rsJoin', k, d.join, S('rooms.join.' + k), S('rooms.join.' + k + 'Hint'), false, (v) => { d.join = v })))
     f.appendChild(joins)
@@ -647,6 +758,65 @@ export function createChatBackend(cfg: EngineConfig, h) {
     acts.appendChild(save); f.appendChild(acts)
     f.onsubmit = (e) => { e.preventDefault(); saveRoom() }
     body.appendChild(f)
+  }
+  /**
+   * The room's picture in its settings: a photo or one of the colours. A chosen photo is only a preview ("Not saved yet")
+   * until Save — nothing is uploaded for a wrong pick; Cancel drops it. Tap the picture to see it full size.
+   */
+  function roomPictureBox(g) {
+    const draft = rs.picDraft && rs.picDraft.room === g.id ? rs.picDraft : null
+    const box = mk('div', 'rs-pic' + (draft ? ' draft' : ''))
+    const prev = mk('div', 'rs-pic-av' + (rs.picBusy ? ' busy' : ''))
+    const shown = draft ? draft.url : g.photo
+    if (shown) {
+      const im = document.createElement('img'); im.alt = ''; im.src = shown; prev.appendChild(im)
+      prev.classList.add('zoomable'); prev.setAttribute('role', 'button'); prev.tabIndex = 0; prev.setAttribute('aria-label', S('rooms.photoView'))
+      const view = () => h.viewPhoto(shown, im)
+      prev.onclick = view; prev.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); view() } }
+    } else { prev.style.background = g.gradient || ROOM_COLORS[0]; prev.innerHTML = g.kind === 'channel' ? '<svg viewBox="0 0 24 24" class="icon"><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1z"/><path d="M15 9a4 4 0 0 1 0 6M18 6a8 8 0 0 1 0 12"/></svg>' : '<svg viewBox="0 0 24 24" class="icon"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3 19c0-3 2.7-5 6-5s6 2 6 5M15 14.5c2.8 0 5 1.6 5 4.5"/></svg>' }
+    box.appendChild(prev)
+    const side = mk('div', 'rs-pic-side')
+    const acts = mk('div', 'rs-pic-acts')
+    const file = document.createElement('input'); file.type = 'file'; file.accept = 'image/jpeg,image/png,image/webp,image/gif,image/avif'; file.hidden = true
+    file.onchange = () => { const f = file.files && file.files[0]; file.value = ''; if (!f) return; dropDraft(); rs.picDraft = { room: g.id, file: f, url: URL.createObjectURL(f) }; renderRoomSheet() }
+    if (draft) {
+      side.appendChild(mk('span', 'rs-pic-note', S('rooms.photoPreview')))
+      const save = btn(S('rooms.photoSave'), 'ppl-btn primary', () => setPhoto(g, draft.file)); save.disabled = !!rs.picBusy; acts.appendChild(save)
+      acts.appendChild(btn(S('rooms.photoOther'), 'ppl-btn', () => file.click()))
+      acts.appendChild(btn(S('rooms.cancel'), 'ppl-btn text', () => { dropDraft(); renderRoomSheet() }))
+    } else {
+      acts.appendChild(btn(g.photo ? S('rooms.photoChange') : S('rooms.photoAdd'), 'ppl-btn', () => file.click()))
+      if (g.photo) acts.appendChild(btn(S('rooms.photoRemove'), 'ppl-btn text', () => setPhoto(g, null)))
+    }
+    acts.appendChild(file); side.appendChild(acts)
+    if (!draft) {
+      const sw = mk('div', 'rs-swatches'); sw.setAttribute('role', 'radiogroup'); sw.setAttribute('aria-label', S('rooms.colors'))
+      ROOM_COLORS.forEach((c) => {
+        const b = btn('', 'rs-swatch' + (c === g.gradient ? ' on' : ''), () => setColor(g, c)); b.style.background = c
+        b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', String(c === g.gradient)); b.setAttribute('aria-label', S('rooms.colors')); sw.appendChild(b)
+      })
+      side.appendChild(sw)
+    }
+    box.appendChild(side)
+    return box
+  }
+  function dropDraft() { if (rs.picDraft) { URL.revokeObjectURL(rs.picDraft.url); rs.picDraft = null } }
+  async function setPhoto(g, file) {
+    if (rs.picBusy) return
+    rs.picBusy = true; renderRoomSheet()
+    const fd = new FormData(); fd.append('id', g.id); if (file) fd.append('file', await shrinkPic(file, 1024)); else fd.append('remove', '1')
+    try {
+      const r = await fetch(base + '/room-photo', { method: 'POST', credentials: 'same-origin', headers: { 'x-oc-locale': cfg.locale }, body: fd })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok || d.error) throw new Error(d.error || S('chat.sendFailed'))
+      dropDraft(); await refreshGroups(); h.toast(S(file ? 'rooms.photoSaved' : 'rooms.photoRemoved'), true)
+    } catch (e) { h.toast(e.message) }
+    rs.picBusy = false; if (rs.open) renderRoomSheet()
+  }
+  async function setColor(g, c) {
+    if (c === g.gradient) return
+    try { await post('room-color', { id: g.id, gradient: c }); await refreshGroups() } catch (e) { h.toast(e.message) }
+    if (rs.open) renderRoomSheet()
   }
   async function saveRoom() {
     if (rs.busy) return
@@ -671,7 +841,7 @@ export function createChatBackend(cfg: EngineConfig, h) {
   }
   async function removeRoom(mode) {
     const g = groupOf(rs.id); if (!g) return
-    if (!window.confirm(S(mode === 'delete' ? 'rooms.deleteConfirm' : 'rooms.archiveConfirm', { name: g.name }))) return
+    if (!(await h.confirm(S(mode === 'delete' ? 'rooms.deleteConfirm' : 'rooms.archiveConfirm', { name: g.name }), S(mode === 'delete' ? 'rooms.delete' : 'rooms.archive'), true))) return
     try {
       await post('room-remove', { id: g.id, mode })
       closeRoomSheet()
@@ -688,8 +858,34 @@ export function createChatBackend(cfg: EngineConfig, h) {
       await loadMembers()
     } catch (e) { h.toast(e.message) }
   }
+  function inviteUrl(token) { return location.origin + '/' + cfg.locale + '/chat/join-' + token }
+  function inviteAct(action, ok) {
+    const id = rs.id
+    return post('room-invite', { id, action }).then((d) => { if (rs.id !== id) return; rs.link = d.token || null; if (ok) h.toast(ok, true); renderRoomSheet() }, (e) => h.toast(e.message))
+  }
+  function renderInviteLink(wrap, g) {
+    const box = mk('div', 'rs-link'); box.appendChild(mk('div', 'rs-link-h', S('rooms.inviteLink')))
+    if (rs.link === undefined) { box.appendChild(mk('p', 'rs-note', S('rooms.loading'))); inviteAct('peek') }
+    else if (!rs.link) {
+      box.appendChild(mk('p', 'rs-note', S('rooms.inviteLinkNone')))
+      const mkb = btn(S('rooms.inviteLinkCreate'), 'ppl-btn primary', () => inviteAct('get', S('rooms.inviteLinkCreated'))); box.appendChild(mkb)
+    } else {
+      const url = inviteUrl(rs.link)
+      const inp = document.createElement('input'); inp.readOnly = true; inp.value = url; inp.className = 'rs-link-url'; inp.setAttribute('aria-label', S('rooms.inviteLink')); inp.onfocus = () => inp.select()
+      box.appendChild(inp)
+      const row = mk('div', 'rs-link-acts')
+      row.appendChild(btn(S('rooms.copy'), 'ppl-btn primary', () => { try { navigator.clipboard.writeText(url).then(() => h.toast(S('rooms.linkCopied'), true), () => { inp.select() }) } catch (e) { inp.select() } }))
+      if (navigator.share) row.appendChild(btn(S('rooms.share'), 'ppl-btn', () => navigator.share({ title: g.name, text: S('rooms.inviteShareText', { name: g.name }), url }).catch(() => {})))
+      row.appendChild(btn(S('rooms.inviteLinkReset'), 'ppl-btn text', () => { h.confirm(S('rooms.inviteLinkResetConfirm'), S('rooms.inviteLinkReset')).then((y) => { if (y) inviteAct('reset', S('rooms.inviteLinkResetDone')) }) }))
+      row.appendChild(btn(S('rooms.inviteLinkOff'), 'ppl-btn text danger', () => { h.confirm(S('rooms.inviteLinkOffConfirm'), S('rooms.inviteLinkOff'), true).then((y) => { if (y) inviteAct('off', S('rooms.inviteLinkOffDone')) }) }))
+      box.appendChild(row)
+      box.appendChild(mk('p', 'rs-note', S('rooms.inviteLinkHint')))
+    }
+    wrap.appendChild(box)
+  }
   function renderMembersTab(body, g) {
     const wrap = mk('div', 'rs-members')
+    renderInviteLink(wrap, g)
     // invite by username
     const sb = mk('label', 'field rs-invite'); sb.appendChild(mk('span', null, S('rooms.inviteLabel')))
     const q = document.createElement('input'); q.id = 'rsInvite'; q.type = 'search'; q.autocomplete = 'off'; q.placeholder = S('rooms.invitePh'); q.value = rs.q
@@ -719,16 +915,18 @@ export function createChatBackend(cfg: EngineConfig, h) {
     paintResults()
     if (!rs.members) { wrap.appendChild(mk('p', 'rs-note', S('rooms.loading'))); body.appendChild(wrap); return }
     const canAdmin = g.isOwner || me.staff
+    rs.more = rs.more || {}
     const section = (title, list, row) => {
       if (!list.length) return
       const h4 = mk('div', 'ppl-h', title); const c = mk('b', null, String(list.length)); h4.appendChild(c); wrap.appendChild(h4)
-      const ul = mk('ul', 'rs-list'); list.forEach((m) => ul.appendChild(row(m))); wrap.appendChild(ul)
+      const cut = rs.more[title] ? list.length : 10   // long lists: the first 10, then "Show N more"
+      const ul = mk('ul', 'rs-list'); list.slice(0, cut).forEach((m) => ul.appendChild(row(m))); wrap.appendChild(ul)
+      if (list.length > cut) wrap.appendChild(btn(S('rooms.showMore', { n: list.length - cut }), 'ppl-btn gs-all', () => { rs.more[title] = true; renderRoomSheet() }))
     }
     const person = (m) => {
       const li = mk('li', 'rs-row'); li.appendChild(avatar(m.uid, 34))
-      const nm = mk('span', 'rs-name', nameOfUid(m.uid))
-      if (m.owner) nm.appendChild(mk('em', 'rs-tag', S('rooms.owner'))); else if (m.admin) nm.appendChild(mk('em', 'rs-tag', S('rooms.coadmin')))
-      li.appendChild(nm); return li
+      li.appendChild(nameLine(m.uid, [m.owner ? [S('rooms.owner')] : m.admin ? [S('rooms.coadmin')] : null, m.team ? [S('gi.team'), 'rs-tag-team'] : null], m.uid === me.uid ? ' · ' + S('chat.you') : ''))
+      return li
     }
     const L = rs.members
     section(S('rooms.waiting'), L.filter((m) => m.status === 'requested'), (m) => {
@@ -741,7 +939,7 @@ export function createChatBackend(cfg: EngineConfig, h) {
       const li = person(m)
       if (!m.owner && m.uid !== me.uid) {
         if (canAdmin) li.appendChild(btn(m.admin ? S('rooms.unAdmin') : S('rooms.makeAdmin'), 'ppl-btn', () => memberAction(m.uid, m.admin ? 'unadmin' : 'admin')))
-        if (canAdmin || !m.admin) li.appendChild(btn(S('rooms.remove'), 'ppl-btn text', () => { if (window.confirm(S('rooms.removeConfirm', { name: nameOfUid(m.uid) }))) memberAction(m.uid, 'remove') }))
+        if (canAdmin || !m.admin) li.appendChild(btn(S('rooms.remove'), 'ppl-btn text', () => { h.confirm(S('rooms.removeConfirm', { name: nameOfUid(m.uid) }), S('rooms.remove'), true).then((y) => { if (y) memberAction(m.uid, 'remove') }) }))
       }
       return li
     })
@@ -753,18 +951,202 @@ export function createChatBackend(cfg: EngineConfig, h) {
     if (!L.some((m) => m.status === 'member' && !m.owner) && !L.some((m) => m.status !== 'member')) wrap.appendChild(mk('p', 'rs-note', S('rooms.noMembers')))
     body.appendChild(wrap)
   }
+  /** A member's name and their tags on one line: the name shortens with "…", the tags never wrap or stretch. */
+  function nameLine(uid, tags, suffix) {
+    const nm = mk('span', 'rs-name'); nm.appendChild(mk('span', 'rs-n', nameOfUid(uid) + (suffix || '')))
+    tags.filter(Boolean).forEach((t) => nm.appendChild(mk('em', 'rs-tag' + (t[1] ? ' ' + t[1] : ''), t[0])))
+    return nm
+  }
+  const LIST_CUT = 8
+
+  /* ---------- group info (#groupSheet): for anyone who can see the room — about, rules, members and their role ---------- */
+  const gi = { open: false, id: null, data: null, av: null, err: '', busy: false, on: {}, lastFocus: null }
+  let giSeq = 0
+  function openGroupInfo(id, av, on) {
+    if (!groupOf(id)) return
+    if (rs.open) closeRoomSheet()
+    Object.assign(gi, { open: true, id, data: null, q: '', all: false, av: av || null, err: '', busy: false, on: on || {}, lastFocus: document.activeElement })
+    renderGroupInfo(); P('gsBody').scrollTop = 0
+    const w = P('groupSheet'); w.classList.add('open'); w.setAttribute('aria-hidden', 'false')
+    setTimeout(() => { const f = P('gsBody').querySelector('.gs-close'); if (f) f.focus({ preventScroll: true }) }, 60)
+    loadGroupInfo()
+  }
+  function loadGroupInfo() {
+    const id = gi.id, seq = ++giSeq
+    return post('room-info', { id }).then((d) => {
+      if (seq !== giSeq || !gi.open || gi.id !== id) return
+      h.profiles(learn(d.profiles || {})); gi.data = d; gi.err = ''; renderGroupInfo()
+    }, (e) => { if (seq === giSeq && gi.open) { if (!groupOf(id)) closeGroupInfo(); else { gi.err = e.message; renderGroupInfo() } } })
+  }
+  function closeGroupInfo() {
+    const w = P('groupSheet'); if (!w || !gi.open) return
+    gi.open = false; w.classList.remove('open'); w.setAttribute('aria-hidden', 'true')
+    if (gi.lastFocus && gi.lastFocus.focus && document.contains(gi.lastFocus)) gi.lastFocus.focus({ preventScroll: true })
+  }
+  function renderGroupInfo() {
+    const body = P('gsBody'); if (!body || !gi.open) return
+    const g = groupOf(gi.id); if (!g) { closeGroupInfo(); return }
+    const d = gi.data, scroll = body.scrollTop
+    body.textContent = ''
+    const x = btn('', 'iconbtn gs-close', closeGroupInfo); x.setAttribute('aria-label', S('gi.close'))
+    x.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>'
+    body.appendChild(x)
+    // who it is: picture, name, kind · members, how people join
+    const head = mk('div', 'gs-head')
+    if (gi.av) {
+      const a = (g.photo ? h.roomAvatar(g.id) : null) || gi.av.cloneNode(true); a.classList.add('gs-av'); head.appendChild(a)
+      const im = a.querySelector('img')
+      if (im && g.photo) { a.classList.add('zoomable'); a.setAttribute('role', 'button'); a.tabIndex = 0; a.setAttribute('aria-label', S('rooms.photoView')); a.removeAttribute('aria-hidden'); a.onclick = () => h.viewPhoto(g.photo, im); a.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); h.viewPhoto(g.photo, im) } } }
+    }
+    const t = mk('h3', null, (d && d.name) || g.name); t.id = 'gsTitle'; head.appendChild(t)
+    const n = d ? d.members.length : g.members, kind = (d && d.kind) || g.kind
+    head.appendChild(mk('p', 'gs-sub', S(n === 1 ? 'groups.sub1' : 'groups.sub', { kind: S('groups.kind.' + kind), n })))
+    head.appendChild(mk('span', 'gs-join', S('gi.join.' + ((d && d.join) || g.join))))
+    body.appendChild(head)
+    // what I can do here
+    const acts = mk('div', 'gs-acts')
+    const run = (fn, ok, after) => () => {
+      if (gi.busy) return; gi.busy = true; renderGroupInfo()
+      fn().then(() => { gi.busy = false; if (ok) h.toast(ok, true); refreshGroups().then(() => { if (after) after(); else { renderGroupInfo(); loadGroupInfo() } }) },
+        (e) => { gi.busy = false; h.toast(e.message); renderGroupInfo() })
+    }
+    const join = () => post('group-join', { id: g.id }), leave = () => post('group-leave', { id: g.id })
+    const add = (label, cls, fn) => { const b = btn(label, 'ppl-btn ' + cls, fn); b.disabled = gi.busy; acts.appendChild(b) }
+    if (g.status === 'invited') {
+      body.appendChild(mk('p', 'gs-invited', S('gi.invited')))
+      add(S('groups.join'), 'primary', run(join, S('groups.joined', { name: g.name })))
+      add(S('rooms.decline'), '', run(leave, null, closeGroupInfo))
+    } else if (g.status === 'requested') add(S('groups.cancelRequest'), '', run(leave))
+    else if (g.status !== 'member' && !g.isOwner && me.uid && !me.staff) {
+      if (g.join === 'open') add(S('groups.join'), 'primary', run(join, S('groups.joined', { name: g.name })))
+      else if (g.join === 'request') add(S('groups.requestJoin'), 'primary', run(join, S('groups.requested')))
+    }
+    if (g.isAdmin) add(S('gi.manage'), '', () => { const id = g.id; closeGroupInfo(); openRoomSheet(id) })
+    if (g.status === 'member' && !g.isOwner && !me.staff) add(S('groups.leave'), 'text danger', () => {
+      h.confirm(S('groups.leaveConfirm', { name: g.name }), S('groups.leave'), true).then((y) => { if (y) run(leave, S('groups.left', { name: g.name }), () => { closeGroupInfo(); if (gi.on.left) gi.on.left() })() })
+    })
+    if (acts.children.length) body.appendChild(acts)
+    // about + rules
+    const section = (title, text) => { if (!text) return; const sct = mk('section', 'gs-sec'); sct.appendChild(mk('div', 'ppl-h', title)); sct.appendChild(mk('p', 'gs-text', text)); body.appendChild(sct) }
+    section(S('gi.about'), d ? d.description : g.description)
+    section(S('groups.rulesTitle'), d ? d.rules : g.rules)
+    // members with their role
+    const sct = mk('section', 'gs-sec gs-members')
+    const hd = mk('div', 'ppl-h', S('rooms.members')); if (d) hd.appendChild(mk('b', null, String(d.members.length))); sct.appendChild(hd)
+    if (!d) sct.appendChild(mk('p', 'rs-note', gi.err || S('rooms.loading')))
+    else {
+      // many members: a search box, the first few, then "Show all N members" (only the list redraws while typing)
+      const many = d.members.length > LIST_CUT
+      if (many) {
+        const q = document.createElement('input'); q.type = 'search'; q.className = 'gs-search'; q.placeholder = S('gi.searchMembers'); q.value = gi.q || ''; q.autocomplete = 'off'
+        q.setAttribute('aria-label', S('gi.searchMembers')); q.oninput = () => { gi.q = q.value; paint() }
+        sct.appendChild(q)
+      }
+      const ul = mk('ul', 'rs-list'), more = mk('div', 'gs-more'); sct.appendChild(ul); sct.appendChild(more)
+      const paint = () => {
+        const term = (gi.q || '').trim().toLowerCase()
+        const found = term ? d.members.filter((m) => nameOfUid(m.uid).toLowerCase().includes(term)) : d.members
+        const shown = term || gi.all || !many ? found : found.slice(0, LIST_CUT)
+        ul.textContent = ''; more.textContent = ''
+        if (!found.length) ul.appendChild(mk('li', 'ppl-empty', S('gi.noMatch')))
+        shown.forEach((m) => {
+          const li = mk('li', 'rs-row gs-row'), self = m.uid === me.uid, card = !self && !m.team && !!me.uid
+          const inner = card ? btn('', 'gs-person', () => openCard(m.uid)) : mk('div', 'gs-person')
+          inner.appendChild(avatar(m.uid, 36))
+          inner.appendChild(nameLine(m.uid, [m.role === 'owner' ? [S('rooms.owner')] : m.role === 'admin' ? [S('gi.admin')] : null, m.team ? [S('gi.team'), 'rs-tag-team'] : null], self ? ' · ' + S('chat.you') : ''))
+          li.appendChild(inner); ul.appendChild(li)
+        })
+        if (shown.length < found.length) more.appendChild(btn(S('gi.showAll', { n: found.length }), 'ppl-btn gs-all', () => { gi.all = true; paint() }))
+      }
+      paint()
+    }
+    body.appendChild(sct)
+    body.scrollTop = scroll
+  }
+  if (P('groupSheet')) {
+    P('groupSheet').addEventListener('click', function (e) { if (e.target === this) closeGroupInfo() })
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && gi.open && !P('personSheet').classList.contains('open')) { e.stopImmediatePropagation(); closeGroupInfo() } }, true)
+  }
   if (P('roomSheet')) {
     P('roomSheet').addEventListener('click', function (e) { if (e.target === this) closeRoomSheet() })
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && rs.open) { e.stopImmediatePropagation(); closeRoomSheet() } }, true)
   }
   if (P('newRoom')) P('newRoom').addEventListener('click', () => openRoomSheet(null))
 
+  /** POST a picture / voice note with upload progress (onProg(sent, total)); ctl.abort() cancels (the error has .aborted). */
+  function upload(path, fd, onProg, ctl) {
+    return new Promise((ok, ko) => {
+      const x = new XMLHttpRequest()
+      x.open('POST', base + path); x.withCredentials = true; x.setRequestHeader('x-oc-locale', cfg.locale)
+      if (onProg && x.upload) x.upload.onprogress = (e) => { if (e.lengthComputable) onProg(e.loaded, e.total) }
+      x.onload = () => {
+        let d = {}; try { d = JSON.parse(x.responseText || '{}') } catch (e) {}
+        if (x.status >= 400 || d.error) ko(new Error(d.error || S('chat.sendFailed'))); else ok(d)
+      }
+      x.onerror = () => ko(new Error(S('chat.sendFailed')))
+      x.onabort = () => { const e = new Error('aborted'); e.aborted = true; ko(e) }
+      if (ctl) ctl.abort = () => x.abort()
+      x.send(fd)
+    })
+  }
+
+  /** A picture drawn at most `max` px (WebP, transparency kept) before upload, so big photos aren't refused; the original if it can't be read. */
+  async function shrinkPic(file, max) {
+    try {
+      const url = URL.createObjectURL(file)
+      const img = await new Promise((ok, ko) => { const i = new Image(); i.onload = () => ok(i); i.onerror = ko; i.src = url })
+      URL.revokeObjectURL(url)
+      const w0 = img.naturalWidth || max, h0 = img.naturalHeight || max, k = Math.min(1, max / Math.max(w0, h0))
+      if (k === 1 && file.size < 1.5 * 1024 * 1024 && file.type !== 'image/svg+xml') return file
+      const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w0 * k)); c.height = Math.max(1, Math.round(h0 * k))
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height)
+      const blob = await new Promise((ok) => c.toBlob(ok, 'image/webp', 0.92))
+      return blob ? new File([blob], 'sticker.webp', { type: 'image/webp' }) : file
+    } catch (e) { return file }
+  }
+
+  /* ---------- older messages, page by page (scrolling up in a conversation) ---------- */
+  const PAGE = 40, hist = {}   // browser room id → { busy, done }
+  const isPublic = (room) => room === 'lounge' || /^[a-f0-9]{24}$/i.test(room)
+  function roomList(room) {   // the list a conversation's messages live in (browser room ids), or null when not loaded
+    if (room === 'support') return st.myDm
+    if (room.indexOf('pm:') === 0) return st.pm[room.slice(3)] || null
+    if (room.indexOf('g:') === 0) return st.g[room.slice(2)] || null
+    if (room.indexOf('sup:') === 0) return st.dms[room.slice(4)] || null
+    return isPublic(room) ? st.messages.filter((m) => m.room === room) : null
+  }
+  /** 'more' (older ones exist), 'loading', 'done' (the start of the conversation is here) or null (not loaded yet). */
+  function historyState(room) {
+    const h = hist[room] || {}, list = roomList(room)
+    if (!list) return null
+    if (h.busy) return 'loading'
+    if (h.done) return 'done'
+    return list.filter((m) => !/^c[a-z0-9]+$/.test(m.id)).length >= PAGE ? 'more' : 'done'   // the first page came back short: that's all
+  }
+  function loadOlder(room) {
+    if (historyState(room) !== 'more') return null
+    const h = hist[room] = hist[room] || {}, list = roomList(room)
+    const before = list.reduce((t, m) => (m.ts < t ? m.ts : t), Infinity)
+    h.busy = true
+    return post('history', { room, before }).then((d) => {
+      h.busy = false; h.done = !d.more
+      if (d.profiles) h_profiles(d.profiles)
+      const add = (d.list || []).map(view), s = room.indexOf('pm:') === 0 ? ['pm', room.slice(3)] : room.indexOf('g:') === 0 ? ['g', room.slice(2)] : room.indexOf('sup:') === 0 ? ['dm', room.slice(4)] : room === 'support' ? ['myDm'] : ['messages']
+      const target = getList(s), have = new Set(target.map((m) => m.id))
+      const fresh = add.filter((m) => !have.has(m.id))
+      if (fresh.length) { target.unshift(...fresh); target.sort((a, b) => a.ts - b.ts) }
+      emit(s, 'older')
+      return fresh.length
+    }, (e) => { h.busy = false; throw e })
+  }
+  const h_profiles = (p) => h.profiles(learn(p))
+
   /* ---------- the interface the engine uses ---------- */
   return {
     connect,
     profiles: (ids) => post('profiles', { ids }).then((d) => d.profiles || {}),
     send: (doc) => post('send', doc),
-    async sendImage(doc, file) {
+    async sendImage(doc, file, onProg, ctl) {
       const fd = new FormData()
       fd.append('file', file)
       if (doc.text) fd.append('text', doc.text)
@@ -772,14 +1154,34 @@ export function createChatBackend(cfg: EngineConfig, h) {
       if (doc.dmTo) fd.append('dmTo', doc.dmTo)
       if (doc.clientId) fd.append('clientId', doc.clientId)
       if (doc.reply) fd.append('reply', JSON.stringify(doc.reply))
+      return upload('/image', fd, onProg, ctl)
+    },
+    /** A voice message: the recording (Blob) + {dur, peaks}; same room fields as a text message. */
+    async sendVoice(doc, blob, meta, onProg, ctl) {
+      const fd = new FormData()
+      const ext = /mp4|aac|m4a/.test(blob.type) ? 'm4a' : /ogg/.test(blob.type) ? 'ogg' : 'webm'
+      fd.append('file', new File([blob], 'voice.' + ext, { type: (blob.type || 'audio/webm').split(';')[0] }))
+      fd.append('duration', String(meta.dur || 0)); fd.append('peaks', JSON.stringify(meta.peaks || []))
+      if (doc.room) fd.append('room', doc.room)
+      if (doc.dmTo) fd.append('dmTo', doc.dmTo)
+      if (doc.pmTo) fd.append('pmTo', doc.pmTo)
+      if (doc.clientId) fd.append('clientId', doc.clientId)
+      if (doc.reply) fd.append('reply', JSON.stringify(doc.reply))
+      return upload('/voice', fd, onProg, ctl)
+    },
+    /* personal stickers: only their owner sees them */
+    myStickers: () => post('stickers', {}).then((d) => d.stickers || []),
+    async addSticker(file) {
+      const fd = new FormData(); fd.append('file', await shrinkPic(file, 1024))
       let r, d = {}
       try {
-        r = await fetch(base + '/image', { method: 'POST', credentials: 'same-origin', headers: { 'x-oc-locale': cfg.locale }, body: fd })
+        r = await fetch(base + '/sticker', { method: 'POST', credentials: 'same-origin', headers: { 'x-oc-locale': cfg.locale }, body: fd })
         d = await r.json().catch(() => ({}))
       } catch (e) { throw new Error(S('chat.sendFailed')) }
       if (!r.ok || d.error) throw new Error(d.error || S('chat.sendFailed'))
-      return d
+      return d.sticker
     },
+    removeSticker: (id) => post('sticker-remove', { id }),
     react: (m, key, on) => post('react', { id: m.id, key, on: !!on }),
     report: (m) => post('report', { id: m.id }),
     mute: (uid, on) => post('mute', { uid, on: !!on }),
@@ -800,7 +1202,14 @@ export function createChatBackend(cfg: EngineConfig, h) {
     groupJoin: (id) => post('group-join', { id }).then((d) => { refreshGroups(); return d }),
     groupLeave: (id) => post('group-leave', { id }).then((d) => { refreshGroups(); return d }),
     openSignIn,
+    promptSignIn,
     manageRoom: (id) => openRoomSheet(id),
+    historyState,
+    loadOlder,
+    groupInfo: (id, av, on) => openGroupInfo(id, av, on),
+    openPerson: (uid) => openCard(uid),
+    joinLink: (token) => post('join-link', { token }).then((d) => refreshGroups().then(() => d)),
+    markRead: (room, ts) => queueReceipt(room, 'read', ts),
     addOptimistic(m, dmTo, pmTo) {
       const s = pmTo ? ['pm', pmTo] : dmTo ? (me.staff ? ['dm', dmTo] : ['myDm']) : ['messages']
       upsert(getList(s), m); emit(s, 'mine')

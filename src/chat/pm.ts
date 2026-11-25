@@ -2,7 +2,7 @@ import type { Payload, PayloadRequest } from 'payload'
 import { isObjectId } from './data'
 
 /*
- * Fan-to-fan private chats (consent first). Stored room id: 'pm:<idA>_<idB>' (ids sorted).
+ * Member-to-member private chats (consent first). Stored room id: 'pm:<idA>_<idB>' (ids sorted).
  * The browser calls the same chat 'pm:<otherMemberId>'.
  */
 export const pairKey = (a: string, b: string) => [a, b].sort().join('_')

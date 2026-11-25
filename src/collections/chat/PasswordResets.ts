@@ -3,7 +3,7 @@ import { hasRole } from '../../access'
 
 /**
  * "Forgot password" requests from chat members. There is no email service, so the team approves requests in the back office:
- * the fan's browser holds a secret (only its SHA-256 hash is stored here); once a moderator approves, that browser — and only
+ * the member's browser holds a secret (only its SHA-256 hash is stored here); once a moderator approves, that browser — and only
  * that one — can set a new password. Requests are created by the chat API only.
  */
 export const PasswordResets: CollectionConfig = {
@@ -19,7 +19,7 @@ export const PasswordResets: CollectionConfig = {
   fields: [
     {
       name: 'kind', type: 'select', defaultValue: 'member', index: true,
-      options: [{ label: 'Chat member (fan)', value: 'member' }, { label: 'Back-office account (team)', value: 'staff' }],
+      options: [{ label: 'Chat member', value: 'member' }, { label: 'Back-office account (team)', value: 'staff' }],
       admin: { description: 'Team account requests can only be approved by an owner' },
     },
     { name: 'email', type: 'text', required: true, index: true },
@@ -30,7 +30,7 @@ export const PasswordResets: CollectionConfig = {
       name: 'status', type: 'select', defaultValue: 'pending', index: true,
       options: [
         { label: 'Waiting for the team', value: 'pending' },
-        { label: 'Approved (fan can set a new password)', value: 'approved' },
+        { label: 'Approved (member can set a new password)', value: 'approved' },
         { label: 'Declined', value: 'denied' },
         { label: 'Password changed', value: 'done' },
         { label: 'Expired / replaced', value: 'expired' },

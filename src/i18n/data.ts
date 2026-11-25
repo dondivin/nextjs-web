@@ -4,6 +4,7 @@ import { en } from './strings'
 import { pickLocalized } from '../fields/localizedText'
 import { toEngineMatch } from '../chat/data'
 import type { EngineConfig, EngineMatch, EnginePartner } from '../site/engine/types'
+import { heroMotionOf, heroMotionPlay } from '@/lib/hero-motion'
 
 export type Language = { code: string; name: string; nativeName: string; dir: 'ltr' | 'rtl'; isDefault: boolean; iconUrl: string | null }
 
@@ -40,13 +41,26 @@ export async function loadSite(locale: string) {
   if (!language) return null
   const def = languages.find((l) => l.isDefault)?.code || languages[0].code
   const payload = await payloadClient()
-  const [strings, partnersRes, matchesRes, site, chat] = await Promise.all([
+  const [strings, partnersRes, matchesRes, site, chat, stickerRes, wallRes] = await Promise.all([
     getDictionary(locale, def),
-    payload.find({ collection: 'partners', where: { active: { equals: true } }, sort: 'order', pagination: false, depth: 0 }),
+    payload.find({ collection: 'partners', where: { active: { equals: true } }, sort: 'order', pagination: false, depth: 1 }),
     payload.find({ collection: 'matches', where: { active: { equals: true } }, sort: 'order', pagination: false, depth: 0 }),
     payload.findGlobal({ slug: 'site-settings', depth: 1 }),
     payload.findGlobal({ slug: 'chat-settings', depth: 0 }),
+    payload.find({ collection: 'stickers', where: { active: { equals: true } }, sort: 'order', pagination: false, depth: 1 }),
+    payload.find({ collection: 'wallpapers', where: { active: { equals: true } }, sort: 'order', pagination: false, depth: 1 }),
   ])
+
+  // Community lounge texts from Chat settings (Groups & channels → Community lounge): a text written for this language
+  // replaces the default wording; otherwise the translation stays
+  const lounge = chat.lounge || {}
+  const own = (v: { locale?: string | null; value?: string | null }[] | null | undefined) => (v || []).find((r) => r.locale === locale && r.value?.trim())?.value?.trim()
+  const ln = own(lounge.name), ls = own(lounge.subtitle), ld = own(lounge.description), ct = own(lounge.chatTitle)
+  if (ct) strings['chat.title'] = ct
+  if (ln) strings['chat.lounge'] = ln
+  if (ls) strings['chat.loungeSub'] = ls
+  else if (lounge.postBy === 'team') strings['chat.loungeSub'] = strings['chat.loungeSubTeam'] || strings['chat.loungeSub']
+  if (ld) { strings['lounge.info'] = ld; strings['chat.loungeHint'] = ld }
 
   const partners: EnginePartner[] = partnersRes.docs.map((p) => {
     const texts = (p.texts || []) as { locale: string; bonus?: string | null; payments?: string | null }[]
@@ -61,6 +75,8 @@ export async function loadSite(locale: string) {
       payments: row?.payments || undefined,
       signupUrl: p.signupUrl || undefined,
       termsUrl: p.termsUrl || undefined,
+      hero: p.heroImage && typeof p.heroImage === 'object' && p.heroImage.url ? { url: p.heroImage.url, w: p.heroImage.width || 0, h: p.heroImage.height || 0 } : null,
+      motion: heroMotionPlay(heroMotionOf(p.heroMotion)),
     }
   })
 
@@ -80,12 +96,19 @@ export async function loadSite(locale: string) {
     siteName: site.siteName || 'OddsClub',
     agentName: site.agentName || undefined,
     chat: {
-      slowSeconds: chat.slowModeSeconds ?? 5,
+      slowSeconds: chat.slowModeSeconds ?? 0,
+      voiceMax: chat.voiceMaxSeconds ?? 120,
       maxLength: chat.maxLength ?? 400,
       bannedWords: (chat.bannedWords || []).map((w) => w.word).filter(Boolean),
       rules: (chat.rules || []).map((r) => ({ icon: r.icon, title: pickLocalized(r.title, locale, def), body: pickLocalized(r.body, locale, def) })),
+      loungeTeamOnly: chat.lounge?.postBy === 'team',
+      loungeMedia: { view: chat.lounge?.mediaView || 'everyone', save: chat.lounge?.mediaSave !== false },
     },
     apiBase: '/chat-api',
+    // our own stickers for the photo editor (back office → Stickers)
+    stickers: stickerRes.docs.filter((d) => d.image && typeof d.image === 'object' && d.image.url).map((d) => ({ name: d.name, url: (d.image as { url: string }).url })),
+    // chat wallpapers (back office → Wallpapers)
+    wallpapers: wallRes.docs.filter((d) => d.image && typeof d.image === 'object' && d.image.url).map((d) => ({ id: String(d.id), name: d.name, url: (d.image as { url: string }).url, mode: (d.mode === 'tile' ? 'tile' : 'cover') as 'cover' | 'tile', dim: typeof d.dim === 'number' ? d.dim : 20 })),
   }
 
   const initial = first

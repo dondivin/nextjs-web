@@ -23,6 +23,12 @@ import { ChatRequests } from './collections/chat/ChatRequests'
 import { ChatRooms } from './collections/chat/ChatRooms'
 import { ChatRoomMembers } from './collections/chat/ChatRoomMembers'
 import { MemberRoles } from './collections/chat/MemberRoles'
+import { ChatReceipts } from './collections/chat/ChatReceipts'
+import { ChatVoice } from './collections/chat/ChatVoice'
+import { Stickers } from './collections/Stickers'
+import { Wallpapers } from './collections/Wallpapers'
+import { ChatKeys } from './collections/chat/ChatKeys'
+import { MemberStickers } from './collections/chat/MemberStickers'
 import { seed } from './seed/seed'
 
 const filename = fileURLToPath(import.meta.url)
@@ -43,6 +49,8 @@ if (process.env.R2_ACCOUNT_ID && process.env.R2_BUCKET && process.env.R2_ACCESS_
           : true,
         // chat pictures are never public: always served through Payload so the access rule (direct chats) is checked
         'chat-images': true,
+        'chat-voice': true,
+        'member-stickers': true,
       },
       bucket: process.env.R2_BUCKET,
       config: {
@@ -68,7 +76,7 @@ export default buildConfig({
       baseDir: path.resolve(dirname),
     },
   },
-  collections: [Users, Media, Partners, Matches, Languages, Translations, Members, ChatMessages, ChatReports, PasswordResets, ChatImages, ChatRequests, ChatRooms, ChatRoomMembers, MemberRoles],
+  collections: [Users, Media, Partners, Matches, Languages, Translations, Members, ChatMessages, ChatReports, PasswordResets, ChatImages, ChatRequests, ChatRooms, ChatRoomMembers, MemberRoles, ChatReceipts, ChatVoice, Stickers, MemberStickers, Wallpapers, ChatKeys],
   globals: [SiteSettings, ChatSettings],
   editor: lexicalEditor(),
   secret: process.env.PAYLOAD_SECRET || '',

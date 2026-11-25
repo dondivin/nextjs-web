@@ -26,7 +26,8 @@ import {
 } from '@/backoffice/components/ui/select'
 import { LocalizedInput, type Lang } from '@/backoffice/components/localized-input'
 import { siteSchema, type SiteForm } from '@/backoffice/lib/forms'
-import { saveSiteSettings, setBrandImage } from '@/backoffice/actions/content'
+import { saveSiteSettings } from '@/backoffice/actions/content'
+import { BrandImage, LogoMark } from './brand-image'
 
 export function SiteSettingsView({
   initial,
@@ -39,7 +40,7 @@ export function SiteSettingsView({
   languages: Lang[]
   partners: { id: string; name: string; active: boolean }[]
   updatedAt: string | null
-  brand: { logoUrl: string | null; shareUrl: string | null; heroUrl: string | null; siteUrl: string }
+  brand: { logoUrl: string | null; shareUrl: string | null; siteUrl: string }
 }) {
   const router = useRouter()
   const [pending, start] = useTransition()
@@ -123,7 +124,7 @@ export function SiteSettingsView({
                     value={field.value}
                     onChange={field.onChange}
                     textarea
-                    placeholder="e.g. Live odds, promo codes and a fan chat for football, basketball, tennis and esports."
+                    placeholder="e.g. Promo codes and bonuses from our partner bookmakers, live odds and a community chat."
                   />
                 )}
               />
@@ -179,42 +180,6 @@ export function SiteSettingsView({
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>First screen picture</CardTitle>
-          <CardDescription>
-            A big picture of a person on the left of the first screen, in front of the headline (the phone stays in front of
-            it). Use a cut-out with no background. It saves as soon as you pick it.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-          <BrandImage
-            kind="hero"
-            label="Person picture"
-            hint="PNG or WebP with a transparent background, at least 1200 px tall, up to 10 MB. Empty space around the person is trimmed automatically; the feet fade into the background."
-            url={brand.heroUrl}
-            onDone={() => router.refresh()}
-          />
-          <div>
-            <p className="mb-1.5 text-xs text-muted-foreground">Preview (desktop)</p>
-            <div className="relative aspect-[16/9] overflow-hidden rounded-lg bg-[radial-gradient(70%_60%_at_50%_30%,#2F5480,#0D2747)]">
-              <div className="absolute inset-0 flex flex-col items-center justify-center font-[Anton,Impact,sans-serif] uppercase leading-[.86] text-white" style={{ fontSize: 'clamp(28px,4.2vw,64px)' }}>
-                <span>Every sport.</span>
-                <span className="text-[#7DB342]">One code.</span>
-              </div>
-              {brand.heroUrl && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={brand.heroUrl} alt="" className="absolute bottom-0 left-[2%] h-[86%] max-w-[44%] object-contain object-left-bottom [mask-image:linear-gradient(to_top,transparent_0,#000_26%)]" />
-              )}
-              <div className="absolute left-1/2 top-1/2 h-[62%] w-[17%] -translate-x-1/2 -translate-y-1/2 rotate-[-8deg] rounded-[14%] border-4 border-[#123460] bg-[#0F2C52] shadow-2xl" />
-              <div className="absolute bottom-[6%] left-[3%] h-1.5 w-[22%] rounded bg-white/40" />
-              <div className="absolute bottom-[5%] right-[3%] h-[7%] w-[20%] rounded-md bg-[#7DB342]" />
-              {!brand.heroUrl && <span className="absolute bottom-[18%] left-[4%] rounded bg-black/40 px-2 py-1 text-xs text-white">Your picture appears here</span>}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
       <div className="grid items-start gap-6 xl:grid-cols-2">
         <Card>
           <CardHeader>
@@ -260,7 +225,7 @@ export function SiteSettingsView({
               <Label htmlFor="agentName">Team name in the chat</Label>
               <Input id="agentName" placeholder="OddsClub team" {...register('agentName')} />
               <p className="text-xs text-muted-foreground">
-                What fans see as the name of their direct chat with your team (and as a reserved
+                What members see as the name of their direct chat with your team (and as a reserved
                 name nobody can take).
               </p>
             </div>
@@ -312,62 +277,5 @@ export function SiteSettingsView({
         </Card>
       </div>
     </form>
-  )
-}
-
-function LogoMark({ url, size }: { url: string | null; size: number }) {
-  if (url)
-    // eslint-disable-next-line @next/next/no-img-element
-    return <img src={url} alt="" style={{ width: size, height: size }} className="shrink-0 object-contain" />
-  return (
-    <span className="grid shrink-0 place-items-center rounded-[28%] bg-[#2F6FE0]" style={{ width: size, height: size }}>
-      <svg viewBox="0 0 24 24" style={{ width: size * 0.6, height: size * 0.6 }} fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="M13 3L5 14h6l-1 7 8-11h-6z" />
-      </svg>
-    </span>
-  )
-}
-
-/** Upload / replace / remove one brand image; saved immediately (not part of the form). */
-function BrandImage({ kind, label, hint, url, fallback, wide, onDone }: { kind: 'logo' | 'share' | 'hero'; label: string; hint: string; url: string | null; fallback?: string; wide?: boolean; onDone: () => void }) {
-  const [pending, start] = useTransition()
-  const [preview, setPreview] = useState<string | null>(null)
-  const input = useRef<HTMLInputElement>(null)
-  function upload(file: File | null) {
-    const max = kind === 'hero' ? 10 : 5
-    if (file && file.size > max * 1024 * 1024) { toast.error(`That image is over ${max} MB.`); return }
-    const fd = new FormData()
-    if (file) { fd.set('file', file); setPreview(URL.createObjectURL(file)) }
-    start(async () => {
-      const r = await setBrandImage(kind, file ? fd : null)
-      const name = label.replace(/ \(optional\)/, '')
-      if (r.ok) {
-        toast.success(file ? `${name} saved` : `${name} removed`)
-        if (file && kind === 'hero' && r.data && r.data.transparent === false) toast.warning('This picture still has a background, so it will show as a rectangle. Use a PNG or WebP cut-out with a transparent background (e.g. made with a background remover).', { duration: 9000 })
-        onDone()
-      } else toast.error(r.error)
-      setPreview(null)
-    })
-  }
-  const shown = preview || url || fallback || null
-  return (
-    <div className="grid gap-2">
-      <Label>{label}</Label>
-      <div className="flex flex-wrap items-center gap-4">
-        <div className={'relative grid shrink-0 place-items-center overflow-hidden rounded-lg border bg-[repeating-conic-gradient(#8881_0_25%,transparent_0_50%)] bg-[length:16px_16px] ' + (kind === 'hero' ? 'h-40 w-28' : wide ? 'aspect-[1200/630] w-48' : 'size-20')}>
-          {shown
-            // eslint-disable-next-line @next/next/no-img-element
-            ? <img src={shown} alt="" className={'size-full ' + (wide ? 'object-cover' : 'object-contain p-1.5')} />
-            : kind === 'hero' ? <span className="px-2 text-center text-xs text-muted-foreground">No picture</span> : <LogoMark url={null} size={48} />}
-          {pending && <span className="absolute inset-0 grid place-items-center bg-background/60"><Loader2 className="size-5 animate-spin" /></span>}
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="outline" size="sm" disabled={pending} onClick={() => input.current?.click()}><ImageUp />{url ? 'Replace' : 'Upload'}</Button>
-          {url && <Button type="button" variant="ghost" size="sm" className="text-destructive hover:text-destructive" disabled={pending} onClick={() => upload(null)}><Trash2 />Remove</Button>}
-        </div>
-        <input ref={input} type="file" hidden accept={kind === 'hero' ? 'image/png,image/webp,image/avif' : 'image/svg+xml,image/png,image/jpeg,image/webp'} onChange={(ev) => { const f = ev.target.files?.[0]; ev.target.value = ''; if (f) upload(f) }} />
-      </div>
-      <p className="text-xs text-muted-foreground">{hint}</p>
-    </div>
   )
 }

@@ -9,14 +9,19 @@ export type WireMsg = {
   text: string
   ts: number
   room: string
-  reply: { id: string; by: string | null; text: string } | null
+  reply: { id: string; by: string | null; text: string; kind?: 'photo' | 'voice'; thumb?: string; dur?: number } | null
   reactions: Record<string, Record<string, boolean>>
   image?: ChatImage
+  voice?: ChatVoiceInfo
+  expired?: 'photo' | 'voice'
+  locked?: { kind: 'photo' | 'voice'; why: 'signin' | 'group' | 'team' | 'none' }   // media this viewer may not see
+  nosave?: boolean   // saving turned off in this room
   mod?: boolean
   deleted?: boolean
   clientId?: string
 }
-export type ChatImage = { url: string; w: number; h: number }
+export type ChatImage = { url: string; w: number; h: number; thumb?: string; size?: number }
+export type ChatVoiceInfo = { url: string; dur: number; peaks: number[]; size?: number }
 export type Profile = { name: string; color?: string; gradient?: string; avatarUrl?: string; staff?: boolean; badge?: { label: string; color: string } }
 
 const relId = (x: unknown): string | null =>
@@ -26,20 +31,29 @@ export const isObjectId = (s: unknown): s is string => typeof s === 'string' && 
 
 /** id → picture info for the messages that carry one (one query for the whole list). */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function imagesFor(payload: Payload, docs: any[], req?: PayloadRequest): Promise<Map<string, ChatImage>> {
+/** The pictures and voice messages of some messages (keys: picture id, and 'v:' + voice id). */
+export async function imagesFor(payload: Payload, docs: any[], req?: PayloadRequest): Promise<Map<string, ChatImage | ChatVoiceInfo>> {
   const ids = [...new Set(docs.map((d) => relId(d.image)).filter(isObjectId))]
-  const out = new Map<string, ChatImage>()
-  if (!ids.length) return out
-  const res = await payload.find({ collection: 'chat-images', where: { id: { in: ids } }, pagination: false, depth: 0, overrideAccess: true, req })
-  for (const i of res.docs) if (i.url) out.set(String(i.id), { url: i.url, w: i.width || 0, h: i.height || 0 })
+  const vids = [...new Set(docs.map((d) => relId(d.voice)).filter(isObjectId))]
+  const out = new Map<string, ChatImage | ChatVoiceInfo>()
+  if (ids.length) {
+    const res = await payload.find({ collection: 'chat-images', where: { id: { in: ids } }, pagination: false, depth: 0, overrideAccess: true, req })
+    for (const i of res.docs) if (i.url) out.set(String(i.id), { url: i.url, w: i.width || 0, h: i.height || 0, thumb: i.thumb || undefined, size: i.filesize || undefined })
+  }
+  if (vids.length) {
+    const res = await payload.find({ collection: 'chat-voice', where: { id: { in: vids } }, pagination: false, depth: 0, overrideAccess: true, req })
+    for (const v of res.docs) if (v.url) out.set('v:' + String(v.id), { url: v.url, dur: Number(v.duration) || 0, peaks: Array.isArray(v.peaks) ? (v.peaks as number[]).slice(0, 64) : [], size: v.filesize || undefined })
+  }
   return out
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function toWire(doc: any, images?: Map<string, ChatImage>): WireMsg {
-  const imgId = relId(doc.image)
-  const image = imgId && images ? images.get(imgId) : undefined
-  const reply = doc.reply && doc.reply.id ? { id: String(doc.reply.id), by: doc.reply.by || relId(doc.reply.author), text: String(doc.reply.text || '') } : null
+export function toWire(doc: any, images?: Map<string, ChatImage | ChatVoiceInfo>): WireMsg {
+  const imgId = relId(doc.image), voiceId = relId(doc.voice)
+  const image = imgId && images ? (images.get(imgId) as ChatImage | undefined) : undefined
+  const voice = voiceId && images ? (images.get('v:' + voiceId) as ChatVoiceInfo | undefined) : undefined
+  const r = doc.reply, rid = r && (r.msgId || r.id)
+  const reply = rid ? { id: String(rid), by: r.by || relId(r.author), text: String(r.text || ''), ...(r.kind ? { kind: r.kind as 'photo' | 'voice' } : {}), ...(r.thumb ? { thumb: String(r.thumb) } : {}), ...(r.dur ? { dur: Number(r.dur) } : {}) } : null
   return {
     id: String(doc.id),
     by: relId(doc.author) || relId(doc.staffAuthor),
@@ -49,6 +63,8 @@ export function toWire(doc: any, images?: Map<string, ChatImage>): WireMsg {
     reply,
     reactions: doc.reactions && typeof doc.reactions === 'object' ? doc.reactions : {},
     image,
+    voice,
+    expired: doc.mediaExpired || undefined,
     mod: doc.isMod ? true : undefined,
     deleted: doc.deleted ? true : undefined,
     clientId: doc.clientId || undefined,
@@ -72,7 +88,7 @@ export async function cached<T>(key: string, ms: number, fn: () => Promise<T>): 
   return v
 }
 
-export type ChatConfig = { slowMs: number; maxLength: number; banned: string[]; promoCodes: string[]; agentName: string }
+export type ChatConfig = { slowMs: number; maxLength: number; banned: string[]; promoCodes: string[]; agentName: string; loungeTeamOnly: boolean }
 export function chatConfig(payload: Payload): Promise<ChatConfig> {
   return cached('config', 30_000, async () => {
     const [chat, site, partners] = await Promise.all([
@@ -81,16 +97,17 @@ export function chatConfig(payload: Payload): Promise<ChatConfig> {
       payload.find({ collection: 'partners', pagination: false, depth: 0, select: { promoCode: true } }),
     ])
     return {
-      slowMs: Math.max(0, Number(chat.slowModeSeconds ?? 5)) * 1000,
+      slowMs: Math.max(0, Number(chat.slowModeSeconds ?? 0)) * 1000,
       maxLength: Number(chat.maxLength ?? 400),
       banned: (chat.bannedWords || []).map((w) => w.word).filter(Boolean),
       promoCodes: partners.docs.map((p) => p.promoCode).filter((c): c is string => !!c),
       agentName: site.agentName || '',
+      loungeTeamOnly: chat.lounge?.postBy === 'team',
     }
   })
 }
 
-/** Public profile of each chat id (fans = members, staff = back-office users). Unknown ids are left out. */
+/** Public profile of each chat id (members, staff = back-office users). Unknown ids are left out. */
 export async function profilesFor(payload: Payload, ids: (string | null | undefined)[], req?: PayloadRequest): Promise<Record<string, Profile>> {
   const want = [...new Set(ids.filter(isObjectId))]
   const out: Record<string, Profile> = {}
@@ -149,7 +166,7 @@ export async function myReports(payload: Payload, memberId: string, req?: Payloa
   return res.docs.map((r) => relId(r.message)).filter((x): x is string => !!x)
 }
 
-export type ThreadInfo = { lastTs: number; lastText: string; lastBy: string | null; lastSeen: number; photo?: boolean }
+export type ThreadInfo = { lastTs: number; lastText: string; lastBy: string | null; lastSeen: number; photo?: boolean; voice?: boolean }
 
 /** Direct chats with the partner team, one per member (for staff). Built from the latest DM messages. */
 export async function threadsFor(payload: Payload): Promise<Record<string, ThreadInfo>> {
@@ -166,7 +183,7 @@ export async function threadsFor(payload: Payload): Promise<Record<string, Threa
     const uid = String(d.room).slice(3)
     if (!isObjectId(uid) || out[uid]) continue
     const w = toWire(d)
-    out[uid] = { lastTs: w.ts, lastText: w.text.slice(0, 140), lastBy: w.by, lastSeen: 0, photo: !w.text && !!relId(d.image) }
+    out[uid] = { lastTs: w.ts, lastText: w.text.slice(0, 140), lastBy: w.by, lastSeen: 0, photo: !w.text && !!relId(d.image), voice: !w.text && !!relId(d.voice) }
   }
   const ids = Object.keys(out)
   if (ids.length) {
@@ -176,7 +193,7 @@ export async function threadsFor(payload: Payload): Promise<Record<string, Threa
   return out
 }
 
-/** The staff member fans see in their direct chat: whoever from the team was in the chat most recently. */
+/** The staff member members see in their direct chat: whoever from the team was in the chat most recently. */
 export async function agentInfo(payload: Payload) {
   const res = await payload.find({
     collection: 'users',

@@ -42,7 +42,7 @@ export async function setMessageDeleted(id: string, deleted: boolean) {
     const user = await actionUser('moderator')
     const payload = await payloadClient()
     await payload.update({ collection: 'chat-messages', id, data: deleted ? { deleted: true, deletedBy: user.email, deletedAt: new Date().toISOString() } : { deleted: false, deletedBy: null, deletedAt: null } })
-    revalidatePath('/admin/moderation')
+    revalidatePath('/admin/moderation'); revalidatePath('/admin/members', 'layout')
   })
 }
 
@@ -52,7 +52,7 @@ export async function setMemberStatus(id: string, status: 'active' | 'muted' | '
     const payload = await payloadClient()
     if (status === 'muted') await muteMember(id, duration || '24h')
     else await payload.update({ collection: 'members', id, data: { status, mutedUntil: null } })
-    revalidatePath('/admin/moderation')
+    revalidatePath('/admin/moderation'); revalidatePath('/admin/members', 'layout')
   })
 }
 
@@ -62,6 +62,6 @@ export async function setMemberRole(id: string, roleId: string | null) {
     await actionUser('moderator')
     const payload = await payloadClient()
     await payload.update({ collection: 'members', id, data: { memberRole: roleId || null } })
-    revalidatePath('/admin/moderation')
+    revalidatePath('/admin/moderation'); revalidatePath('/admin/members', 'layout')
   })
 }

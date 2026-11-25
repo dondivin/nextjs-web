@@ -1,4 +1,5 @@
 'use client'
+import { PhotoZoom } from '@/backoffice/components/photo-zoom'
 import { useEffect, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
@@ -130,7 +131,7 @@ export function ChatProfileView({
     <form onSubmit={save} className="flex flex-col gap-6">
       <PageHeader
         title="Chat profile"
-        description="How you appear to fans when you post in the site chat or answer their direct messages as the partner team."
+        description="How you appear to members when you post in the site chat or answer their direct messages as the partner team."
       >
         <Button type="submit" disabled={pending || !dirty}>
           {pending ? <Loader2 className="animate-spin" /> : <Check />}Save profile
@@ -140,7 +141,7 @@ export function ChatProfileView({
         <Card>
           <CardHeader>
             <CardTitle>Name and avatar</CardTitle>
-            <CardDescription>Fans see this next to every message you send.</CardDescription>
+            <CardDescription>Members see this next to every message you send.</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-6">
             <div className="flex flex-col gap-2">
@@ -154,13 +155,13 @@ export function ChatProfileView({
                 required
               />
               <p className="text-xs text-muted-foreground">
-                2 to 24 letters or numbers. Fans can’t pick a name the team uses.
+                2 to 24 letters or numbers. Members can’t pick a name the team uses.
               </p>
             </div>
             <div className="flex flex-col gap-3">
               <Label>Avatar</Label>
               <div className="flex flex-wrap items-center gap-4">
-                <Avatar size={72} photo={photo} gradient={gradient} name={shown} />
+                <PhotoZoom url={photo} label="Profile photo"><Avatar size={72} photo={photo} gradient={gradient} name={shown} /></PhotoZoom>
                 <div className="flex flex-wrap gap-2">
                   <Button
                     type="button"
@@ -217,7 +218,7 @@ export function ChatProfileView({
           <Card>
             <CardHeader>
               <CardTitle>Preview</CardTitle>
-              <CardDescription>What fans see</CardDescription>
+              <CardDescription>What members see</CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
               <div>
@@ -232,14 +233,14 @@ export function ChatProfileView({
                         <span className="truncate">{shown}</span>
                         <span className="rounded bg-brand/15 px-1 text-[10px] text-brand">Mod</span>
                       </div>
-                      <p className="text-sm">Welcome to the lounge! Kick-off in 10 minutes.</p>
+                      <p className="text-sm">Welcome to the lounge! Ask us anything about the bonus.</p>
                     </div>
                   </div>
                 </div>
               </div>
               <div>
                 <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  In a fan’s direct chat
+                  In a member’s direct chat
                 </p>
                 <div className="overflow-hidden rounded-lg border">
                   <div className="flex items-center gap-2.5 border-b bg-muted/40 px-3 py-2.5">

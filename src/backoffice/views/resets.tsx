@@ -25,7 +25,7 @@ const ago = (d: string | null) => (d ? formatDistanceToNowStrict(new Date(d), { 
 const ini = (n: string) => n.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase()).join('') || '?'
 const STATUS: Record<string, { label: string; className?: string; variant?: 'outline' | 'secondary' | 'destructive' }> = {
   pending: { label: 'Waiting', variant: 'secondary', className: 'bg-warning/20 text-foreground' },
-  approved: { label: 'Approved · fan can reset', variant: 'outline', className: 'text-success' },
+  approved: { label: 'Approved · member can reset', variant: 'outline', className: 'text-success' },
   done: { label: 'Password changed', variant: 'outline' },
   denied: { label: 'Declined', variant: 'secondary' },
   expired: { label: 'Expired', variant: 'secondary' },
@@ -116,14 +116,14 @@ export function ResetsView({ rows, canApproveStaff = false }: { rows: ResetRow[]
 
   return (
     <>
-      <PageHeader title="Password resets" description="Fans who forgot their chat password ask here. Check that the request looks genuine, then approve it: the fan can then choose a new password on the device they asked from (for 48 hours). You never see or send a password." />
+      <PageHeader title="Password resets" description="Members who forgot their chat password ask here. Check that the request looks genuine, then approve it: the member can then choose a new password on the device they asked from (for 48 hours). You never see or send a password." />
       <Tabs defaultValue="waiting">
         <TabsList>
           <TabsTrigger value="waiting">Waiting{waiting.length ? <Badge variant="secondary" className="ml-1.5">{waiting.length}</Badge> : null}</TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
         </TabsList>
         <TabsContent value="waiting" className="mt-4">
-          <DataTable columns={waitingCols} data={waiting} searchPlaceholder="Search requests" empty={<EmptyState icon={KeyRound} title="No requests waiting">When a fan uses “Forgot password?” in the chat, the request appears here.</EmptyState>} />
+          <DataTable columns={waitingCols} data={waiting} searchPlaceholder="Search requests" empty={<EmptyState icon={KeyRound} title="No requests waiting">When a member uses “Forgot password?” in the chat, the request appears here.</EmptyState>} />
         </TabsContent>
         <TabsContent value="history" className="mt-4">
           <DataTable columns={historyCols} data={history} searchPlaceholder="Search history" empty={<EmptyState icon={MailQuestion} title="Nothing yet">Handled requests appear here.</EmptyState>} />

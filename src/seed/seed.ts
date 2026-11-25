@@ -6,6 +6,7 @@
  */
 import type { Payload } from 'payload'
 import { en, fr, contextFor } from '../i18n/strings'
+import { databaseIsEmpty, restoreSnapshot, snapshotExists } from './snapshot'
 
 const PARTNERS = [
   { name: '1xBet', slug: '1xbet', order: 1, colors: { night: '#264165', navy: '#2F5480', navy2: '#3A69A1', panel: '#2F5480', blue: '#3A69A1', sky: '#D6DEE7', cta: '#88AB45', ink: '#FFFFFF', odds: '#264165', oddBg: '#E9EDF1', tint: '#D6DEE7', deep: '#1E3452', mute: '#B9CBE0', nav: '#2F5480' } },
@@ -35,6 +36,10 @@ const BANNED = ['fuck','fuk','shit','bitch','cunt','asshole','bastard','dickhead
 export async function seed(payload: Payload, opts: { forceStrings?: boolean } = {}) {
   const forceStrings = !!opts.forceStrings
   const log = (m: string) => payload.logger.info('[seed] ' + m)
+
+  // a fresh, empty database + a snapshot of a real one (pnpm data:export) → bring that data back first;
+  // the rest of the seed then only adds texts that newer code needs
+  if (snapshotExists() && (await databaseIsEmpty(payload))) await restoreSnapshot(payload, { log })
 
   // languages
   for (const l of [
@@ -101,7 +106,7 @@ export async function seed(payload: Payload, opts: { forceStrings?: boolean } = 
     await payload.updateGlobal({
       slug: 'chat-settings',
       data: {
-        slowModeSeconds: chat.slowModeSeconds ?? 5,
+        slowModeSeconds: chat.slowModeSeconds ?? 0,
         maxLength: chat.maxLength ?? 400,
         rules: RULES.map((r) => ({
           icon: r.icon as 'age',

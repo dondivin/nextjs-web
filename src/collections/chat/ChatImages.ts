@@ -1,5 +1,6 @@
-import type { CollectionConfig, Where } from 'payload'
+import type { CollectionConfig } from 'payload'
 import { hasRole } from '../../access'
+import { mediaReadWhere } from '../../chat/media-policy'
 
 /**
  * Pictures sent in the chat. Kept apart from `media` (public files) because direct-chat pictures can be private
@@ -12,13 +13,8 @@ export const ChatImages: CollectionConfig = {
   admin: { group: 'Chat', defaultColumns: ['filename', 'room', 'createdAt'] },
   defaultSort: '-createdAt',
   access: {
-    read: ({ req }) => {
-      const u = req.user as { collection?: string; id?: string | number } | null
-      if (hasRole(u as never, 'moderator')) return true
-      const rooms: Where = { and: [{ room: { not_like: 'dm:' } }, { room: { not_like: 'pm:' } }] }
-      if (u?.collection === 'members') return { or: [rooms, { room: { equals: 'dm:' + u.id } }] }
-      return rooms
-    },
+    // who may download the file: the room's own people, and for shared rooms its media rule (src/chat/media-policy.ts)
+    read: async ({ req }) => mediaReadWhere(req.payload, req.user as { collection?: string; id?: string | number } | null, hasRole(req.user as never, 'moderator')),
     create: () => false,
     update: ({ req }) => hasRole(req.user as never, 'moderator'),
     delete: ({ req }) => hasRole(req.user as never, 'moderator'),
@@ -26,5 +22,6 @@ export const ChatImages: CollectionConfig = {
   upload: { mimeTypes: ['image/webp', 'image/jpeg', 'image/png'] },
   fields: [
     { name: 'room', type: 'text', required: true, index: true },
+    { name: 'thumb', type: 'text', admin: { readOnly: true, description: 'Tiny blurred preview (data URL, ~1 KB) shown before the picture is downloaded' } },
   ],
 }

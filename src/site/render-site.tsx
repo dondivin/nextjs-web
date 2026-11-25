@@ -20,6 +20,11 @@ export async function renderSite(locale: string, chat?: { room: string | null })
   )
   const brand = await getBrand(await payloadClient())
   const base = siteUrl()
+  // first-screen picture: each partner's own (none = no picture); the engine swaps it when the partner changes
+  const cfg = data.cfg
+  const firstPartner = cfg.partners.find((p) => p.id === cfg.defaultPartner) || cfg.partners[0]
+  const hero = firstPartner?.hero || null
+  const anyHero = cfg.partners.some((p) => p.hero)
   // structured data: lets search engines show the site name and logo
   const jsonLd = [
     { '@context': 'https://schema.org', '@type': 'Organization', name: data.cfg.siteName, url: base, logo: base + '/brand/icon/512' },
@@ -28,7 +33,7 @@ export async function renderSite(locale: string, chat?: { room: string | null })
   return (
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, '\\u003c') }} />
-      <Site cfg={data.cfg} initial={data.initial} extras={data.extras} languageSwitcher={switcher} logoUrl={brand.logoUrl} hero={brand.hero} chat={chat} />
+      <Site cfg={cfg} initial={data.initial} extras={data.extras} languageSwitcher={switcher} logoUrl={brand.logoUrl} hero={hero} anyHero={anyHero} chat={chat} />
     </>
   )
 }

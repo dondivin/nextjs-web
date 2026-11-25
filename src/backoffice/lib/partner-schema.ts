@@ -1,7 +1,13 @@
 import { z } from 'zod'
+import { HERO_LIMITS } from '@/lib/hero-motion'
 
 const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Use a 6-digit hex colour')
 const url = z.string().refine((v) => !v || /^https:\/\//.test(v), 'Links must start with https://')
+
+function ms(k: 'enterMs' | 'exitMs' | 'delayMs', label: string) {
+  const [lo, hi] = HERO_LIMITS[k], msg = `${label}: ${lo / 1000} to ${hi / 1000} s`
+  return z.number({ error: 'Enter a number' }).int().min(lo, msg).max(hi, msg)
+}
 
 export const COLOR_FIELDS = [
   { key: 'night', label: 'Page background', hint: 'Darkest background' },
@@ -31,6 +37,14 @@ export const partnerSchema = z.object({
   termsUrl: url,
   texts: z.array(z.object({ locale: z.string(), bonus: z.string().max(120), payments: z.string().max(160) })),
   colors: z.object(Object.fromEntries(COLOR_FIELDS.map((f) => [f.key, hex])) as Record<ColorKey, typeof hex>),
+  heroMotion: z.object({
+    style: z.enum(['slide', 'rise', 'fade']),
+    easing: z.enum(['soft', 'smooth', 'expressive', 'linear']),
+    enterMs: ms('enterMs', 'Arrival'),
+    exitMs: ms('exitMs', 'Leaving'),
+    delayMs: ms('delayMs', 'Delay'),
+    distance: z.number({ error: 'Enter a number' }).int().min(HERO_LIMITS.distance[0], `${HERO_LIMITS.distance[0]} to ${HERO_LIMITS.distance[1]} px`).max(HERO_LIMITS.distance[1], `${HERO_LIMITS.distance[0]} to ${HERO_LIMITS.distance[1]} px`),
+  }),
 })
 export type PartnerForm = z.infer<typeof partnerSchema>
 

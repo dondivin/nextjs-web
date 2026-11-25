@@ -29,3 +29,17 @@ export function gradientColor(g: string | null | undefined) {
   const m = g ? GRADIENT_RE.exec(g) : null
   return m ? m[2] : undefined
 }
+
+/** Colours offered for a group / channel picture (same strict format as the member gradients). */
+export const ROOM_COLORS = [
+  'linear-gradient(135deg, #3e63dd, #8e4ec6)',
+  'linear-gradient(135deg, #7db342, #2e7d32)',
+  'linear-gradient(135deg, #f76b15, #e5484d)',
+  'linear-gradient(135deg, #0091ff, #00b8d9)',
+  'linear-gradient(135deg, #e93d82, #8e4ec6)',
+  'linear-gradient(135deg, #ffb224, #f76b15)',
+  'linear-gradient(135deg, #12a594, #0b6e4f)',
+  'linear-gradient(135deg, #6e56cf, #3e63dd)',
+  'linear-gradient(135deg, #e5484d, #9b1c1c)',
+  'linear-gradient(135deg, #475569, #1e293b)',
+]

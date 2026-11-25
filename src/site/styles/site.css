@@ -1,6 +1,6 @@
 /* Ported verbatim from design/prototype/oddsclub-prototype.html (lines 6-691). Keep in sync with the prototype; do not restyle here without the owner's approval. */
 html,body{margin:0}img{max-width:100%}
-/* Layout: sportsbook night palette (deep navy, bright blue, green action). A 3D phone floats over a giant headline, spins into a pinned feature section, then a live matchday board. The fan chat is its own full-screen messenger (room list + conversation), opened from anywhere. Single committed dark look. */
+/* Layout: sportsbook night palette (deep navy, bright blue, green action). A 3D phone floats over a giant headline, spins into a pinned feature section, then a live matchday board. The member chat is its own full-screen messenger (room list + conversation), opened from anywhere. Single committed dark look. */
 :root{
   color-scheme:dark;
   --night:#081A30; --navy:#0D2747; --navy-2:#123460; --panel:#0F2C52; --line:rgba(214,230,255,.13); --chalk:rgba(214,230,255,.08);
@@ -105,7 +105,7 @@ body.scrolled .nav{background:color-mix(in srgb, var(--nav-bg) 94%, transparent)
 @media (max-width:760px), (max-width:1100px) and (orientation:portrait){.hero-foot{flex-direction:column;align-items:flex-start;gap:14px}.hero-foot p{font-size:16px}.hero{min-height:0;padding-top:128px;justify-content:flex-start;gap:26px}.headline{flex:none;justify-content:flex-start;padding-top:0;font-size:clamp(46px,15vw,96px);line-height:.9}.hero-cta{width:100%}.hero-cta .btn{flex:1 1 auto}.promo{flex:1 1 100%;justify-content:space-between}}
 
 /* SECTION 2 */
-.features{position:relative;height:420vh;background:var(--tint);color:var(--night)}
+.features{position:relative;height:330vh;background:var(--tint);color:var(--night)}
 .pin{position:sticky;top:0;height:100vh;height:100svh;overflow:hidden;display:grid;grid-template-rows:auto 1fr;padding:92px var(--gr) 30px var(--gl);background:linear-gradient(90deg, transparent calc(50% - 1px), rgba(8,26,48,.07) calc(50% - 1px), rgba(8,26,48,.07) calc(50% + 1px), transparent calc(50% + 1px)), var(--tint)}
 .f-head{text-align:center;display:flex;flex-direction:column;align-items:center;gap:8px}
 .eyebrow{font-weight:800;font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--blue)}
@@ -131,6 +131,20 @@ body.scrolled .nav{background:color-mix(in srgb, var(--nav-bg) 94%, transparent)
   .callout{grid-area:1/1;max-width:none;align-items:flex-start !important;text-align:left;opacity:0;pointer-events:none;background:var(--tint)}
   .callout.seen{opacity:0}.callout.on{opacity:1}.callout h3{font-size:28px}
   .dots{top:auto;bottom:26px;flex-direction:row;transform:none}
+}
+/* phones: the features flow down the page (not pinned). Each block = an empty slot for the 3D phone + its text; the phone
+   glides from slot to slot as you scroll (engine: flowInfo / flowPose). Same query as the engine's FLOW_MQ. */
+@media (max-width:760px), (max-width:1100px) and (orientation:portrait){
+  #features{height:auto}
+  #features .pin{position:relative;height:auto;overflow:visible;display:block;padding:76px 20px 24px}
+  #features .f-grid{display:flex;flex-direction:column;gap:0;padding-bottom:0}
+  #features .f-col{display:contents}
+  #features .spacer,#features .dots{display:none}
+  #features .callout{--fslot:56svh;position:relative;grid-area:auto;max-width:none;align-items:flex-start;text-align:left;opacity:1;pointer-events:auto;background:none;transform:none;padding:var(--fslot) 0 9svh}
+  #features .callout[data-i="0"]{order:0}#features .callout[data-i="1"]{order:1}#features .callout[data-i="2"]{order:2}#features .callout[data-i="3"]{order:3}
+  #features .callout .ic{background:var(--blue);color:#fff}
+  /* the gliding phone (canvas, z 3) passes BEHIND the words: text above it, the empty slot stays see-through */
+  #features .callout,#features .f-head{z-index:4}
 }
 
 /* BOARD */
@@ -414,6 +428,11 @@ html.chat-open, html.chat-open body{overflow:hidden}
 .r-last{font-size:14px;color:var(--c-side-mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .room[aria-current="true"] .r-last,.room[aria-current="true"] .r-time{color:inherit;opacity:.8}
 .r-last.typing{color:var(--c-accent);font-weight:600}
+/* our last message's status in the room list (✓ sent · ✓✓ delivered · ✓✓ coloured seen) */
+.r-last .icon{width:17px;height:17px;stroke-width:2.4;vertical-align:-4px;margin-right:3px;color:var(--c-side-mute)}
+.r-last .icon.read{color:var(--c-list-read,var(--c-tick-read,var(--c-tick)))}
+[data-ct="oddsclub"]{--c-list-read:#7CF5B0}[data-ct="whatsapp"],[data-ct="whatsapp-dark"]{--c-list-read:#53BDEB}[data-ct="telegram"]{--c-list-read:#4FAE4E}
+[data-ct="imessage"]{--c-list-read:#0A84FF}[data-ct="messenger"]{--c-list-read:#0084FF}[data-ct="signal"]{--c-list-read:#2C6BED}[data-ct="discord"]{--c-list-read:#23A55A}
 .r-side{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
 .r-time{font-size:12px;color:var(--c-side-mute);font-variant-numeric:tabular-nums}
 .unread{min-width:21px;height:21px;padding:0 6px;border-radius:999px;background:var(--c-unread);color:var(--c-unread-ink);font:700 12px/21px var(--font-chat);text-align:center;animation:popIn var(--bounce-d) var(--bounce) both}
@@ -486,6 +505,7 @@ html.chat-open, html.chat-open body{overflow:hidden}
 .bubble.lifted-src{opacity:0}
 .swipe-ic{position:absolute;left:-36px;top:50%;width:28px;height:28px;margin-top:-14px;border-radius:50%;background:var(--c-quote-bg);color:var(--c-in-text);display:grid;place-items:center;opacity:0;transform:scale(.5)}
 .swipe-ic .icon{width:15px;height:15px}
+.swipe-ic.from-right{left:auto;right:-36px}   /* swiping left: the reply icon shows on the right */
 .b-name{font-size:13px;font-weight:700;margin-bottom:1px;display:flex;align-items:center;gap:6px}
 .b-name .mod{font-size:10px;letter-spacing:.06em;text-transform:uppercase;background:var(--c-accent);color:var(--c-accent-ink);border-radius:4px;padding:1px 5px}
 .b-quote{border-left:4px solid var(--c-quote-bar);background:var(--c-quote-bg);border-radius:6px;padding:5px 9px;margin:2px 0 5px;font-size:13px;cursor:pointer}
@@ -495,7 +515,15 @@ html.chat-open, html.chat-open body{overflow:hidden}
 .b-meta{float:right;position:relative;top:6px;margin:0 -2px 0 12px;display:inline-flex;align-items:center;gap:3px;font-size:11px;line-height:1.4;color:var(--c-meta-in);font-variant-numeric:tabular-nums;white-space:nowrap}
 .row.out .b-meta{color:var(--c-meta-out)}
 .b-meta .icon{width:16px;height:16px;stroke-width:2.4}
-.row.out .b-meta .icon{color:var(--c-tick)}
+/* ticks on our own messages: ✓ sent and ✓✓ delivered in a muted colour, ✓✓ seen (one-to-one chats) in a colour that clearly
+   stands out on that theme's bubble — like WhatsApp's grey → blue */
+.row.out .b-meta .icon{color:var(--c-tick-dim,var(--c-meta-out))}
+.row.out .b-meta .icon.read{color:var(--c-tick-read,var(--c-tick));opacity:1}
+[data-ct="oddsclub"],[data-ct="imessage"],[data-ct="messenger"],[data-ct="signal"]{--c-tick-dim:rgba(255,255,255,.62);--c-tick-read:#7CF5B0}
+[data-ct="whatsapp"]{--c-tick-dim:#8696A0;--c-tick-read:#53BDEB}
+[data-ct="whatsapp-dark"]{--c-tick-dim:rgba(233,237,239,.55);--c-tick-read:#53BDEB}
+[data-ct="telegram"]{--c-tick-dim:#A1AAB3;--c-tick-read:#4FAE4E}
+[data-ct="discord"]{--c-tick-dim:#80848E;--c-tick-read:#23A55A}
 .b-meta .flag{color:#E9A000}
 .reacts{display:flex;flex-wrap:wrap;gap:4px;margin:-4px 0 4px;padding:0 8px;position:relative;z-index:1}
 .react{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--c-react-border);background:var(--c-react-bg);color:var(--c-in-text);border-radius:999px;padding:1px 8px;font:600 12px var(--font-chat);min-height:26px;cursor:pointer;box-shadow:var(--shadow-bubble);animation:popIn var(--bounce-d) var(--bounce) both;transition:transform var(--bounce-d) var(--bounce)}
@@ -507,7 +535,13 @@ html.chat-open, html.chat-open body{overflow:hidden}
 /* hover bar (mouse only) */
 .acts{position:absolute;bottom:calc(100% + 6px);display:flex;align-items:center;gap:2px;padding:4px;border-radius:999px;z-index:5;opacity:0;transform:translateY(6px) scale(.8);pointer-events:none;transition:opacity .16s, transform var(--bounce-d) var(--bounce)}
 .row.in .acts{left:0;transform-origin:bottom left}.row.out .acts{right:0;transform-origin:bottom right}
-@media (hover:hover) and (pointer:fine){.bwrap:hover .acts{opacity:1;transform:none;pointer-events:auto}}
+/* the reactions bar shows at once on hover and lingers ~0.6 s after the mouse leaves, so it is easy to reach;
+   the 6px gap between the message and the bar belongs to the bar (::before) */
+@media (hover:hover) and (pointer:fine){
+  .acts{visibility:hidden;pointer-events:auto;transition:opacity .18s ease .55s, transform var(--bounce-d) var(--bounce) .55s, visibility 0s linear .75s}
+  .acts::before{content:"";position:absolute;left:0;right:0;top:100%;height:10px}
+  .bwrap:hover .acts{visibility:visible;opacity:1;transform:none;transition:opacity .16s, transform var(--bounce-d) var(--bounce), visibility 0s}
+}
 .acts button{border:0;background:transparent;color:inherit;border-radius:999px;min-width:34px;height:34px;padding:0 7px;cursor:pointer;display:grid;place-items:center;transition:background .15s, transform var(--bounce-d) var(--bounce)}
 .acts button:hover{background:var(--c-menu-hover);transform:scale(1.18)}
 .acts .emo{font-size:18px;line-height:1}
@@ -596,7 +630,12 @@ html.chat-open, html.chat-open body{overflow:hidden}
 /* iOS-style press-and-hold menu (theme colours) */
 .ctx{position:fixed;inset:0;z-index:80;visibility:hidden;font-family:var(--font-chat)}
 .ctx.open{visibility:visible}
-.ctx-bg{position:absolute;inset:0;background:rgba(0,0,0,.32);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);opacity:0;transition:opacity .28s ease}
+/* closing: stay visible while everything plays back (blur fades, reactions / actions shrink, the message glides home) */
+.ctx.closing{visibility:visible;pointer-events:none}
+.ctx.closing .ctx-react,.ctx.closing .ctx-menu{transition:opacity .2s ease, transform .26s cubic-bezier(.4,0,1,1)}
+.ctx-bubble{transition:box-shadow .3s ease}
+.ctx-bubble.settling{box-shadow:0 0 0 rgba(0,0,0,0)}
+.ctx-bg{position:absolute;inset:0;background:rgba(0,0,0,.32);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);opacity:0;transition:opacity .3s cubic-bezier(.33,1,.68,1)}
 .ctx.open .ctx-bg{opacity:1}
 .ctx-bubble{position:fixed;margin:0;pointer-events:none;will-change:transform;box-shadow:0 20px 50px rgba(0,0,0,.35)}
 .ctx-bubble.out{background:var(--c-out);color:var(--c-out-text)}
@@ -758,7 +797,7 @@ html.chat-open, html.chat-open body{overflow:hidden}
 .lightbox.open{visibility:visible}
 .lb-bg{position:absolute;inset:0;background:rgba(0,0,0,.92);opacity:0;transition:opacity .34s ease}
 .lightbox.show .lb-bg{opacity:var(--lb-bg,1)}
-.lb-frame{position:fixed;overflow:hidden;border-radius:12px;touch-action:none;will-change:left,top,width,height,transform;box-shadow:0 30px 80px rgba(0,0,0,.45)}
+.lb-frame{position:fixed;overflow:hidden;border-radius:0;touch-action:none;will-change:left,top,width,height,transform;box-shadow:0 30px 80px rgba(0,0,0,.45)}
 .lb-frame img{display:block;width:100%;height:100%;object-fit:cover;user-select:none;-webkit-user-drag:none;pointer-events:none}
 .lightbox .lb-close{position:absolute;z-index:1;top:calc(env(safe-area-inset-top,0px) + 14px);right:14px;color:#fff;background:rgba(255,255,255,.14);opacity:0;transition:opacity .25s ease .1s}
 .lightbox.show .lb-close{opacity:1}
@@ -860,7 +899,11 @@ html.chat-open, html.chat-open body{overflow:hidden}
 .room-sheet .rs-head p{margin:6px 0 14px;opacity:.72;line-height:1.4}
 .rs-tabs{display:flex;gap:6px;margin:0 0 14px;padding:4px;border-radius:999px;background:color-mix(in srgb, var(--c-menu-text) 7%, transparent)}
 .rs-tabs button{flex:1;min-height:36px;border:0;border-radius:999px;background:transparent;color:var(--c-menu-text);font:700 13px var(--font-chat);cursor:pointer;opacity:.7;display:inline-flex;align-items:center;justify-content:center;gap:6px}
-.rs-tabs button[aria-selected="true"]{background:var(--c-accent);color:var(--c-accent-ink);opacity:1}
+/* the selected tab is shown by a pill that slides between tabs (see the room sheet) */
+.rs-tabs{position:relative}
+.rs-tabs button{position:relative;z-index:1;transition:color .25s, opacity .25s}
+.rs-tabs button[aria-selected="true"]{color:var(--c-accent-ink);opacity:1}
+.rs-pill{position:absolute;left:4px;top:4px;bottom:4px;width:0;border-radius:999px;background:var(--c-accent);transition:transform .38s cubic-bezier(.2,.9,.25,1.05), width .38s cubic-bezier(.2,.9,.25,1.05);will-change:transform}
 .rs-tabs i{font-style:normal;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:#E5484D;color:#fff;font-size:11px;line-height:18px}
 .rs-form textarea{min-height:84px;padding:12px 14px;border-radius:12px;border:1px solid var(--c-border);background:color-mix(in srgb, var(--c-menu-text) 6%, transparent);color:var(--c-menu-text);font:600 15px/1.4 var(--font-chat);outline:none;resize:vertical}
 .rs-form textarea:focus{border-color:var(--c-accent);box-shadow:0 0 0 3px color-mix(in srgb, var(--c-accent) 28%, transparent)}
@@ -887,7 +930,423 @@ html.chat-open, html.chat-open body{overflow:hidden}
 .rs-row .ppl-btn{color:var(--c-menu-text)}
 .rs-row .ppl-btn.primary{color:var(--c-accent-ink)}
 .rs-row > em{font-style:normal;font-size:12px;opacity:.6}
-.rs-name{flex:1;min-width:0;font:600 14.5px var(--font-chat);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rs-tag{font-style:normal;margin-left:8px;padding:1px 7px;border-radius:999px;font-size:11px;font-weight:700;background:color-mix(in srgb, var(--c-accent) 18%, transparent);color:var(--c-accent)}
+.rs-name{flex:1;min-width:0;display:flex;align-items:center;gap:6px;font:600 14.5px var(--font-chat);white-space:nowrap}
+.rs-name .rs-n{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.rs-tag{flex:none;font-style:normal;margin-left:2px;padding:1px 7px;border-radius:999px;font-size:11px;font-weight:700;background:color-mix(in srgb, var(--c-accent) 18%, transparent);color:var(--c-accent)}
 .rs-note{margin:6px 0 0;opacity:.65;font-size:14px}
 .role-badge{border-radius:6px}
+
+/* ---------- Chat media: picture previews, voice messages, recorder ---------- */
+/* picture not downloaded yet: the tiny preview, blurred, with "⬇ 240 KB" */
+.b-pic{position:relative}
+.b-pic.is-thumb{cursor:pointer}
+.b-pic.is-thumb img{filter:blur(14px) saturate(1.1);transform:scale(1.12)}
+.b-pic-dl{display:none}
+.b-pic.is-thumb .b-pic-dl{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:inline-flex;align-items:center;gap:6px;padding:8px 14px 8px 10px;border-radius:999px;background:rgba(0,0,0,.55);color:#fff;font:700 13px var(--font-chat);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);box-shadow:0 4px 14px rgba(0,0,0,.25)}
+.b-pic-dl .icon{width:18px;height:18px;stroke-width:2.4}
+/* downloading: a ring that fills with the real progress, ✕ inside to cancel, "45 KB / 140 KB" beside it */
+.b-pic-dl svg.icon.pr-ring{width:24px;height:24px;margin:-3px 0 -3px -3px;transform:rotate(-90deg);fill:none;stroke:#fff;stroke-width:2.4;stroke-linecap:round}
+.pr-ring .pr-track{opacity:.28}
+.pr-ring .pr-fill{transition:stroke-dashoffset .18s linear}
+.pr-ring .pr-x{transform:rotate(90deg);transform-origin:12px 12px;stroke-width:2}
+.b-pic.is-loading .b-pic-dl span{font-variant-numeric:tabular-nums}
+.v-play{position:relative}
+.v-play svg.icon.pr-ring{position:absolute;inset:-3px;width:calc(100% + 6px);height:calc(100% + 6px);transform:rotate(-90deg);fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;opacity:0;transition:opacity .2s;pointer-events:none}
+.b-voice.loading .v-play svg.pr-ring{opacity:1}
+.v-play .i-dl,.v-play .i-x{display:none;fill:none;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.b-voice.need-dl .v-play .i-play,.b-voice.need-dl .v-play .i-pause{display:none}.b-voice.need-dl .v-play .i-dl{display:inline}
+.b-voice.loading .v-play .i-play,.b-voice.loading .v-play .i-pause,.b-voice.loading .v-play .i-dl{display:none}.b-voice.loading .v-play .i-x{display:inline}
+.v-size{font:600 11.5px var(--font-chat);font-variant-numeric:tabular-nums;opacity:.75;margin-left:-4px;margin-right:auto}   /* right after the duration */
+.v-size:empty{display:none}
+@keyframes dl-spin{to{transform:rotate(360deg)}}
+/* expired media */
+.b-gone{display:flex;align-items:center;gap:8px;margin:2px 0 4px;padding:10px 12px;border-radius:calc(var(--r-bubble) - 4px);background:color-mix(in srgb, currentColor 9%, transparent);font-size:13.5px;font-style:italic;opacity:.75}
+.b-gone[hidden]{display:none}
+.b-gone .icon{width:18px;height:18px;flex:none}
+/* voice message */
+/* voice: the play button centred on the left; waveform above, length · time + ticks below */
+.b-voice{display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto auto;column-gap:10px;row-gap:2px;align-items:center;min-width:min(250px,60vw);padding:4px 2px 2px}
+.b-voice .v-play{grid-row:1 / span 2;align-self:center}
+.v-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:16px}
+.v-foot .b-meta{float:none;position:static;top:auto;margin:0}
+.b-voice .v-time{min-width:0;text-align:left;font-size:11.5px}
+.b-voice[hidden]{display:none}
+.v-play{flex:none;width:38px;height:38px;border:0;border-radius:50%;display:grid;place-items:center;cursor:pointer;background:color-mix(in srgb, currentColor 16%, transparent);color:inherit}
+.v-play .icon{width:18px;height:18px;fill:currentColor;stroke:currentColor;stroke-width:2.2}
+.v-play .i-pause{display:none;fill:none;stroke-width:3}
+.b-voice.playing .v-play .i-play{display:none}.b-voice.playing .v-play .i-pause{display:inline}
+
+@keyframes pulse-dl{50%{opacity:.45}}
+/* waveform */
+.v-wave{flex:1;height:28px;display:flex;align-items:center;gap:2px;cursor:pointer;min-width:0}
+.v-wave i{flex:1;min-width:2px;max-width:4px;border-radius:2px;background:currentColor;opacity:.35;transition:opacity .15s}
+.v-wave i.on{opacity:1}
+.row.out .v-wave i.on{background:var(--c-tick-read,currentColor)}
+.v-time{flex:none;font:600 12px var(--font-chat);font-variant-numeric:tabular-nums;opacity:.75;min-width:32px;text-align:right}
+/* mic button (shows while the box is empty) and the recording bar */
+.mic{flex:none;width:42px;height:42px;border:0;border-radius:50%;background:var(--c-send);color:var(--c-send-ink);display:grid;place-items:center;cursor:pointer;animation:pop-in var(--bounce-d,.4s) var(--bounce,ease-out)}
+.mic[hidden]{display:none}
+.mic .icon{width:20px;height:20px}
+@keyframes pop-in{from{transform:scale(.4);opacity:0}}
+.composer.voice-ok:not(.has-text) .send{display:none}
+.composer.has-text .mic{display:none}
+.composer.recording > :not(.rec-bar){display:none !important}
+.rec-bar{flex:1;display:flex;align-items:center;gap:10px;min-height:42px;padding-left:2px}
+.rec-bar[hidden]{display:none}
+.rec-cancel,.rec-send{flex:none;width:42px;height:42px;border:0;border-radius:50%;display:grid;place-items:center;cursor:pointer}
+.rec-cancel{background:transparent;color:#E5484D}
+.rec-cancel:hover{background:color-mix(in srgb, #E5484D 12%, transparent)}
+.rec-send{background:var(--c-send);color:var(--c-send-ink)}
+.rec-cancel .icon,.rec-send .icon{width:20px;height:20px}
+.rec-dot{width:10px;height:10px;border-radius:50%;background:#E5484D;animation:rec-blink 1.1s ease-in-out infinite;flex:none}
+@keyframes rec-blink{50%{opacity:.25}}
+.rec-time{font:700 14px var(--font-chat);font-variant-numeric:tabular-nums;color:var(--c-field-text);flex:none;min-width:42px}
+.rec-wave{flex:1;height:28px;display:flex;align-items:center;justify-content:flex-end;gap:2px;overflow:hidden;min-width:0}
+.rec-wave i{flex:none;width:3px;border-radius:2px;background:var(--c-field-text);opacity:.55}
+.rec-wave i.idle{height:3px;opacity:.3}
+/* full-screen picture: Save */
+.lightbox .lb-save{position:absolute;z-index:1;top:calc(env(safe-area-inset-top,0px) + 14px);right:64px;display:inline-flex;align-items:center;gap:6px;height:40px;padding:0 14px;border:0;border-radius:999px;background:rgba(255,255,255,.14);color:#fff;font:700 14px var(--font-chat);cursor:pointer;opacity:0;transition:opacity .25s ease .1s}
+.lightbox.show .lb-save{opacity:1}
+.lightbox .lb-save:hover{background:rgba(255,255,255,.24)}
+.lightbox .lb-save .icon{width:18px;height:18px}
+@media (prefers-reduced-motion:reduce){.rec-dot{animation:none}.pr-ring .pr-fill{transition:none}}
+
+/* while a message menu is open, the hover bar steps aside */
+.ctx-on .acts{opacity:0 !important;pointer-events:none !important}
+/* our reaction in the hover bar, same as in the menu */
+.acts .emo.mine{background:var(--c-react-mine)}
+/* media this viewer may not see (room rule): a lock instead of the picture / voice message */
+.b-gone.locked{font-style:normal;opacity:.9;flex-wrap:wrap}
+.b-gone-btn{margin-left:auto;border:0;border-radius:999px;padding:5px 12px;background:var(--c-accent);color:var(--c-accent-ink);font:700 12px var(--font-chat);cursor:pointer}
+/* saving turned off in this room: no long-press "Save image", no dragging the picture out */
+.b-pic.nosave img,.lightbox.nosave .lb-frame img{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;-webkit-user-drag:none}
+.lightbox.nosave .lb-save{display:none}
+
+/* dragging a message to reply with a mouse: no text selection meanwhile */
+.bubble.swiping{-webkit-user-select:none;user-select:none;cursor:grabbing}
+
+/* ---------- Picture editor (before sending) ---------- */
+.pe{position:fixed;inset:0;z-index:90;display:none;flex-direction:column;background:#0B0F14;color:#fff;font-family:var(--font-chat);padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+.pe.open{display:flex;animation:pe-in .22s ease}
+@keyframes pe-in{from{opacity:0;transform:scale(.98)}}
+.pe-top{display:flex;align-items:center;gap:6px;padding:8px 10px;flex:none}
+.pe-title{font:700 16px var(--font-chat);margin-left:4px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pe-tools{display:flex;gap:2px}
+.pe-btn{width:42px;height:42px;border:0;border-radius:50%;background:transparent;color:#fff;display:grid;place-items:center;cursor:pointer;transition:background .15s}
+.pe-btn:hover{background:rgba(255,255,255,.1)}
+.pe-btn.on{background:#fff;color:#0B0F14}
+.pe-btn:disabled{opacity:.35;cursor:default;background:transparent}
+.pe-btn .icon{width:22px;height:22px}
+.pe-stage{position:relative;flex:1;min-height:0;overflow:hidden;touch-action:none}
+.pe-cv{position:absolute;display:block;border-radius:4px;box-shadow:0 10px 40px rgba(0,0,0,.5)}
+.pe-crop{position:absolute;border:2px solid #fff;box-shadow:0 0 0 9999px rgba(0,0,0,.55);cursor:move;touch-action:none;
+  background-image:linear-gradient(rgba(255,255,255,.35),rgba(255,255,255,.35)),linear-gradient(rgba(255,255,255,.35),rgba(255,255,255,.35)),linear-gradient(90deg,rgba(255,255,255,.35),rgba(255,255,255,.35)),linear-gradient(90deg,rgba(255,255,255,.35),rgba(255,255,255,.35));
+  background-size:100% 1px,100% 1px,1px 100%,1px 100%;background-position:0 33.33%,0 66.66%,33.33% 0,66.66% 0;background-repeat:no-repeat}
+.pe-crop[hidden]{display:none}
+.pe-h{position:absolute;width:26px;height:26px;margin:-13px 0 0 -13px;touch-action:none}
+.pe-h::after{content:"";position:absolute;inset:8px;background:#fff;border-radius:3px;box-shadow:0 1px 4px rgba(0,0,0,.5)}
+.pe-nw{left:0;top:0;cursor:nwse-resize}.pe-n{left:50%;top:0;cursor:ns-resize}.pe-ne{left:100%;top:0;cursor:nesw-resize}.pe-e{left:100%;top:50%;cursor:ew-resize}
+.pe-se{left:100%;top:100%;cursor:nwse-resize}.pe-s{left:50%;top:100%;cursor:ns-resize}.pe-sw{left:0;top:100%;cursor:nesw-resize}.pe-w{left:0;top:50%;cursor:ew-resize}
+.pe-sub{display:none;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;padding:10px 12px 0;flex:none}
+.pe[data-mode="crop"] .pe-sub,.pe[data-mode="draw"] .pe-sub,.pe[data-mode="sticker"] .pe-sub{display:flex}
+.pe-aspects,.pe-colors{display:none;gap:6px;align-items:center}
+.pe[data-mode="crop"] .pe-aspects,.pe[data-mode="draw"] .pe-colors{display:flex}
+.pe-chip{height:34px;padding:0 14px;border:1px solid rgba(255,255,255,.25);border-radius:999px;background:transparent;color:#fff;font:600 13px var(--font-chat);cursor:pointer}
+.pe-chip.on,.pe-chip.pe-done{background:#fff;color:#0B0F14;border-color:#fff}
+.pe-color{width:30px;height:30px;border-radius:50%;border:2px solid rgba(255,255,255,.35);cursor:pointer;padding:0}
+.pe-color.on{border-color:#fff;box-shadow:0 0 0 3px rgba(255,255,255,.25);transform:scale(1.1)}
+.pe-bottom{display:flex;gap:8px;align-items:center;padding:12px;flex:none}
+.pe-bottom input{flex:1;min-width:0;height:46px;border-radius:999px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:#fff;padding:0 18px;font:500 15px var(--font-chat);outline:none}
+.pe-bottom input:focus{border-color:rgba(255,255,255,.5)}
+.pe-bottom input::placeholder{color:rgba(255,255,255,.55)}
+.pe-send{width:48px;height:48px;border:0;border-radius:50%;background:var(--c-send,#7DB342);color:var(--c-send-ink,#0B1F05);display:grid;place-items:center;cursor:pointer;flex:none}
+.pe-send .icon{width:22px;height:22px}
+@media (max-width:560px){ .pe-title{display:none} .pe-top{justify-content:space-between} }
+@media (prefers-reduced-motion:reduce){ .pe.open{animation:none} }
+
+/* stickers: the tray, and the frame around the selected one (drag to move, round handle = size + rotation, ✕ = remove) */
+.pe-tray{display:none;gap:4px;flex-wrap:wrap;justify-content:center;max-height:min(30vh,200px);overflow-y:auto;width:100%;padding:2px 0 6px}
+.pe[data-mode="sticker"] .pe-tray{display:flex}
+.pe[data-mode="sticker"] .pe-chip:not(.pe-done){display:none}
+.pe-stk{width:48px;height:48px;border:0;border-radius:12px;background:rgba(255,255,255,.06);font-size:30px;line-height:1;cursor:pointer;display:grid;place-items:center;padding:4px;transition:transform .15s,background .15s}
+.pe-stk:hover{background:rgba(255,255,255,.14);transform:scale(1.08)}
+.pe-stk img{max-width:100%;max-height:100%;object-fit:contain}
+.pe-stk-add{color:#fff;border:1.5px dashed rgba(255,255,255,.4);background:transparent}
+.pe-stk-add .icon{width:22px;height:22px}
+.pe-sel{position:absolute;border:1.5px dashed rgba(255,255,255,.9);border-radius:6px;cursor:move;touch-action:none;transform-origin:50% 50%;box-shadow:0 0 0 1px rgba(0,0,0,.25)}
+.pe-sel[hidden]{display:none}
+.pe-rz{position:absolute;right:-14px;bottom:-14px;width:28px;height:28px;border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.45);cursor:nwse-resize;touch-action:none}
+.pe-rz::after{content:"";position:absolute;inset:8px;border:2px solid #0B0F14;border-radius:50%;border-left-color:transparent}
+.pe-del{position:absolute;left:-14px;top:-14px;width:28px;height:28px;border:0;border-radius:50%;background:#E5484D;color:#fff;display:grid;place-items:center;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.45);padding:0}
+.pe-del .icon{width:14px;height:14px;stroke-width:3}
+/* sticker tray sections + personal stickers */
+.pe-tray-h{flex-basis:100%;margin:6px 4px 2px;font:700 11px var(--font-chat);letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.55);text-align:left}
+.pe-tray-h:first-child{margin-top:0}
+.pe-tray-note{align-self:center;margin:0 6px;font-size:12.5px;color:rgba(255,255,255,.6);max-width:260px}
+.pe-stk{position:relative}
+.pe-stk-x{position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;background:#E5484D;color:#fff;display:grid;place-items:center;box-shadow:0 1px 4px rgba(0,0,0,.4);opacity:0;transition:opacity .15s}
+.pe-stk-x .icon{width:11px;height:11px;stroke-width:3}
+.pe-stk.mine:hover .pe-stk-x,.pe-stk.mine:focus-visible .pe-stk-x{opacity:1}
+@media (hover:none){ .pe-stk-x{opacity:1} }
+.pe-stk-add.busy{pointer-events:none;opacity:.6;animation:pulse-dl 1s ease-in-out infinite}
+.pe-tray{justify-content:flex-start;max-width:720px;margin:0 auto}
+
+/* quotes: text on the left, the quoted picture's thumbnail on the right; 📷 / 🎤 icon for media */
+.b-quote{display:flex;align-items:center;gap:8px}
+.b-quote .q-text{flex:1;min-width:0}
+.b-quote span,.reply-bar span{display:flex;align-items:center;gap:5px}
+.b-quote span .icon,.reply-bar span .icon{width:14px;height:14px;flex:none;opacity:.85}
+.q-thumb{flex:none;width:40px;height:40px;border-radius:5px;object-fit:cover;filter:saturate(1.05)}
+.rb-thumb{flex:none;width:42px;height:42px;border-radius:6px;object-fit:cover}
+.rb-thumb[hidden]{display:none}
+
+/* room sheet: the content slides in from the side of the tab you go to */
+.rs-pane.from-right{animation:rs-in-r .34s cubic-bezier(.2,.8,.25,1)}
+.rs-pane.from-left{animation:rs-in-l .34s cubic-bezier(.2,.8,.25,1)}
+@keyframes rs-in-r{from{opacity:0;transform:translateX(28px)}}
+@keyframes rs-in-l{from{opacity:0;transform:translateX(-28px)}}
+/* invite link */
+.rs-link{display:grid;gap:8px;padding:12px;border-radius:12px;border:1px solid var(--c-border);background:color-mix(in srgb, var(--c-menu-text) 4%, transparent)}
+.rs-link-h{font-weight:700;font-size:14px}
+.rs-link .rs-note{margin:0}
+.rs-link-url{min-height:40px !important;font:600 13px var(--mono) !important;text-overflow:ellipsis}
+.rs-link-acts{display:flex;flex-wrap:wrap;gap:6px}
+.rs-link .ppl-btn{color:var(--c-menu-text)}
+.rs-link .ppl-btn.primary{color:var(--c-accent-ink)}
+.rs-link .ppl-btn.danger{color:#E5484D}
+/* voice: the mic squeezes and pops when tapped; the recording bar stretches open from it; the red dot pulses */
+.mic.pressed{animation:mic-press .38s cubic-bezier(.3,1.6,.5,1)}
+@keyframes mic-press{0%{transform:scale(1)}30%{transform:scale(.82)}70%{transform:scale(1.16)}100%{transform:scale(1)}}
+.rec-bar.opening{transform-origin:right center;animation:rec-open .42s cubic-bezier(.2,.9,.25,1.06)}
+@keyframes rec-open{from{transform:scaleX(.12);opacity:.3;border-radius:999px}}
+.rec-bar.opening > *{animation:rec-open-kids .35s ease .12s both}
+@keyframes rec-open-kids{from{opacity:0}}
+.rec-dot{box-shadow:0 0 0 0 rgba(229,72,77,.55);animation:rec-blink 1.1s ease-in-out infinite, rec-ring 1.4s ease-out infinite}
+@keyframes rec-ring{0%{box-shadow:0 0 0 0 rgba(229,72,77,.55)}100%{box-shadow:0 0 0 10px rgba(229,72,77,0)}}
+.rec-send{animation:pop-in .35s cubic-bezier(.3,1.6,.5,1)}
+@media (prefers-reduced-motion:reduce){.mic.pressed,.rec-bar.opening,.rec-bar.opening > *,.rs-pane.from-right,.rs-pane.from-left{animation:none}.rs-pill{transition:none}}
+
+/* "Are you sure?" dialog (#confirmSheet): small, above any other sheet; stays centred on phones too */
+.sheet-wrap.confirm-wrap{z-index:80;place-items:center;padding:20px;background:rgba(0,0,0,.45);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+.confirm-wrap .confirm-sheet{width:min(380px,100%);padding:22px 22px 18px;border-radius:20px;transform:translateY(14px) scale(.94);transition:transform .32s cubic-bezier(.2,.9,.3,1.15), opacity .2s}
+.confirm-wrap.open .confirm-sheet{transform:none}
+.confirm-sheet h4{font-family:var(--font-chat);font-size:17px;font-weight:700;line-height:1.3;margin:0}
+.confirm-sheet p{opacity:.75;font-size:14px;line-height:1.45;margin:8px 0 0}
+.confirm-sheet .sheet-actions{margin-top:20px}
+.confirm-sheet .btn{min-width:96px;justify-content:center}
+.confirm-sheet .btn-primary.danger{background:var(--c-danger);color:#fff}
+@media (max-width:520px){.confirm-sheet .sheet-actions{flex-direction:column-reverse;align-items:stretch}.confirm-sheet .btn{width:100%}}
+
+/* group info (#groupSheet) — opened by tapping a room's name / picture in the chat header */
+.c-head .tappable{cursor:pointer;border-radius:12px}
+.c-head .tappable{transition:opacity .15s}.c-head .tappable:hover{opacity:.8}   /* tappable, but not a link: no underline */
+.c-head .tappable:focus-visible{outline:2px solid var(--c-accent);outline-offset:2px}
+.group-sheet{position:relative;padding-top:28px}
+.group-sheet .gs-close{position:absolute;top:12px;right:12px;color:var(--c-menu-text)}
+.gs-head{display:flex;flex-direction:column;align-items:center;text-align:center;gap:6px;margin-bottom:16px}
+.gs-head .gs-av{width:84px;height:84px;margin-bottom:6px;animation:gs-pop .45s cubic-bezier(.2,.9,.3,1.2) both}
+.gs-head .gs-av .ini{width:100%;height:100%;border-radius:50%;display:grid;place-items:center}
+.gs-head .gs-av svg{width:40px;height:40px}
+.gs-head h3{font-size:calc(var(--title-size) * 1.4)}
+.gs-sub{margin:0;opacity:.72;font-size:14px}
+.gs-join{font:700 11px/1 var(--font-chat);letter-spacing:.06em;text-transform:uppercase;padding:6px 10px;border-radius:999px;background:color-mix(in srgb, var(--c-menu-text) 8%, transparent);opacity:.85}
+.gs-invited{margin:0 0 10px;text-align:center;font-size:14px;color:var(--c-accent)}
+.gs-acts{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin:0 0 18px}
+.gs-acts .ppl-btn{color:var(--c-menu-text);min-width:110px;justify-content:center}
+.gs-acts .ppl-btn.primary{color:var(--c-accent-ink)}
+.gs-acts .ppl-btn.danger{color:var(--c-danger)}
+.gs-sec{margin:0 0 16px;padding:12px 14px;border-radius:14px;background:color-mix(in srgb, var(--c-menu-text) 6%, transparent)}
+.gs-sec .ppl-h{color:var(--c-menu-text);opacity:.75;padding:0 0 6px}
+.gs-sec .ppl-h b{color:var(--c-menu-text);background:color-mix(in srgb, var(--c-menu-text) 10%, transparent)}
+.gs-text{margin:0;white-space:pre-wrap;line-height:1.45;font-size:14px;overflow-wrap:anywhere}
+.gs-members .rs-list{margin:0 -6px}
+.gs-row{padding:0}
+.gs-person{display:flex;align-items:center;gap:10px;width:100%;padding:6px;border:0;border-radius:10px;background:transparent;color:inherit;font:inherit;text-align:left}
+button.gs-person{cursor:pointer}
+button.gs-person:hover{background:color-mix(in srgb, var(--c-menu-text) 7%, transparent)}
+.rs-tag.rs-tag-team{color:var(--c-menu-text);background:color-mix(in srgb, var(--c-menu-text) 12%, transparent)}
+@keyframes gs-pop{from{transform:scale(.6);opacity:0}to{transform:none;opacity:1}}
+@media (prefers-reduced-motion:reduce){.gs-head .gs-av{animation:none}}
+
+/* sending a picture / voice note: the filling ring with ✕ (tap = cancel) */
+.b-up{display:none}
+.b-pic.is-uploading .b-up{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:inline-flex;align-items:center;gap:6px;padding:8px 12px 8px 10px;border-radius:999px;background:rgba(0,0,0,.55);color:#fff;font:700 13px var(--font-chat);font-variant-numeric:tabular-nums;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.b-up svg.icon.pr-ring{width:24px;height:24px;margin:-3px 0 -3px -3px;transform:rotate(-90deg);fill:none;stroke:#fff;stroke-width:2.4;stroke-linecap:round}
+.b-pic.is-uploading img{filter:brightness(.8)}
+.b-voice.uploading .v-play svg.pr-ring{opacity:1}
+.b-pic.up-done .b-up .pr-x{opacity:.35}
+.b-voice.uploading .v-play .i-play,.b-voice.uploading .v-play .i-pause,.b-voice.uploading .v-play .i-dl{display:none}.b-voice.uploading .v-play .i-x{display:inline}
+/* recording bar: never wider than the box (the waveform scrolls inside) */
+.rec-bar{min-width:0;max-width:100%}
+.composer.recording{min-width:0}
+
+/* ---------- bubble style, chosen after the theme: #messenger / #ctx / previews carry .bs-scope[data-bs] ----------
+   Each one looks clearly different; the colours stay the theme's. "theme" = the theme's own look. Discord has no bubbles. */
+.bs-scope[data-bs="classic"]{--bs-r:8px;--bs-g:8px}
+.bs-scope[data-bs="curl"]{--bs-r:18px;--bs-g:6px}
+.bs-scope[data-bs="pill"]{--bs-r:24px;--bs-g:24px}
+.bs-scope[data-bs="card"]{--bs-r:2px;--bs-g:2px}
+.bs-scope[data-bs="outline"]{--bs-r:14px;--bs-g:5px}
+.bs-scope[data-bs="comic"]{--bs-r:16px;--bs-g:16px}
+.bs-scope[data-bs="leaf"]{--bs-r:18px;--bs-g:18px}
+.bs-scope[data-bs]:not([data-bs="theme"]):not([data-ct="discord"]) .row .bubble{border-radius:var(--bs-r)}
+.bs-scope[data-bs]:not([data-bs="theme"]):not([data-ct="discord"]) .row .bubble::before{content:none}
+.bs-scope[data-bs]:not([data-bs="theme"]):not([data-ct="discord"]) .row.in:not(.gap) .bubble{border-top-left-radius:var(--bs-g)}
+.bs-scope[data-bs]:not([data-bs="theme"]):not([data-ct="discord"]) .row.in:not(.tail) .bubble{border-bottom-left-radius:var(--bs-g)}
+.bs-scope[data-bs]:not([data-bs="theme"]):not([data-ct="discord"]) .row.out:not(.gap) .bubble{border-top-right-radius:var(--bs-g)}
+.bs-scope[data-bs]:not([data-bs="theme"]):not([data-ct="discord"]) .row.out:not(.tail) .bubble{border-bottom-right-radius:var(--bs-g)}
+/* Classic: a pointed tail at the top, on the first message of a group */
+.bs-scope.bs-scope[data-bs="classic"]:not([data-ct="discord"]) .row.in.gap .bubble{border-top-left-radius:0}
+.bs-scope.bs-scope[data-bs="classic"]:not([data-ct="discord"]) .row.out.gap .bubble{border-top-right-radius:0}
+.bs-scope.bs-scope[data-bs="classic"]:not([data-ct="discord"]) .row.gap .bubble::before{content:"";position:absolute;top:0;bottom:auto;width:10px;height:14px;background:inherit}
+.bs-scope.bs-scope[data-bs="classic"]:not([data-ct="discord"]) .row.in.gap .bubble::before{left:-10px;right:auto;clip-path:polygon(0 0,100% 0,100% 100%)}
+.bs-scope.bs-scope[data-bs="classic"]:not([data-ct="discord"]) .row.out.gap .bubble::before{right:-10px;left:auto;clip-path:polygon(0 0,100% 0,0 100%)}
+/* Curl: a curved tail at the bottom, on the last message of a group */
+.bs-scope.bs-scope[data-bs="curl"]:not([data-ct="discord"]) .row.in.tail .bubble{border-bottom-left-radius:0}
+.bs-scope.bs-scope[data-bs="curl"]:not([data-ct="discord"]) .row.out.tail .bubble{border-bottom-right-radius:0}
+.bs-scope.bs-scope[data-bs="curl"]:not([data-ct="discord"]) .row.tail .bubble::before{content:"";position:absolute;bottom:0;top:auto;width:10px;height:16px;background:inherit}
+.bs-scope.bs-scope[data-bs="curl"]:not([data-ct="discord"]) .row.in.tail .bubble::before{left:-9px;right:auto;clip-path:path("M10 0 C10 9 6 14 0 16 L10 16 Z")}
+.bs-scope.bs-scope[data-bs="curl"]:not([data-ct="discord"]) .row.out.tail .bubble::before{right:-9px;left:auto;clip-path:path("M0 0 C0 9 4 14 10 16 L0 16 Z")}
+/* Pill: a capsule, roomier sides */
+.bs-scope.bs-scope[data-bs="pill"]:not([data-ct="discord"]) .row .bubble{padding-left:14px;padding-right:14px}
+/* Card: square corners and a stripe on the speaker's side */
+.bs-scope.bs-scope[data-bs="card"]:not([data-ct="discord"]) .row.in .bubble{padding-left:13px;box-shadow:inset 4px 0 0 color-mix(in srgb, currentColor 45%, transparent), var(--shadow-bubble)}
+.bs-scope.bs-scope[data-bs="card"]:not([data-ct="discord"]) .row.out .bubble{padding-right:13px;box-shadow:inset -4px 0 0 color-mix(in srgb, currentColor 45%, transparent), var(--shadow-bubble)}
+/* Outline: see-through with a border in the bubble's colour */
+.bs-scope.bs-scope[data-bs="outline"]:not([data-ct="discord"]) .row .bubble{box-shadow:none;color:var(--c-in-text)}
+.bs-scope.bs-scope[data-bs="outline"]:not([data-ct="discord"]) .row.in .bubble{background:color-mix(in srgb, var(--c-in) 22%, transparent);border:1.5px solid color-mix(in srgb, var(--c-in-text) 30%, transparent)}
+.bs-scope.bs-scope[data-bs="outline"]:not([data-ct="discord"]) .row.out .bubble{background:color-mix(in srgb, var(--c-out) 22%, transparent);border:1.5px solid color-mix(in srgb, var(--c-out) 75%, var(--c-in-text))}
+/* Comic: a bold border and a solid offset shadow */
+.bs-scope[data-bs="comic"]{--bs-ink:color-mix(in srgb, var(--c-in-text) 88%, transparent)}
+.bs-scope.bs-scope[data-bs="comic"]:not([data-ct="discord"]) .row .bubble{border:2px solid var(--bs-ink);box-shadow:3px 3px 0 var(--bs-ink);font-weight:600}
+.bs-scope.bs-scope[data-bs="comic"]:not([data-ct="discord"]) .row.out .bubble{box-shadow:-3px 3px 0 var(--bs-ink)}
+/* Leaf: two sharp opposite corners */
+.bs-scope.bs-scope.bs-scope[data-bs="leaf"]:not([data-ct="discord"]) .row.in .bubble{border-radius:3px 18px 3px 18px}
+.bs-scope.bs-scope.bs-scope[data-bs="leaf"]:not([data-ct="discord"]) .row.out .bubble{border-radius:18px 3px 18px 3px}
+
+/* the theme sheet's two steps (theme → bubble style), sliding */
+.theme-steps{overflow-x:hidden}
+.ts-pane[hidden]{display:none}
+.ts-pane.ts-in-r{animation:rs-in-r .34s cubic-bezier(.2,.8,.25,1)}
+.ts-pane.ts-in-l{animation:rs-in-l .34s cubic-bezier(.2,.8,.25,1)}
+.ts-head{display:flex;align-items:center;gap:6px;margin-left:-8px}
+.ts-head .iconbtn{color:var(--c-menu-text);flex:none}
+/* bubble cards: a tiny chat in the chosen theme's colours */
+.bprev{height:128px;border-radius:12px;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;padding:8px 16px 12px;background-color:var(--c-wall);background-image:var(--c-wall-img);background-size:var(--c-wall-size);border:1px solid var(--c-border);pointer-events:none}
+.bprev .row{margin-top:3px}.bprev .row.gap{margin-top:7px}
+.bprev .bwrap{max-width:88%}
+.bprev .bubble{font:500 12px/1.25 var(--font-chat);padding:6px 10px;white-space:nowrap;overflow:visible}
+.bcard .tname small{display:block;font-weight:500;opacity:.65;font-size:12px}
+@media (prefers-reduced-motion:reduce){.ts-pane.ts-in-r,.ts-pane.ts-in-l{animation:none}}
+
+/* loading a room: placeholder bubbles in the theme's colours / bubble style, gently shimmering; then the messages fade in */
+.skel-row{pointer-events:none}
+.skel-row .bwrap{min-width:90px;align-items:stretch}
+.skel-row .bubble.skel-b{width:100%}
+.skel-row .bubble.skel-b{display:flex;flex-direction:column;gap:7px;padding:11px 12px;opacity:.55;overflow:hidden;box-shadow:none}
+.skel-row .bubble.skel-b i{display:block;height:9px;border-radius:5px;background:currentColor;opacity:.22}
+.skel-row .bubble.skel-b::after{content:"";position:absolute;inset:0;border-radius:inherit;background:linear-gradient(100deg,transparent 20%,rgba(255,255,255,.22) 50%,transparent 80%);background-size:250% 100%;animation:skel-sweep 1.4s ease-in-out infinite}
+.skel-row .skel-av{background:currentColor;opacity:.18;animation:skel-pulse 1.4s ease-in-out infinite}
+.skel-row{animation:skel-row-in .4s ease both}
+@keyframes skel-sweep{from{background-position:150% 0}to{background-position:-100% 0}}
+@keyframes skel-pulse{50%{opacity:.08}}
+@keyframes skel-row-in{from{opacity:0;transform:translateY(6px)}}
+.row.soft-in{animation:soft-in .38s cubic-bezier(.2,.8,.25,1) both}
+@keyframes soft-in{from{opacity:0;transform:translateY(8px)}}
+@media (prefers-reduced-motion:reduce){.skel-row,.skel-row .bubble.skel-b::after,.skel-row .skel-av,.row.soft-in{animation:none}}
+
+/* long member lists: search + "Show all" */
+.gs-search{width:100%;margin:2px 0 8px;padding:9px 12px;border-radius:10px;border:1px solid var(--c-border);background:color-mix(in srgb, var(--c-menu-text) 5%, transparent);color:var(--c-menu-text);font:500 14px var(--font-chat)}
+.gs-search:focus{outline:2px solid var(--c-accent);outline-offset:0}
+.gs-more:empty{display:none}
+.ppl-btn.gs-all{display:flex;width:100%;align-items:center;justify-content:center;min-height:38px;padding:8px 12px;margin-top:6px;color:var(--c-accent)}
+
+/* ---------- chat wallpaper (theme sheet → Wallpaper; the pictures come from back office → Wallpapers) ---------- */
+.wp-scope[data-wp="plain"] .convo,.bprev.wp-scope[data-wp="plain"]{background-image:none}
+.wp-scope[data-wp="cover"] .convo,.bprev.wp-scope[data-wp="cover"],
+.wp-scope[data-wp="tile"] .convo,.bprev.wp-scope[data-wp="tile"]{background-image:linear-gradient(color-mix(in srgb, var(--c-wall) var(--wp-dim, 0%), transparent),color-mix(in srgb, var(--c-wall) var(--wp-dim, 0%), transparent)),var(--wp-img)}
+.wp-scope[data-wp="cover"] .convo,.bprev.wp-scope[data-wp="cover"]{background-size:auto,cover;background-position:center;background-repeat:no-repeat}
+.wp-scope[data-wp="tile"] .convo{background-size:auto,240px;background-repeat:repeat}
+.bprev.wp-scope[data-wp="tile"]{background-size:auto,120px;background-repeat:repeat}
+.walls .bprev{justify-content:flex-end}
+
+/* ---------- no conversation chosen (wide screens): welcome page ---------- */
+.c-welcome{display:none}
+.messenger.no-room .c-welcome{display:flex;position:absolute;inset:0;z-index:30;align-items:center;justify-content:center;padding:32px;text-align:center;
+  background:var(--c-head-bg);color:var(--c-head-text);border-bottom:6px solid var(--c-accent)}
+.cw-in{max-width:440px;display:flex;flex-direction:column;align-items:center;gap:12px;animation:cw-in .5s cubic-bezier(.2,.8,.25,1) both}
+.cw-logo .brand-mark{width:88px;height:88px;border-radius:26px}
+.cw-logo .brand-mark svg{width:46px;height:46px}
+.c-welcome h2{font-family:var(--font-title);font-weight:var(--title-weight);text-transform:var(--title-tf);font-size:calc(var(--title-size) * 1.7);line-height:1.05;margin:6px 0 0}
+.c-welcome p{margin:0;font-size:15px;line-height:1.5;color:var(--c-head-mute)}
+.cw-points{list-style:none;margin:10px 0 0;padding:0;display:grid;gap:8px;width:100%}
+.cw-points li{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:12px;text-align:left;font-size:14px;font-weight:600;background:color-mix(in srgb, var(--c-head-text) 6%, transparent)}
+.cw-points .icon{width:20px;height:20px;flex:none;color:var(--c-accent)}
+.cw-foot{margin-top:8px;font-size:12px;color:var(--c-head-mute)}
+@keyframes cw-in{from{opacity:0;transform:translateY(10px) scale(.98)}}
+@media (max-width:820px){.messenger.no-room .c-welcome{display:none}}
+@media (prefers-reduced-motion:reduce){.cw-in{animation:none}}
+
+/* top of a conversation: loader while older messages come / "start of the conversation" */
+.hist-top{display:flex;justify-content:center;padding:10px 0 6px;min-height:34px;align-items:center}
+.hist-top .dots3 i{background:var(--c-day-text)}
+.hist-top.more .dots3{opacity:.35}.hist-top.more .dots3 i{animation:none}
+.hist-top.done span{font:600 12px var(--font-chat);padding:5px 12px;border-radius:999px;background:var(--c-day-bg);color:var(--c-day-text);box-shadow:var(--shadow-bubble)}
+
+/* after a refresh, until the conversation from the address arrives: no other room's name / picture in the header */
+.messenger.want-room .c-head #cAvatar,.messenger.want-room .c-head .c-title,.messenger.want-room .c-head .iconbtn:not(.back){visibility:hidden}
+.messenger.want-room .composer,.messenger.want-room .gate,.messenger.want-room #pinned{visibility:hidden}
+
+/* wallpaper: the darken slider (one of our wallpapers only) */
+.wall-dim[hidden]{display:none}
+.wall-dim{display:grid;grid-template-columns:auto 1fr 44px;align-items:center;gap:12px;margin:14px 0 4px;padding:12px 14px;border-radius:14px;background:color-mix(in srgb, var(--c-menu-text) 6%, transparent);color:var(--c-menu-text);font:600 14px var(--font-chat)}
+.wall-dim output{text-align:right;font-variant-numeric:tabular-nums;opacity:.8}
+.wall-dim input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:6px;border-radius:999px;background:linear-gradient(90deg,var(--c-accent) var(--fill,0%),color-mix(in srgb, var(--c-menu-text) 18%, transparent) var(--fill,0%));cursor:pointer}
+.wall-dim input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:#fff;border:2px solid var(--c-accent);box-shadow:0 1px 4px rgba(0,0,0,.3)}
+.wall-dim input[type=range]::-moz-range-thumb{width:18px;height:18px;border-radius:50%;background:#fff;border:2px solid var(--c-accent)}
+.wall-dim input[type=range]:focus-visible{outline:2px solid var(--c-accent);outline-offset:4px}
+
+/* the palette button's menu: Theme / Wallpaper */
+.look-menu{position:fixed;z-index:90;min-width:190px;padding:6px;border-radius:14px;background:var(--c-menu-bg);color:var(--c-menu-text);box-shadow:0 12px 32px rgba(0,0,0,.28);border:1px solid var(--c-border);
+  opacity:0;transform:scale(.92) translateY(-4px);transition:opacity .16s ease, transform .2s cubic-bezier(.2,.9,.3,1.2);font-family:var(--font-chat)}
+.look-menu.open{opacity:1;transform:none}
+.look-item{display:flex;align-items:center;gap:12px;width:100%;padding:10px 12px;border:0;border-radius:10px;background:transparent;color:inherit;font:600 14px var(--font-chat);text-align:left;cursor:pointer}
+.look-item:hover,.look-item:focus-visible{background:var(--c-menu-hover);outline:none}
+.look-item .icon{width:20px;height:20px;flex:none;opacity:.85}
+@media (prefers-reduced-motion:reduce){.look-menu{transition:none}}
+
+/* room settings: "can read before joining" switch */
+.rs-switch{display:flex;align-items:flex-start;gap:10px;margin:2px 0 14px;padding:12px;border-radius:12px;border:1px solid var(--c-border);cursor:pointer}
+.rs-switch input{margin-top:3px;width:18px;height:18px;accent-color:var(--c-accent);flex:none}
+.rs-switch span{display:grid;gap:2px}.rs-switch b{font-size:14px}.rs-switch small{opacity:.7;font-size:12.5px;line-height:1.35}
+.rs-switch.dim{opacity:.6}
+
+/* switching conversations: the messages fade / rise in (newest 14 one after another), the header's name and picture slide in */
+#wallIn.room-in{animation:room-in .28s ease both}
+@keyframes room-in{from{opacity:0}}
+.c-head .hdr-in{animation:hdr-in .32s cubic-bezier(.2,.8,.25,1) both}
+.c-head #cAvatar.hdr-in{animation-name:hdr-in-av}
+@keyframes hdr-in{from{opacity:0;transform:translateX(8px)}}
+@keyframes hdr-in-av{from{opacity:0;transform:scale(.8)}}
+@media (prefers-reduced-motion:reduce){#wallIn.room-in,.c-head .hdr-in{animation:none}}
+
+/* room settings: the room's picture (photo or colours) */
+.rs-pic{display:flex;align-items:center;gap:16px;margin:0 0 16px;padding:12px;border-radius:14px;background:color-mix(in srgb, var(--c-menu-text) 5%, transparent)}
+.rs-pic-av{position:relative;width:72px;height:72px;flex:none;border-radius:50%;overflow:hidden;display:grid;place-items:center;color:#fff}
+.rs-pic-av img{width:100%;height:100%;object-fit:cover;display:block}
+.rs-pic-av .icon{width:34px;height:34px;fill:none;stroke:currentColor;stroke-width:1.8}
+.rs-pic-av.busy::after{content:"";position:absolute;inset:0;background:rgba(0,0,0,.45) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='26' height='26'%3E%3Cpath d='M12 3a9 9 0 1 0 9 9' fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E") center/26px no-repeat;animation:rs-spin 1s linear infinite}
+@keyframes rs-spin{to{transform:rotate(360deg)}}
+.rs-pic-side{display:grid;gap:10px;min-width:0}
+.rs-pic-acts{display:flex;flex-wrap:wrap;gap:6px}
+.rs-pic-acts .ppl-btn{color:var(--c-menu-text)}
+.rs-swatches{display:flex;flex-wrap:wrap;gap:7px}
+.rs-swatch{width:26px;height:26px;border-radius:50%;border:0;cursor:pointer;transition:transform .15s}
+.rs-swatch:hover{transform:scale(1.12)}
+.rs-swatch.on{box-shadow:0 0 0 2px var(--c-menu-bg),0 0 0 4px var(--c-accent)}
+
+/* a chosen room photo not saved yet; pictures you can tap to see full size */
+.rs-pic.draft{outline:2px dashed color-mix(in srgb, var(--c-accent) 70%, transparent);outline-offset:-2px}
+.rs-pic-note{font:600 12px var(--font-chat);color:var(--c-accent)}
+.zoomable{cursor:zoom-in}
+.zoomable:focus-visible{outline:2px solid var(--c-accent);outline-offset:3px}

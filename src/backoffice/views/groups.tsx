@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { toast } from 'sonner'
-import { Loader2, MessagesSquare, Plus, Sparkles } from 'lucide-react'
+import { ChevronRight, Loader2, Megaphone, MessagesSquare, Plus, Sparkles, Users } from 'lucide-react'
 import { PageHeader } from '@/backoffice/components/page-header'
 import { DataTable, type Col } from '@/backoffice/components/data-table'
 import { EmptyState } from '@/backoffice/components/empty-state'
@@ -14,21 +14,21 @@ import { Button } from '@/backoffice/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@/backoffice/components/ui/sheet'
 import { groupSchema, type GroupForm } from '@/backoffice/lib/forms'
 import { saveGroup } from '@/backoffice/actions/groups'
-import { GroupAvatar, GroupFields, JOIN, KIND } from './group-fields'
+import { GroupAvatar, GroupFields, JOIN, KIND, VISIBILITY } from './group-fields'
 
 export type GroupRow = {
-  id: string; name: string; description: string; kind: 'group' | 'channel'; join: 'open' | 'request' | 'invite'; autoAdd: boolean; active: boolean
-  gradient: string | null; order: number; members: number; requests: number; invited: number; owner: string | null
+  id: string; name: string; description: string; kind: 'group' | 'channel'; join: 'open' | 'request' | 'invite'; visibility: 'public' | 'members' | 'hidden'; preview: boolean; autoAdd: boolean; active: boolean
+  gradient: string | null; photo: string | null; order: number; members: number; requests: number; invited: number; owner: string | null
 }
 
-export function GroupsView({ rows }: { rows: GroupRow[] }) {
+export function GroupsView({ rows, lounge }: { rows: GroupRow[]; lounge?: { name: string; teamOnly: boolean; messages: number } }) {
   const [creating, setCreating] = useState(false)
   const cols: Col<GroupRow>[] = useMemo(() => [
     {
       id: 'name', header: 'Room', accessorFn: (g) => g.name + ' ' + g.description,
       cell: ({ row: { original: g } }) => (
         <Link href={`/admin/groups/${g.id}`} className="flex items-center gap-2.5">
-          <GroupAvatar gradient={g.gradient} kind={g.kind} />
+          <GroupAvatar gradient={g.gradient} photo={g.photo} kind={g.kind} />
           <span className="min-w-0 leading-tight">
             <span className="block truncate text-sm font-medium">{g.name}</span>
             <span className="block truncate text-xs text-muted-foreground">{g.description || KIND[g.kind].hint}</span>
@@ -39,7 +39,13 @@ export function GroupsView({ rows }: { rows: GroupRow[] }) {
     { id: 'owner', header: 'Made by', accessorFn: (g) => g.owner || 'Team', size: 140, cell: ({ row: { original: g } }) => (g.owner ? <span className="text-sm">{g.owner}</span> : <Badge variant="secondary">Team</Badge>) },
     { id: 'kind', header: 'Kind', accessorFn: (g) => g.kind, size: 110, cell: ({ row: { original: g } }) => <Badge variant="outline">{KIND[g.kind].label}</Badge> },
     {
-      id: 'join', header: 'Who can join', accessorFn: (g) => g.join, size: 190,
+      id: 'visibility', header: 'Who can see it', accessorFn: (g) => g.visibility, size: 170,
+      cell: ({ row: { original: g } }) => (
+        <div className="grid text-sm leading-tight">{VISIBILITY[g.visibility].label}<span className="text-xs text-muted-foreground">{g.visibility === 'hidden' ? '' : g.preview ? 'Can read before joining' : 'Must join to read'}</span></div>
+      ),
+    },
+    {
+      id: 'join', header: 'How people join', accessorFn: (g) => g.join, size: 170,
       cell: ({ row: { original: g } }) => (
         <div className="flex flex-wrap items-center gap-1.5 text-sm">
           {JOIN[g.join].label}
@@ -63,9 +69,20 @@ export function GroupsView({ rows }: { rows: GroupRow[] }) {
 
   return (
     <>
-      <PageHeader title="Groups & channels" description="Extra rooms in the site chat, next to the lounge and the match rooms. Groups: everyone talks. Channels: only the team posts. Each room has its own joining rule.">
+      <PageHeader title="Groups & channels" description="Rooms in the site chat: the built-in community lounge, plus your own groups and channels next to the match rooms. Groups: everyone talks. Channels: only the team posts. Each room has its own joining rule.">
         <Button onClick={() => setCreating(true)}><Plus />New group or channel</Button>
       </PageHeader>
+      {lounge && (
+        // the built-in main room: always there, not a chat-rooms document
+        <Link href="/admin/groups/lounge" className="mb-4 flex items-center gap-3 rounded-xl border bg-card p-3 transition-colors hover:bg-muted/50">
+          <span className="grid size-10 shrink-0 place-items-center rounded-full bg-[#7DB342] text-white"><Users className="size-5" /></span>
+          <span className="min-w-0 flex-1 leading-tight">
+            <span className="flex items-center gap-2 text-sm font-medium">{lounge.name}<Badge variant="secondary">Built-in</Badge>{lounge.teamOnly && <Badge variant="outline" className="gap-1"><Megaphone className="size-3" />Team posts only</Badge>}</span>
+            <span className="mt-0.5 block text-xs text-muted-foreground">The chat’s main room, open to everyone · {lounge.messages} message{lounge.messages === 1 ? '' : 's'} · chat title, lounge name, texts and who can post</span>
+          </span>
+          <span className="flex items-center gap-1 text-sm text-muted-foreground">Manage<ChevronRight className="size-4" /></span>
+        </Link>
+      )}
       <DataTable columns={cols} data={rows} searchPlaceholder="Search rooms" empty={<EmptyState icon={MessagesSquare} title="No groups or channels yet">Create the first one: an announcements channel, a group per league, a VIP group…</EmptyState>} />
       {creating && <NewGroup onClose={() => setCreating(false)} />}
     </>
@@ -77,7 +94,7 @@ function NewGroup({ onClose }: { onClose: () => void }) {
   const [pending, start] = useTransition()
   const { control, register, handleSubmit, formState } = useForm<GroupForm>({
     resolver: zodResolver(groupSchema),
-    defaultValues: { name: '', description: '', rules: '', kind: 'group', join: 'open', autoAdd: false, active: true, order: 0 },
+    defaultValues: { name: '', description: '', rules: '', kind: 'group', join: 'open', visibility: 'public', preview: true, autoAdd: false, active: true, order: 0, mediaView: 'everyone', mediaSave: true },
   })
   function onSubmit(d: GroupForm) {
     start(async () => {

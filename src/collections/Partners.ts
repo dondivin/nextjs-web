@@ -47,6 +47,22 @@ export const Partners: CollectionConfig = {
               ],
             },
             { name: 'logo', type: 'upload', relationTo: 'media', admin: { description: 'Optional. Only use a logo you have permission to use.' } },
+            { name: 'heroImage', type: 'upload', relationTo: 'media', admin: { description: 'Optional first-screen person picture (cut-out, no background) shown while this partner is selected. Empty = no picture.' } },
+            {
+              name: 'heroMotion', type: 'group', admin: { description: 'How the picture changes when the site switches to this partner (managed on the partner page in the back office).' },
+              fields: [
+                { type: 'row', fields: [
+                  { name: 'style', type: 'select', defaultValue: 'slide', options: ['slide', 'rise', 'fade'], admin: { width: '33%' } },
+                  { name: 'easing', type: 'select', defaultValue: 'soft', options: ['soft', 'smooth', 'expressive', 'linear'], admin: { width: '33%' } },
+                  { name: 'distance', type: 'number', defaultValue: 140, min: 0, max: 400, admin: { width: '33%', description: 'px' } },
+                ] },
+                { type: 'row', fields: [
+                  { name: 'enterMs', type: 'number', defaultValue: 1600, min: 200, max: 5000, admin: { width: '33%', description: 'Arrival, ms' } },
+                  { name: 'exitMs', type: 'number', defaultValue: 900, min: 100, max: 4000, admin: { width: '33%', description: 'Old picture leaving, ms' } },
+                  { name: 'delayMs', type: 'number', defaultValue: 180, min: 0, max: 2000, admin: { width: '33%', description: 'Wait before the new one starts, ms' } },
+                ] },
+              ],
+            },
           ],
         },
         {

@@ -19,7 +19,7 @@ export async function storeAvatar(payload: Payload, file: File, owner: string) {
   try {
     out = await sharp(Buffer.from(await file.arrayBuffer()), { limitInputPixels: 40_000_000, animated: false })
       .rotate()
-      .resize(256, 256, { fit: 'cover', position: 'attention' })
+      .resize(512, 512, { fit: 'cover', position: 'attention' })   // sharp enough to open full size (tap the picture)
       .webp({ quality: 82 })
       .toBuffer()
   } catch {
@@ -51,12 +51,14 @@ export async function prepareChatImage(file: File) {
   if (file.size > CHAT_IMAGE_MAX_BYTES) throw new AvatarError('tooBig')
   if (file.type && !TYPES.includes(file.type)) throw new AvatarError('type')
   try {
-    const { data, info } = await sharp(Buffer.from(await file.arrayBuffer()), { limitInputPixels: 60_000_000, animated: false })
-      .rotate()
+    const src = sharp(Buffer.from(await file.arrayBuffer()), { limitInputPixels: 60_000_000, animated: false }).rotate()
+    const { data, info } = await src.clone()
       .resize(1600, 1600, { fit: 'inside', withoutEnlargement: true })
       .webp({ quality: 80 })
       .toBuffer({ resolveWithObject: true })
-    return { data, w: info.width, h: info.height }
+    // a tiny preview (~1 KB) that travels inside the message: shown blurred until the picture is downloaded
+    const small = await src.clone().resize(32, 32, { fit: 'inside' }).webp({ quality: 40 }).toBuffer()
+    return { data, w: info.width, h: info.height, thumb: 'data:image/webp;base64,' + small.toString('base64') }
   } catch {
     throw new AvatarError('type')
   }
@@ -138,4 +140,57 @@ export async function storeHeroImage(payload: Payload, file: File) {
     file: { data: out, mimetype: 'image/webp', name: `brand-hero-${Date.now()}.webp`, size: out.length },
   })
   return { id: doc.id, transparent }
+}
+
+/**
+ * A chat wallpaper: a photo ("cover") at most 2000 px and under ~450 KB, or a pattern tile ("tile") at most 600 px. WebP.
+ */
+export async function storeWallpaper(payload: Payload, file: File, name: string, mode: 'cover' | 'tile') {
+  if (!file || typeof file.arrayBuffer !== 'function') throw new AvatarError('missing')
+  if (file.size > 8 * 1024 * 1024) throw new AvatarError('tooBig')
+  if (file.type && ![...TYPES, 'image/svg+xml'].includes(file.type)) throw new AvatarError('type')
+  let out: Buffer = Buffer.alloc(0)
+  try {
+    const max = mode === 'tile' ? 600 : 2000
+    const base = await sharp(Buffer.from(await file.arrayBuffer()), { density: 200, limitInputPixels: 60_000_000, animated: false }).rotate()
+      .resize(max, max, { fit: 'inside', withoutEnlargement: true }).png().toBuffer()
+    for (const q of [82, 74, 66, 58, 50]) { out = await sharp(base).webp({ quality: q, effort: 5 }).toBuffer(); if (out.length <= 450 * 1024) break }
+  } catch {
+    throw new AvatarError('type')
+  }
+  const doc = await payload.create({ collection: 'media', overrideAccess: true, data: { alt: 'Wallpaper: ' + name }, file: { data: out, mimetype: 'image/webp', name: `wallpaper-${Date.now()}.webp`, size: out.length } })
+  return { id: doc.id }
+}
+
+/** A sticker for the chat's picture editor: transparent margins trimmed, at most 512 px, WebP with transparency. */
+export async function storeSticker(payload: Payload, file: File, name: string) {
+  const { data: out, w, h } = await prepareSticker(file)
+  const doc = await payload.create({ collection: 'media', overrideAccess: true, data: { alt: 'Sticker: ' + name }, file: { data: out, mimetype: 'image/webp', name: `sticker-${Date.now()}.webp`, size: out.length } })
+  return { id: doc.id, w, h }
+}
+/** Every sticker has the same size: transparent margins trimmed, then centred in a 512 × 512 transparent square (WebP). */
+export const STICKER_PX = 512
+export const STICKER_MAX_BYTES = 100 * 1024
+export async function prepareSticker(file: File) {
+  if (!file || typeof file.arrayBuffer !== 'function') throw new AvatarError('missing')
+  if (file.size > 5 * 1024 * 1024) throw new AvatarError('tooBig')
+  if (file.type && ![...TYPES, 'image/svg+xml'].includes(file.type)) throw new AvatarError('type')
+  let out: Buffer = Buffer.alloc(0), w = 0, h = 0
+  try {
+    let img = sharp(Buffer.from(await file.arrayBuffer()), { density: 300, limitInputPixels: 40_000_000, animated: false }).rotate()
+    const meta = await img.metadata()
+    if (meta.hasAlpha) img = sharp(await img.trim({ threshold: 1 }).toBuffer())
+    const square = await img.resize(STICKER_PX, STICKER_PX, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer()
+    // at most STICKER_MAX_BYTES (like WhatsApp's 100 KB for a sticker): lower the quality step by step until it fits
+    for (const q of [90, 80, 70, 60, 50, 40, 30, 20]) {
+      out = await sharp(square).webp({ quality: q, alphaQuality: q, effort: 5 }).toBuffer()
+      if (out.length <= STICKER_MAX_BYTES) break
+    }
+    // last resort (very noisy pictures): smooth it slightly — still 512 × 512, always under the limit
+    for (let blur = 0.6; out.length > STICKER_MAX_BYTES && blur <= 3; blur += 0.6) out = await sharp(square).blur(blur).webp({ quality: 40, alphaQuality: 40, effort: 6 }).toBuffer()
+    w = STICKER_PX; h = STICKER_PX
+  } catch {
+    throw new AvatarError('type')
+  }
+  return { data: out, w, h }
 }

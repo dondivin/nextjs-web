@@ -2,7 +2,7 @@
 import { revalidatePath } from 'next/cache'
 import { actionUser, payloadClient, run } from '@/backoffice/lib/server'
 
-/** Approve or decline a fan's "forgot password" request. Approving lets the fan's own browser set a new password (48 h). */
+/** Approve or decline a member's "forgot password" request. Approving lets the member's own browser set a new password (48 h). */
 export async function decideReset(id: string, decision: 'approve' | 'deny') {
   return run(async () => {
     const user = await actionUser('moderator')

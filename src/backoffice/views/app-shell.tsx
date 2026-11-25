@@ -8,6 +8,8 @@ import {
   LayoutDashboard, Palette, Trophy, Languages, ShieldAlert, Settings2, MessagesSquare, UserCog, Database,
   ExternalLink, LogOut, Search, Moon, Sun, ChevronsUpDown, Monitor,
   KeyRound, CircleUserRound, Users2, BadgeCheck,
+  UserSearch,
+  Sticker, Wallpaper,
 } from 'lucide-react'
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarInset,
@@ -25,7 +27,7 @@ import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbP
 type ShellUser = { name: string; email: string; roles: string[] }
 type NavItem = { title: string; href: string; icon: React.ComponentType<{ className?: string }>; external?: boolean; badge?: number }
 
-const LABELS: Record<string, string> = { admin: 'Dashboard', partners: 'Partners', translations: 'Translations', moderation: 'Moderation', resets: 'Password resets', profile: 'Chat profile', matches: 'Matches', settings: 'Settings', site: 'Site', chat: 'Chat', team: 'Team accounts', account: 'My account', groups: 'Groups & channels', roles: 'Member roles' }
+const LABELS: Record<string, string> = { admin: 'Dashboard', partners: 'Partners', translations: 'Translations', moderation: 'Moderation', resets: 'Password resets', profile: 'Chat profile', matches: 'Matches', settings: 'Settings', site: 'Site', chat: 'Chat', team: 'Team accounts', account: 'My account', groups: 'Groups & channels', roles: 'Member roles', members: 'Members', lounge: 'Community lounge', stickers: 'Stickers', wallpapers: 'Wallpapers' }
 
 export function AppShell({ user, openReports, pendingResets = 0, partners, brand, children }: { user: ShellUser; openReports: number; pendingResets?: number; brand?: { logoUrl: string | null; siteName: string }; partners: { id: string; name: string }[]; children: React.ReactNode }) {
   const pathname = usePathname()
@@ -45,8 +47,11 @@ export function AppShell({ user, openReports, pendingResets = 0, partners, brand
     {
       label: 'Community',
       items: [
+        { title: 'Members', href: '/admin/members', icon: UserSearch },
         { title: 'Moderation', href: '/admin/moderation', icon: ShieldAlert, badge: openReports },
         { title: 'Groups & channels', href: '/admin/groups', icon: Users2 },
+        { title: 'Stickers', href: '/admin/stickers', icon: Sticker },
+        { title: 'Wallpapers', href: '/admin/wallpapers', icon: Wallpaper },
         { title: 'Member roles', href: '/admin/roles', icon: BadgeCheck },
         { title: 'Password resets', href: '/admin/resets', icon: KeyRound, badge: pendingResets },
         { title: 'My chat profile', href: '/admin/profile', icon: CircleUserRound },
@@ -81,7 +86,7 @@ export function AppShell({ user, openReports, pendingResets = 0, partners, brand
   }
 
   const segs = pathname.split('/').filter(Boolean)
-  const crumbs = segs.map((s, i) => ({ href: '/' + segs.slice(0, i + 1).join('/'), label: LABELS[s] || partners.find((p) => p.id === s)?.name || s }))
+  const crumbs = segs.map((s, i) => ({ href: '/' + segs.slice(0, i + 1).join('/'), label: LABELS[s] || partners.find((p) => p.id === s)?.name || (/^[a-f0-9]{24}$/.test(s) ? 'Details' : s) }))
   const initials = (user.name || user.email).split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase()).join('')
 
   return (

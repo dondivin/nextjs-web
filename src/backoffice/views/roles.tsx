@@ -26,7 +26,7 @@ export type RoleRow = RoleForm & { id: string; members: number }
 const RIGHTS: { key: keyof RoleForm; label: string; hint: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { key: 'createGroups', label: 'Create groups', hint: 'Make groups from the chat and manage them (members, co-admins, settings)', icon: MessagesSquare },
   { key: 'createChannels', label: 'Create channels', hint: 'Make channels where only they and their co-admins post', icon: Megaphone },
-  { key: 'sendPictures', label: 'Send pictures', hint: 'Pictures in the lounge, match rooms and groups (everyone can send pictures to the partner team)', icon: ImageIcon },
+  { key: 'sendPictures', label: 'Send pictures & voice messages', hint: 'In the lounge, match rooms and groups (everyone can send them to the partner team; voice messages also in private chats)', icon: ImageIcon },
   { key: 'privateChats', label: 'Private chats', hint: 'Send chat requests to other members', icon: MessageCircle },
   { key: 'showBadge', label: 'Show a badge', hint: 'The role name appears next to their name in the chat, in the role colour', icon: BadgeCheck },
 ]

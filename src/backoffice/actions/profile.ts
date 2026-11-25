@@ -13,10 +13,10 @@ export async function saveChatProfile(fd: FormData) {
     const payload = await payloadClient()
     const name = String(fd.get('name') || '').trim().replace(/\s+/g, ' ')
     if (!NAME_RE.test(name)) throw new Error('Use 2 to 24 letters or numbers (spaces, dots, dashes and _ are fine inside).')
-    // don't take a fan's username or another team member's name
+    // don't take a member's username or another team member's name
     const key = name.toLowerCase()
-    const fan = await payload.count({ collection: 'members', where: { nameKey: { equals: key } }, overrideAccess: true })
-    if (fan.totalDocs) throw new Error('A fan already uses that name in the chat. Pick another one.')
+    const taken = await payload.count({ collection: 'members', where: { nameKey: { equals: key } }, overrideAccess: true })
+    if (taken.totalDocs) throw new Error('A member already uses that name in the chat. Pick another one.')
     const staff = await payload.find({ collection: 'users', pagination: false, depth: 0, select: { name: true } })
     if (staff.docs.some((u) => String(u.id) !== String(user.id) && (u.name || '').trim().toLowerCase() === key)) throw new Error('Another team member already uses that name.')
 
@@ -43,7 +43,7 @@ export async function saveChatProfile(fd: FormData) {
   })
 }
 
-/** Moderation: take down a fan's profile photo (their gradient is shown instead). */
+/** Moderation: take down a member's profile photo (their gradient is shown instead). */
 export async function removeMemberPhoto(id: string) {
   return run(async () => {
     await actionUser('moderator')
@@ -52,6 +52,6 @@ export async function removeMemberPhoto(id: string) {
     if (!m.avatar) return
     await payload.update({ collection: 'members', id, data: { avatar: null }, overrideAccess: true })
     await dropMedia(payload, m.avatar)
-    revalidatePath('/admin/moderation')
+    revalidatePath('/admin/moderation'); revalidatePath('/admin/members', 'layout')
   })
 }

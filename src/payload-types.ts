@@ -83,6 +83,12 @@ export interface Config {
     'chat-rooms': ChatRoom;
     'chat-room-members': ChatRoomMember;
     'member-roles': MemberRole;
+    'chat-receipts': ChatReceipt;
+    'chat-voice': ChatVoice;
+    stickers: Sticker;
+    'member-stickers': MemberSticker;
+    wallpapers: Wallpaper;
+    'chat-keys': ChatKey;
     'payload-kv': PayloadKv;
     'payload-locked-documents': PayloadLockedDocument;
     'payload-preferences': PayloadPreference;
@@ -105,6 +111,12 @@ export interface Config {
     'chat-rooms': ChatRoomsSelect<false> | ChatRoomsSelect<true>;
     'chat-room-members': ChatRoomMembersSelect<false> | ChatRoomMembersSelect<true>;
     'member-roles': MemberRolesSelect<false> | MemberRolesSelect<true>;
+    'chat-receipts': ChatReceiptsSelect<false> | ChatReceiptsSelect<true>;
+    'chat-voice': ChatVoiceSelect<false> | ChatVoiceSelect<true>;
+    stickers: StickersSelect<false> | StickersSelect<true>;
+    'member-stickers': MemberStickersSelect<false> | MemberStickersSelect<true>;
+    wallpapers: WallpapersSelect<false> | WallpapersSelect<true>;
+    'chat-keys': ChatKeysSelect<false> | ChatKeysSelect<true>;
     'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
     'payload-preferences': PayloadPreferencesSelect<false> | PayloadPreferencesSelect<true>;
@@ -274,6 +286,33 @@ export interface Partner {
    * Optional. Only use a logo you have permission to use.
    */
   logo?: (string | null) | Media;
+  /**
+   * Optional first-screen person picture (cut-out, no background) shown while this partner is selected. Empty = no picture.
+   */
+  heroImage?: (string | null) | Media;
+  /**
+   * How the picture changes when the site switches to this partner (managed on the partner page in the back office).
+   */
+  heroMotion?: {
+    style?: ('slide' | 'rise' | 'fade') | null;
+    easing?: ('soft' | 'smooth' | 'expressive' | 'linear') | null;
+    /**
+     * px
+     */
+    distance?: number | null;
+    /**
+     * Arrival, ms
+     */
+    enterMs?: number | null;
+    /**
+     * Old picture leaving, ms
+     */
+    exitMs?: number | null;
+    /**
+     * Wait before the new one starts, ms
+     */
+    delayMs?: number | null;
+  };
   colors: {
     /**
      * Darkest background
@@ -524,7 +563,7 @@ export interface ChatMessage {
   id: string;
   room: string;
   /**
-   * Fan who wrote it (empty for staff messages)
+   * Member who wrote it (empty for team messages)
    */
   author?: (string | null) | Member;
   /**
@@ -537,12 +576,29 @@ export interface ChatMessage {
    */
   text?: string | null;
   image?: (string | null) | ChatImage;
+  voice?: (string | null) | ChatVoice;
+  /**
+   * Its picture / voice message was removed by the media clean-up (Chat settings)
+   */
+  mediaExpired?: ('photo' | 'voice') | null;
   isMod?: boolean | null;
   reply?: {
-    id?: string | null;
+    msgId?: string | null;
+    /**
+     * What was quoted, when it was a picture / voice message
+     */
+    kind?: ('photo' | 'voice') | null;
+    /**
+     * Tiny preview of a quoted picture (data URL)
+     */
+    thumb?: string | null;
+    /**
+     * Length of a quoted voice message (s)
+     */
+    dur?: number | null;
     author?: (string | null) | Member;
     /**
-     * Chat id of the quoted author (fan or staff)
+     * Chat id of the quoted author (member or team)
      */
     by?: string | null;
     text?: string | null;
@@ -572,6 +628,46 @@ export interface ChatMessage {
 export interface ChatImage {
   id: string;
   room: string;
+  /**
+   * Tiny blurred preview (data URL, ~1 KB) shown before the picture is downloaded
+   */
+  thumb?: string | null;
+  _objectKey?: string | null;
+  updatedAt: string;
+  createdAt: string;
+  url?: string | null;
+  thumbnailURL?: string | null;
+  filename?: string | null;
+  mimeType?: string | null;
+  filesize?: number | null;
+  width?: number | null;
+  height?: number | null;
+  focalX?: number | null;
+  focalY?: number | null;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "chat-voice".
+ */
+export interface ChatVoice {
+  id: string;
+  room: string;
+  /**
+   * Seconds
+   */
+  duration?: number | null;
+  /**
+   * Waveform: 40 levels 0–100, measured while recording
+   */
+  peaks?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
   _objectKey?: string | null;
   updatedAt: string;
   createdAt: string;
@@ -593,7 +689,7 @@ export interface ChatReport {
   id: string;
   message: string | ChatMessage;
   /**
-   * Snapshot of the text when it was reported
+   * Snapshot of the text when it was reported (encrypted with the conversation’s key)
    */
   messageText?: string | null;
   messageAuthor?: (string | null) | Member;
@@ -663,6 +759,18 @@ export interface ChatRequest {
  */
 export interface ChatRoom {
   id: string;
+  /**
+   * Invite link token (managed from the room page / the chat)
+   */
+  inviteToken?: string | null;
+  /**
+   * Who can see pictures and voice messages (members = people who joined). The team always can.
+   */
+  mediaView?: ('everyone' | 'members' | 'team' | 'none') | null;
+  /**
+   * Allow saving them (screenshots can never be prevented)
+   */
+  mediaSave?: boolean | null;
   name: string;
   description?: string | null;
   /**
@@ -671,6 +779,11 @@ export interface ChatRoom {
   rules?: string | null;
   kind: 'group' | 'channel';
   join: 'open' | 'request' | 'invite';
+  visibility?: ('public' | 'members' | 'hidden') | null;
+  /**
+   * Non-members who can see the room can read it before joining
+   */
+  preview?: boolean | null;
   /**
    * Add every new account automatically
    */
@@ -679,6 +792,10 @@ export interface ChatRoom {
    * Room picture colours
    */
   gradient?: string | null;
+  /**
+   * Room picture (square, shown instead of the colours)
+   */
+  photo?: (string | null) | Media;
   /**
    * Off = archived: hidden from the chat, messages kept
    */
@@ -709,6 +826,92 @@ export interface ChatRoomMember {
    * Room admin: manages the room from the chat (and posts in a channel)
    */
   admin?: boolean | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "chat-receipts".
+ */
+export interface ChatReceipt {
+  id: string;
+  key: string;
+  room: string;
+  reader: string;
+  delivered?: number | null;
+  read?: number | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "stickers".
+ */
+export interface Sticker {
+  id: string;
+  name: string;
+  image: string | Media;
+  /**
+   * Shown in the sticker tray
+   */
+  active?: boolean | null;
+  order?: number | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "member-stickers".
+ */
+export interface MemberSticker {
+  id: string;
+  owner: string;
+  _objectKey?: string | null;
+  updatedAt: string;
+  createdAt: string;
+  url?: string | null;
+  thumbnailURL?: string | null;
+  filename?: string | null;
+  mimeType?: string | null;
+  filesize?: number | null;
+  width?: number | null;
+  height?: number | null;
+  focalX?: number | null;
+  focalY?: number | null;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "wallpapers".
+ */
+export interface Wallpaper {
+  id: string;
+  name: string;
+  image: string | Media;
+  mode: 'cover' | 'tile';
+  /**
+   * Darken / lighten it with the theme’s background colour (%) so messages stay readable
+   */
+  dim?: number | null;
+  /**
+   * Offered in the chat
+   */
+  active?: boolean | null;
+  order?: number | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "chat-keys".
+ */
+export interface ChatKey {
+  id: string;
+  room: string;
+  wrapped: string;
+  /**
+   * Fingerprint of the master key that locked it
+   */
+  kv?: string | null;
   updatedAt: string;
   createdAt: string;
 }
@@ -795,6 +998,30 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'member-roles';
         value: string | MemberRole;
+      } | null)
+    | ({
+        relationTo: 'chat-receipts';
+        value: string | ChatReceipt;
+      } | null)
+    | ({
+        relationTo: 'chat-voice';
+        value: string | ChatVoice;
+      } | null)
+    | ({
+        relationTo: 'stickers';
+        value: string | Sticker;
+      } | null)
+    | ({
+        relationTo: 'member-stickers';
+        value: string | MemberSticker;
+      } | null)
+    | ({
+        relationTo: 'wallpapers';
+        value: string | Wallpaper;
+      } | null)
+    | ({
+        relationTo: 'chat-keys';
+        value: string | ChatKey;
       } | null);
   globalSlug?: string | null;
   user:
@@ -916,6 +1143,17 @@ export interface PartnersSelect<T extends boolean = true> {
         id?: T;
       };
   logo?: T;
+  heroImage?: T;
+  heroMotion?:
+    | T
+    | {
+        style?: T;
+        easing?: T;
+        distance?: T;
+        enterMs?: T;
+        exitMs?: T;
+        delayMs?: T;
+      };
   colors?:
     | T
     | {
@@ -1039,11 +1277,16 @@ export interface ChatMessagesSelect<T extends boolean = true> {
   clientId?: T;
   text?: T;
   image?: T;
+  voice?: T;
+  mediaExpired?: T;
   isMod?: T;
   reply?:
     | T
     | {
-        id?: T;
+        msgId?: T;
+        kind?: T;
+        thumb?: T;
+        dur?: T;
         author?: T;
         by?: T;
         text?: T;
@@ -1097,6 +1340,7 @@ export interface PasswordResetsSelect<T extends boolean = true> {
  */
 export interface ChatImagesSelect<T extends boolean = true> {
   room?: T;
+  thumb?: T;
   _objectKey?: T;
   updatedAt?: T;
   createdAt?: T;
@@ -1130,13 +1374,19 @@ export interface ChatRequestsSelect<T extends boolean = true> {
  * via the `definition` "chat-rooms_select".
  */
 export interface ChatRoomsSelect<T extends boolean = true> {
+  inviteToken?: T;
+  mediaView?: T;
+  mediaSave?: T;
   name?: T;
   description?: T;
   rules?: T;
   kind?: T;
   join?: T;
+  visibility?: T;
+  preview?: T;
   autoAdd?: T;
   gradient?: T;
+  photo?: T;
   active?: T;
   order?: T;
   createdBy?: T;
@@ -1173,6 +1423,96 @@ export interface MemberRolesSelect<T extends boolean = true> {
   sendPictures?: T;
   privateChats?: T;
   showBadge?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "chat-receipts_select".
+ */
+export interface ChatReceiptsSelect<T extends boolean = true> {
+  key?: T;
+  room?: T;
+  reader?: T;
+  delivered?: T;
+  read?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "chat-voice_select".
+ */
+export interface ChatVoiceSelect<T extends boolean = true> {
+  room?: T;
+  duration?: T;
+  peaks?: T;
+  _objectKey?: T;
+  updatedAt?: T;
+  createdAt?: T;
+  url?: T;
+  thumbnailURL?: T;
+  filename?: T;
+  mimeType?: T;
+  filesize?: T;
+  width?: T;
+  height?: T;
+  focalX?: T;
+  focalY?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "stickers_select".
+ */
+export interface StickersSelect<T extends boolean = true> {
+  name?: T;
+  image?: T;
+  active?: T;
+  order?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "member-stickers_select".
+ */
+export interface MemberStickersSelect<T extends boolean = true> {
+  owner?: T;
+  _objectKey?: T;
+  updatedAt?: T;
+  createdAt?: T;
+  url?: T;
+  thumbnailURL?: T;
+  filename?: T;
+  mimeType?: T;
+  filesize?: T;
+  width?: T;
+  height?: T;
+  focalX?: T;
+  focalY?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "wallpapers_select".
+ */
+export interface WallpapersSelect<T extends boolean = true> {
+  name?: T;
+  image?: T;
+  mode?: T;
+  dim?: T;
+  active?: T;
+  order?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "chat-keys_select".
+ */
+export interface ChatKeysSelect<T extends boolean = true> {
+  room?: T;
+  wrapped?: T;
+  kv?: T;
   updatedAt?: T;
   createdAt?: T;
 }
@@ -1255,9 +1595,6 @@ export interface SiteSetting {
    * Square logo (stored as 512×512 PNG). Used in the nav, chat, back office, browser tab, home-screen icon and search engines.
    */
   logo?: (string | null) | Media;
-  /**
-   * Big cut-out picture of a person (no background) on the left of the first screen, in front of the headline.
-   */
   heroImage?: (string | null) | Media;
   /**
    * Optional 1200×630 image for link previews (WhatsApp, Facebook, X…). Without it one is made from the logo.
@@ -1291,6 +1628,14 @@ export interface ChatSetting {
    */
   maxLength?: number | null;
   /**
+   * Longest voice message (seconds)
+   */
+  voiceMaxSeconds?: number | null;
+  /**
+   * Delete chat pictures and voice messages older than this many days (0 = keep forever). Messages stay, marked as expired.
+   */
+  mediaRetentionDays?: number | null;
+  /**
    * Shown in the house rules sheet. Members must accept them before posting.
    */
   rules?:
@@ -1319,6 +1664,60 @@ export interface ChatSetting {
         id?: string | null;
       }[]
     | null;
+  /**
+   * The chat’s main room. Empty texts use the default wording (Translations).
+   */
+  lounge?: {
+    /**
+     * One row per language (use the language code, e.g. en, fr).
+     */
+    chatTitle?:
+      | {
+          locale: string;
+          value?: string | null;
+          id?: string | null;
+        }[]
+      | null;
+    /**
+     * One row per language (use the language code, e.g. en, fr).
+     */
+    name?:
+      | {
+          locale: string;
+          value?: string | null;
+          id?: string | null;
+        }[]
+      | null;
+    /**
+     * One row per language (use the language code, e.g. en, fr).
+     */
+    subtitle?:
+      | {
+          locale: string;
+          value?: string | null;
+          id?: string | null;
+        }[]
+      | null;
+    /**
+     * One row per language (use the language code, e.g. en, fr).
+     */
+    description?:
+      | {
+          locale: string;
+          value?: string | null;
+          id?: string | null;
+        }[]
+      | null;
+    postBy?: ('everyone' | 'team') | null;
+    /**
+     * Who can see pictures and voice messages (members = signed-in accounts). The team always can.
+     */
+    mediaView?: ('everyone' | 'members' | 'team' | 'none') | null;
+    /**
+     * Allow saving them (screenshots can never be prevented)
+     */
+    mediaSave?: boolean | null;
+  };
   /**
    * Messages containing these (also with l33t spelling like 1d10t) are blocked.
    */
@@ -1374,6 +1773,8 @@ export interface SiteSettingsSelect<T extends boolean = true> {
 export interface ChatSettingsSelect<T extends boolean = true> {
   slowModeSeconds?: T;
   maxLength?: T;
+  voiceMaxSeconds?: T;
+  mediaRetentionDays?: T;
   rules?:
     | T
     | {
@@ -1393,6 +1794,41 @@ export interface ChatSettingsSelect<T extends boolean = true> {
               id?: T;
             };
         id?: T;
+      };
+  lounge?:
+    | T
+    | {
+        chatTitle?:
+          | T
+          | {
+              locale?: T;
+              value?: T;
+              id?: T;
+            };
+        name?:
+          | T
+          | {
+              locale?: T;
+              value?: T;
+              id?: T;
+            };
+        subtitle?:
+          | T
+          | {
+              locale?: T;
+              value?: T;
+              id?: T;
+            };
+        description?:
+          | T
+          | {
+              locale?: T;
+              value?: T;
+              id?: T;
+            };
+        postBy?: T;
+        mediaView?: T;
+        mediaSave?: T;
       };
   bannedWords?:
     | T

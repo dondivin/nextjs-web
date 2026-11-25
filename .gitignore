@@ -49,3 +49,6 @@ node_modules/
 /blob-report/
 /playwright/.cache/
 /.playwright-mcp/
+
+# database snapshots (pnpm data:export): accounts, e-mails, password hashes, private messages — never commit
+/seed-data/

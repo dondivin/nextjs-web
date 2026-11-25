@@ -302,3 +302,687 @@ See `docs/HANDOFF.md` §4.
   and closing (tap, ✕, Escape) shrinks it back into the re-measured bubble; if the bubble scrolled away it fades/scales out.
   Drag down/up to close (follows the finger, background fades; < 110 px springs back). Reduced motion: instant. Resize-aware.
   Verified: frame measured at bubble → 694×582 → 817×685 → 859×720 and back to the bubble; drag-to-close.
+
+### 2026-11-24/25 (session 6, later) — member roles: groups & channels made from the chat
+- Owner: "in the chat we can create group or channel based on the rights the account's role has → more roles in the back office".
+  Choices: custom roles; the room owner edits name/description/rules, manages members, names co-admins, archives/deletes; join
+  rules same as the team's (open / request / invite).
+- New collection `member-roles` (rights: create groups, create channels, max rooms owned, send pictures, private chats, show badge;
+  colour; one default). Seed creates a default "Member" role (private chats on, nothing else). `members.role` select replaced by
+  `memberRole`. `chat-rooms.owner` (member) and `chat-room-members.admin` (co-admin) added.
+- Server: rights resolved per connection (`permsOf`, cached 30 s; the team has everything). `hello` carries `perms`. New actions
+  `room-create` (rights per kind, limit on *active* rooms owned), `room-update`, `room-remove` (archive / delete; owner or team),
+  `room-members`, `room-member` (invite / accept / decline / remove / admin / unadmin — co-admin changes owner-only; the owner can't
+  be removed). Channels: owner + co-admins post. Pictures: team, own team chat, or role "send pictures" (not in private chats).
+  Chat requests need "private chats". Role or member-role change → `rolesChanged` event → that chat reconnects with the new rights.
+- Back office: **/admin/roles** (table + editor sheet, badge preview; deleting a role moves its members to the default role),
+  role picker in Moderation → Members, groups list shows "Made by", room page shows Owner / Co-admin and Make / Remove admin.
+- Chat: "+" button in the sidebar (only when the role allows), room sheet (#roomSheet) with Settings (name, description, kind
+  limited by rights, who can join, rules, Archive / Delete for the owner) and Members (invite by username, accept / decline
+  requests, co-admins, remove, cancel invites); gear in the room header for owner / co-admins / team; role badge (role colour) next
+  to names; member-owned channels say "Only the admins of this channel post here"; "1 member" singular.
+- Verified via API: rights per role (default role refused, limit reached, wrong kind refused), request → accept, co-admin posting
+  in a channel, co-admin can't change admins or the kind, only the owner archives. Browser: create sheet + limit error, gear,
+  Members tab (Owner / Co-admin labels), badge seen by another member, co-admin gets the gear, default role has no "+", archive →
+  back to the lounge. The create → invite run in the browser was cut short (dev server stopped); test data removed.
+- Not verified: live `rolesChanged` from the back office (needs a staff login), back-office roles pages signed in.
+
+### 2026-11-25 — no "fan" / league framing
+- Owner: the site is a betting-affiliate platform (partner codes, bonuses, odds, community chat), not a fan club; remove every
+  "fan" and league-flavoured wording (listing matches and odds stays).
+- Site texts (code seed + DB, hand-edited DB values left alone): room name placeholder "e.g. Bonus codes", responsible-play tip
+  "Set your limit before you bet", ticker "Loading live odds" / "Odds board below", phone label "Live odds"; unused `chat.fan`
+  deleted; `phone.fanChat` renamed `phone.communityChat`.
+- Back office: every "fan(s)" → "member(s)" (dashboard, moderation fallback name, chat profile, site/chat settings, password
+  resets, team-account roles, Payload field labels); match editor "Kick-off" → "Start time", league placeholder → "Competition";
+  group name placeholder "e.g. VIP bonus group"; SEO description example rewritten around partner codes, odds and the chat.
+- Code comments use "member" too. Audit of DB texts, partners, rooms, roles, matches and settings: no fan / league wording left.
+
+### 2026-11-25 — first-screen picture per partner
+- Owner: one person picture per partner instead of one for the whole site.
+- `partners.heroImage` (media, same processing as the site picture: cut-out check, trim, WebP ≤ 1800 px). Site settings →
+  First screen picture is now the default for partners without their own.
+- Back office: partner page → "First screen picture" card (saved immediately, the default shows faded when empty; action
+  `setPartnerHero`; deleting a partner deletes its picture). The uploader is shared: `src/backoffice/views/brand-image.tsx`
+  (BrandImage + LogoMark, moved out of site-settings.tsx).
+- Site: `EnginePartner.hero` + `EngineConfig.heroDefault`; the server renders the first partner's picture (the `<img>` is always
+  there, hidden, when any picture exists). Switching partner: picture fades down, the new file is decoded first, then rises in;
+  same file → nothing happens; no picture → hidden. Other partners' pictures preload when the visitor reaches the switcher.
+- Verified in the browser with a temporary picture on 888STARZ: swap to it, back to the default on Melbet (fade measured), no
+  errors; temporary picture removed.
+- Follow-up (owner: "never just change it, smooth with motion"): real crossover instead of fade-out-then-in. The new picture is
+  decoded first (old one stays, 4 s cap), then both overlap: the old drifts out (−46 px towards where you came from, scale .96,
+  .55 s) while the new slides in from the side you switched towards (70 px, scale 1.04 → 1, 1.05 s expo-out). Direction follows
+  the switcher order. Fast double switches cancel cleanly (no leftover copies). First load on another partner than the server's
+  default: the picture stays invisible until the right file is loaded, then rises in (never shows the wrong person). Reduced
+  motion: plain .45 s crossfade. Pictures preload when the page is idle (and on reaching the switcher), so switches start at once.
+  Verified frame by frame both directions, fast switching, first load; temporary picture removed.
+- Correction (owner): (1) no fallback — a partner without its own picture shows no person. The Site settings "First screen
+  picture" card is gone (global field kept hidden so old data isn't lost; `heroDefault` / `Brand.hero` removed); its preview
+  moved to the partner page, drawn in the partner's colours. (2) The sideways slide + scale was not wanted: back to the original
+  vertical motion — old picture sinks 24 px and fades (.38 s), new one rises 40 px → 0 with the page-opening curve
+  cubic-bezier(.16,1,.3,1) over 1.3 s, slight overlap so there's no empty moment, file decoded first (Web Animations API).
+  Verified with the real pictures (1xBet, 888STARZ, Melbet, Betwinner) and "New partner" (none → picture sinks out, nothing shown).
+- Follow-up (owner: "too quick; horizontal, from the side the partner is on"): sideways and unhurried. Picking a partner to the
+  right (or → key, or dragging the phone to the left = next) brings the new picture in from the right while the old one drifts
+  out to the left; the other way round for the left. Old: 110 px + fade over .9 s (ease-in-out). New: from 140 px, 1.6 s soft
+  ease-out cubic-bezier(.22,.61,.36,1), starts .18 s after, fully visible at 85 % of the move. Wrap-around follows the gesture,
+  not the list order. Reduced motion: .6 s crossfade. Verified clicks both ways, arrow keys (wrap), phone drag both ways.
+- Follow-up (owner: "make the motion and timings configurable — per partner"): `partners.heroMotion` {style slide | rise | fade,
+  easing soft | smooth | expressive | linear, enterMs, exitMs, delayMs, distance}; it applies when the site switches TO that
+  partner. Shared definitions + clamping + defaults in `src/lib/hero-motion.ts` (`heroMotionOf`, `heroMotionPlay`); the loader
+  sends `EnginePartner.motion`; the engine's swapHero builds its keyframes from it (reduced motion still forces a short fade).
+  Back office: partner page → First screen picture → "Switch animation" (style toggle, times in seconds, distance, easing,
+  Default button, live preview playing the same keyframes "from left" / "from right", scaled to the preview). Saved with the
+  partner form (zod limits: arrival 0.2–5 s, leaving 0.1–4 s, delay 0–2 s, distance 0–400 px).
+  Verified on the site: Melbet set to Rise / 2 s / 80 px rose from below while Betwinner kept the default slide; reset after.
+  Not verified: the back-office controls and preview signed in (no staff login for Claude).
+- Follow-up (owner: "show it in the preview in real time, and the final result"): both previews now play the switch live.
+  "Switch animation" preview replays by itself ~0.3 s after any setting changes, From left / From right, ▶ replay and a Loop
+  switch (keeps replaying, alternating sides); capped at 560 px so settings + preview fit on screen. The sticky "Live preview"
+  (mini site) now shows the partner's person in the hero — in front of the headline, behind the phone and buttons, like the
+  site — and plays the same switch on changes (▶ replays). Shared: `src/backoffice/lib/hero-switch-play.ts` (keyframes, same as
+  the engine, scaled to the preview width) and `use-hero-switch.ts` (auto-replay on real changes only, loop, direction).
+  Verified on a temporary unauthenticated copy of the partner page (deleted after): changing Style and Arrival time replayed
+  both previews; Loop; no console errors.
+
+### 2026-11-25 — feature section pacing + no screen cut after "back to top"
+- Owner (phone screenshot): too much scroll before the phone starts turning in the features section and before the last
+  progress bar fills; after "back to top" the phone screen changed instantly.
+- Pacing: the hold before each turn was 42 % of a feature's scroll → 16 % on phones, 26 % on desktop (`FACE()`); the section
+  splits into 4 features + a short end hold (`FEAT_UNITS` 4.15, was 4.4 with the last feature stretched ×1.4), so the last bar
+  fills before the section ends; phones: `.features` 330vh (was 420vh). Measured at 390×844: turning starts ≈0.15 screen into
+  the section, one feature ≈0.77 screen, last bar full ≈0.1 screen before the end.
+- Screen changes never cut while the phone faces you: `wantScreen()` swaps directly only when the back/edge faces you (as during
+  scroll turns); otherwise `turnToScreen()` turns the phone once and swaps at the half turn. Used after back-to-top / nav jumps
+  (waits for the jump and the settle blend), and for the feature / tail screens. Verified: back to top from the odds board →
+  arrives, settles, one 1.25 s turn, home screen; no console errors.
+- Follow-up (owner: "still too much scroll; the last one must rotate too"): `.features` 330vh desktop / 260vh phones (≈2.3
+  screens of scroll on both, was 3.2), hold before each turn 8 % phones / 14 % desktop, `FEAT_UNITS` 4.08. The 4th feature now
+  turns once as well (4 turns in all; after the section the target stays at 4 turns, so nothing unwinds). Measured at 390×844:
+  ≈0.56 screen per feature, turning starts right away, 4th turn completes as its bar fills; same 4.00 turns past the section
+  on desktop and phone.
+- Owner idea (phones): "instead of rotating in the same place, make the phone rotate and go down to the next part" — the
+  features section on phones (same query as the 3D phone: ≤760px or portrait ≤1100px) is no longer pinned. The 4 callouts are
+  stacked blocks in reading order (0-3), each with an empty slot (`--fslot` 56svh) at its top for the phone, text below.
+  Engine: `flowInfo()` finds the block being left and the travel progress; the phone rides up with that block, then glides
+  DOWN to the next block's slot while turning once (smoothstep, `flowEase`), landing facing you with the new screen as that
+  block reaches the rest line (`FLOW_R` 35 % of the screen); after the last block it rests there and the tail behaviour
+  continues (3 turns in the section, no extra spin). `poseB()` on phones = the first block's slot, and the hero's smoothed
+  scroll pose is blended into the block pose over the end of that animation, so nothing jumps. Text and title sit above the
+  canvas on phones (z 4), so the gliding phone passes behind the words. All blocks are visible; each plays its reveal once;
+  dots hidden. Desktop and landscape tablets keep the pinned version (verified: sticky, 4 turns).
+  Verified at 390×844: phone centre rides 295 → ~210 px, glides down to ~380 px turning, settles at 295; turns 0→1→2→3; no
+  console errors over a full-page scroll.
+- Follow-up (owner: "keep the same rhythm when scrolling fast"): the phone's scroll turn no longer follows the scroll 1:1.
+  `steady()` eases after the target with a speed limit: max one turn per 0.8 s (`SPIN_SEC`), a little faster when several
+  turns are owed (+35 % per extra turn) so a hard flick catches up in ~2 s instead of spinning on; screens still change at
+  the half turns. Used for the features spin (desktop + phones), the turn per section below the features (`tailU`, its screen
+  follows the smoothed value) and the phone's place in the phone layout (`flowY`: eased, ≤ 2.4 screens/s). During back-to-top /
+  nav jumps it just follows (the phone is held still then), so nothing is owed afterwards.
+  Measured: normal flick → steady 1.25 turns/s; flick of 3 turns → ~2 turns/s easing to 1.25, done in ~2 s, no jumps; desktop same.
+- Follow-up (owner: "from section 2 it only rotates vertically; at the start it moves in all angles"): scroll turns are no longer
+  a flat spin around the vertical axis. Mid-turn the phone also tips (rx), leans (rz) and drifts sideways (x), peaking at the
+  half turn and back to 0 when facing; the mix changes every turn (`TUMBLE`, 5 variants, cycling; sideways drift ×0.45 on
+  phones). Phones: each stop also has its own resting angle, alternating sides (`STANCE`, ry ±0.24–0.30 with a small rz),
+  blended in from the hero (× the hand-over factor), so it never stands flat. Desktop keeps its lean towards the active callout.
+  Applies to the features and to the turns below them. Verified visually (rest angles alternate, diagonal tumble mid-turn),
+  no console errors on phone or desktop.
+
+### 2026-11-25 — sheets scroll with the mouse wheel
+- Owner: the "New group or channel" sheet could not be scrolled. Cause: Lenis (page smooth scroll) took every wheel event, so
+  scrollable boxes inside the page didn't scroll. Lenis now runs with `allowNestedScroll: true` and `prevent` for `.sheet`,
+  `.sheet-wrap` and `#messenger`, so every sheet (room, auth, rules, theme, person) and the chat scroll natively; the page keeps
+  its smooth scroll. Verified: wheel over a tall room sheet scrolled it (0 → 1000 px), the page still smooth-scrolls.
+- The new-room intro said "up to ∞ rooms" for team accounts: the team now gets `rooms.newIntroTeam` (no limit sentence).
+
+### 2026-11-25 — the Community lounge is managed in the back office
+- Owner: "Communauté" (the chat's main room / title) wasn't managed anywhere. The lounge is a built-in room (not a chat-rooms
+  doc); its texts only existed as translation keys. Now: Chat settings global → `lounge` group {chatTitle, name, subtitle,
+  description (all per language), postBy everyone | team}.
+- Back office: Groups & channels starts with a "Community lounge · Built-in" entry → `/admin/groups/lounge` (moderators):
+  chat title (the big "Communauté" at the top of the chat + tab), lounge name, subtitle, description (empty = default wording,
+  shown as grey placeholders per language), who can post, live preview (room list + header). Action `saveLounge`.
+  `LocalizedInput` gained `placeholders` (per language) and `optional` (no "missing" dot).
+- Site: `loadSite` swaps in the texts written for that language (`chat.title`, `chat.lounge`, `chat.loungeSub`, `lounge.info`,
+  `chat.loungeHint`); team-only lounge → subtitle "Announcements · the team posts" unless one is written, members get the gate
+  "Only the team posts in the lounge. You can react to messages." and the server refuses their messages (`chat.err.loungeTeam`).
+- Verified: French override shown in /fr only (English kept default), member blocked in team-only mode (API + gate), editor
+  rendered on a temporary unauthenticated copy (deleted). Test data reset, test account removed.
+- Image viewer: the full-size picture kept 12 px rounded corners. Now it opens from the bubble's own radius to 0 (square)
+  at full size, also after a window resize; corners round again only while it shrinks back / is dragged away. Verified:
+  radius 12 → 5 → 1.7 → 0 px during the opening, 0 at full size.
+
+### 2026-11-25 — Members: every registered account in one place
+- Owner: no menu to see all registered accounts and manage them (ban, delete, demote/promote, reset password…). The only list
+  was a tab inside Moderation (mute/ban/role).
+- New nav item **Members** (Community, `/admin/members`, moderators): stats (accounts, online now, new this week, muted or
+  banned), search by username / e-mail, filters (All / Online / Active / Muted / Banned, by role), columns member (avatar,
+  online dot) · role picker (promote / demote) · status · messages · last seen ("Online now" from the live hub) · joined;
+  row menu: open profile, unmute / lift ban, mute (1 h · 24 h · 7 days · until unmuted), ban (confirm), reset password,
+  remove photo, delete account.
+- Member page `/admin/members/[id]`: header (status, role badge, online / last seen, joined) with Reset password · Ban / Lift
+  ban · Delete; Account (username, e-mail, private team note → `saveMemberDetails`, same username rules as sign-up, unique,
+  team names reserved), Role (with its rights spelled out), Posting (unmute / mute durations), counters (messages, reports,
+  rooms made), groups & channels (owner / co-admin / member / asked / invited), private chats (with whom, status; messages stay
+  private), last 30 public messages with Remove / Restore, house-rules acceptance, banner when a reset request is open.
+- `src/backoffice/actions/members.ts`: `setTemporaryPassword` (12-character code shown once to copy; settles open reset
+  requests), `deleteMemberAccount` (type the username to confirm; optionally deletes their messages, otherwise they stay as
+  "Deleted account"; removes memberships, chat requests, reset requests; rooms they owned become team rooms; photo removed).
+  Shared dialogs in `member-dialogs.tsx`. Moderation → Members tab now points to the new page.
+- Verified: list + member page rendered on temporary unauthenticated copies (deleted), filters work; the password update logs
+  in with the new password and rejects the old one; the delete steps leave nothing behind. Test accounts removed. Not verified
+  signed in (no staff login for Claude): the buttons themselves.
+
+### 2026-11-25 — delivered / read receipts
+- Owner: messages didn't show whether they reached the other person or were read. One-to-one chats (member ↔ member private
+  chats, member ↔ team direct chat) now show WhatsApp-style ticks on your own messages: clock = sending · ✓ = sent (saved) ·
+  ✓✓ = delivered (reached the other side's device) · ✓✓ in the theme's tick colour = seen. Lounge / match rooms / groups keep
+  the single ✓ (read receipts with many readers would be noise). Sent / delivered ticks use the muted time colour.
+- New collection `chat-receipts` (one doc per stored room + reader: `delivered` / `read` message timestamps, only moving
+  forward; reader = member id, or 'team' — any team member counts for the team side). Action `receipt` (batched items
+  {room, kind delivered|read, ts}; private chats must be accepted); the other side gets a live `receipt` event; `hello`
+  carries the receipts that matter to the viewer.
+- Browser: the adapter reports delivered for everything loaded on connect, for live messages and for team threads when
+  loaded; the engine reports read while a one-to-one conversation is actually on screen (tab visible, chat open, conversation
+  showing on phones; also on tab focus). Deleting an account removes its receipts.
+- Verified live with two accounts: A writes while B is away → "Sent" (✓); B opens the site → "Delivered" (✓✓); B opens the
+  conversation → "Seen" (✓✓ coloured). Not verified: the team side of a direct chat (no staff login for Claude); same code path.
+  Test accounts and their receipts removed.
+- Follow-up (owner: "no real time; sometimes I can send, sometimes not; why the 5-second countdown?"):
+  - The countdown was slow mode (Chat settings → Limits, 5 s). The browser applied it to everyone, the team included, and in
+    one-to-one chats; the "same text again within 2 minutes" rule did too. Now: the team is never slowed or blocked by the
+    browser's anti-spam rules (matches the server); slow mode and the repeat rule only apply to members in shared rooms
+    (lounge, match rooms, groups), never in private chats or the chat with the team (server too). Owner finds slow mode
+    unnecessary → set to 0 (off) in the database and 0 is now the default everywhere; it can be turned back on in Chat settings.
+  - Other "can't send" cause seen: the lounge is in "team only" mode (set from the Community lounge page).
+  - Real time measured with two members: message arrives in ~0.1 s; ✓✓ Delivered ~0.4 s (other side has the site open, chat
+    closed); Seen ~0.2 s when both are in the conversation, ~1.4 s after the other opens it (page load included). Receipt
+    bundling delay cut from 0.6 s to 0.12 s (read) / 0.35 s (delivered). Pages opened before an update keep the old code until
+    reloaded. Team side of the direct chat still untested (no staff login). Test accounts removed.
+- Follow-up (owner: "Delivered and Seen look the same in the first theme; we can't see the status of our own messages"):
+  measured every theme — Seen vs Delivered differed only by a little opacity (OddsClub, iMessage, Messenger, Signal) or not at
+  all (Telegram, Discord), so the status was effectively invisible. Now per theme `--c-tick-dim` (✓ sent, ✓✓ delivered) and
+  `--c-tick-read` (✓✓ seen): mint #7CF5B0 on the coloured bubbles (OddsClub, iMessage, Messenger, Signal), blue for WhatsApp
+  (unchanged), green for Telegram and Discord, with grey / dimmed-white for the other states. Verified with one conversation
+  holding all three states, photographed in all 8 themes. Shared rooms (lounge, match rooms, groups) still show only ✓.
+- Follow-up (owner: "in groups: delivered when any member received it, seen when all members saw it; same in channels"):
+  groups & channels now have receipts too. Only the room's members leave them (not visitors of an open group, not the team);
+  stored per member in `chat-receipts` (room 'g:<id>'), broadcast live to the room's members + the team; `hello` carries the
+  current members' positions for the rooms the viewer is in (the team: all rooms). On our own messages: ✓ sent · ✓✓ delivered
+  = at least one other member's device received it · ✓✓ coloured "Seen by everyone" = every other member saw it (member count
+  from the room, minus ourselves when we are a member). Joined rooms report delivered on connect / when their messages load /
+  live, and read while on screen. Lounge and match rooms keep ✓ (no member list).
+  Verified live with a 3-member group: A posts → Sent; B opens the site → Delivered (0.2 s); B reads, C not → still Delivered;
+  C opens the group → Seen by everyone. Test group and accounts removed.
+- Follow-up (owner screenshot of the room list: "nothing tells you if the message you sent was sent, delivered or seen"):
+  the room list now shows the status of OUR last message in front of "You: …" (clock sending · ✓ sent · ✓✓ delivered ·
+  ✓✓ coloured seen), like WhatsApp; lounge / match rooms show ✓. One shared `tickState(room, message)` + `tickIcon()` feed both
+  the conversation and the list, so they always agree; receipts re-render the list live. List "seen" colour per theme
+  (`--c-list-read`: readable on each sidebar — blue for WhatsApp / iMessage / Messenger / Signal, green for Telegram / Discord,
+  mint for OddsClub). Verified: list row went Sent → Delivered → Seen live; photographed in OddsClub and WhatsApp.
+- Follow-up (owner: "the status only shows after I open the conversation"): reproduced as a member → list showed the status
+  live, after reload and on a phone without opening anything. The owner is the team: a member's thread isn't loaded for the
+  team until opened, so its list row is built from the thread summary — and those summaries were excluded from the status.
+  Now the summary's last-message time is used, so team threads show ✓ / ✓✓ / ✓✓ seen in the list before opening (receipts
+  for team threads already come with `hello` and live). Not verified signed in as the team (no staff login for Claude).
+
+### 2026-11-25 — voice messages, pictures on demand, media clean-up
+- **Pictures on demand** (owner: "don't load images directly, it takes resources: thumbnail first + download button, keep it
+  in cache, let users save it"). At upload the server also makes a ~200-byte blurred preview (`chat-images.thumb`, 32 px
+  WebP data URL) that travels inside the message with the file size. Others see the preview + "⬇ 30 KB"; a tap downloads
+  the file once into Cache Storage ('oc-media-v1') and shows it from a blob URL — after a reload it appears from the cache
+  with no request. Own pictures load automatically. Full-screen viewer: "Save" (share sheet on phones → Save image,
+  download elsewhere). Old pictures without a preview show a neutral placeholder + the button.
+- **Voice messages**: mic button while the box is empty → MediaRecorder (WebM/Opus, MP4/AAC on Safari, 32 kbps) with a
+  recording bar (delete · red dot + timer · live waveform · send), auto-send at the maximum length, stops if the tab is
+  hidden. Upload `/chat-api/voice` (multipart: file, duration, peaks) → new `chat-voice` collection (R2) → message
+  `voice`. Allowed: the team; members in their chat with the team and in private chats; in shared rooms with the role right
+  (renamed "Send pictures & voice messages"). Bubble: play / pause, 40-bar waveform (fills while playing, tap to jump),
+  time; the file loads on first play and is cached. Previews / replies / team thread summaries say "Voice message".
+  Audio-only WebM/MP4 are often detected as video/* → allowed too.
+- **Media clean-up** (owner: "configured in the admin"): Chat settings → "Voice messages & media storage": longest voice
+  message (default 120 s), delete pictures and voice messages after N days (default 0 = keep forever), what is stored now
+  (count, size, oldest), "Run clean-up now". `src/chat/cleanup.ts`: runs a minute after the server starts and every 6 h
+  (started with the chat stream), deletes files older than N days from R2 (via Payload) and marks their messages
+  `mediaExpired` → "Photo expired" / "Voice message expired" in the chat. Profile photos, logos, partner pictures untouched.
+  Private-chat pictures / voice: file access for members now includes private chats they belong to.
+- Verified: lounge photo for a member → preview + "⬇ 30 KB", 0 downloads until tapped, 1 after, 0 after reload (cache),
+  Save button; new upload carries a 200-byte preview; voice recorded in the browser (generated tone instead of a mic),
+  received live by the other member with waveform 0:03, played to the end, sender saw "Seen"; clean-up limited to the test
+  rooms deleted 1 picture + 1 voice (14 KB) and marked both messages expired; settings card rendered on a temporary copy
+  (deleted). The owner's own voice message (11 s, WebM) was left untouched. Test accounts and their media removed.
+  Not verified: playback of WebM voice notes on older iPhones (Safari 17.4+ plays WebM/Opus; older iOS may not).
+- Follow-up (owner screenshots: voice bubble not centred; reactions bar + "⋯" menu behave inconsistently):
+  - Voice bubble: grid — play button centred on the left (spanning both lines), waveform on top, length · time + ticks
+    underneath (the time no longer sits on its own line below the player).
+  - Message menu, one list of actions everywhere (`ctxItems`): Reply · Copy (only when there is text) · Save (pictures and
+    voice messages) · Report · Mute (team) · Delete. Computer ("⋯", right-click, Enter): a small menu next to the button /
+    pointer (`.ctx.lite`: no blur, no lifted copy, no second set of reactions — the hover bar has them). Phone (press and
+    hold): the lifted message over the blurred background with reactions above and actions below. Closes on outside
+    click/tap, Escape, scrolling the conversation, resize, changing room or any action. The hover bar hides while a menu is
+    open and highlights our reaction.
+  - Fixed: on phones the overlay closed again the moment the finger was lifted (the release counted as a tap on the
+    background), and a long press could open it twice (our timer + the phone's own long-press event).
+  - Verified: computer "⋯" → Reply/Copy/Report small menu, Escape closes; right-click on a voice note → Reply/Save/Delete,
+    flips above near the bottom, outside click closes; phone long-press stays open after release, tap outside closes,
+    voice note → Reply/Save/Delete. Test accounts removed.
+- Correction (owner: "why did you remove the blur when we choose the menu; keep the emoji bar longer"): the small no-blur
+  computer menu is gone — "⋯", right-click and Enter open the blurred overlay again (lifted message, reactions above, actions
+  below), keeping the fixes (Copy only with text, Save for media, no double open / close-on-release on phones). The hover
+  reactions bar now lingers ~0.6 s after the mouse leaves (visibility delayed, then fades) and the 6 px gap between message
+  and bar counts as the bar, so moving to it never loses it. Verified: visible at +0.3 s, hidden by +1 s, stays when moving
+  onto it; "⋯" → blurred overlay with 5 reactions, Escape closes.
+- Follow-up (owner: "it eases in, but closing just disappears and the message pops back bluntly"): the lifted message lived
+  inside the overlay, which was hidden in one frame on close, so its spring back was never seen; the real message then faded
+  in from 0 (its own transition) → blink. Now closing plays the opening backwards: the overlay stays visible ('closing',
+  no clicks) while the blur fades, reactions / actions shrink away and the lifted copy glides home (shadow fading); the
+  real message takes over in the same frame without its fade as soon as the glide is visually home (|lift| < 0.006; safety
+  net 0.7 s). Instant closes (room change) swap without the fade too; a new menu finishes a closing one at once.
+  Measured per frame: glide −106 px → 0 in ~0.3 s, swap at 298 ms, 0 frames where the message is missing or faded.
+
+### 2026-11-25 — who can see pictures & voice messages, per room
+- Owner: rules for who sees media in the lounge (and can they save it). `src/chat/media-policy.ts`: per room `view`
+  everyone · members (lounge: signed-in accounts; group: people who joined) · team · none (text only) + `save` (allowed or
+  not). Lounge + match rooms: Chat settings → lounge.mediaView / mediaSave (Groups & channels → Community lounge → "Pictures &
+  voice messages"); groups & channels: chat-rooms.mediaView / mediaSave (room page, shared `MediaFields`). Private chats and
+  chats with the team: unchanged. The team always sees everything.
+- Server-enforced: `lockWire` replaces media with `locked {kind, why: signin|group|team|none}` for viewers who may not see
+  it (hello, group loads, live — the hook now sends each client its own variant), and `chat-images` / `chat-voice` file
+  access uses `mediaReadWhere` (403 for others). Text-only rooms refuse picture / voice uploads (`chat.err.mediaOff`) and
+  hide the picture / mic buttons. Saving off → `nosave`: no Save in the viewer or the menu, no right-click / long-press
+  saving, no dragging (screenshots can't be blocked — said in the back office). Rule changes apply at once (lounge: open
+  chats reconnect; group: its messages reload).
+- Verified (lounge set to members-only, then also no saving; restored to everyone + saving after): visitor got locked
+  photo + voice ("Sign in to see this photo" + Sign in button), the file URL answered 403 for the visitor and 200 for a
+  member; member with saving off: picture shown, viewer without Save, menu Reply / Report only. Not verified signed in:
+  the back-office controls (no staff login for Claude). Test account removed.
+
+### 2026-11-25 — picture editor before sending + swipe to reply with a mouse
+- Owner: "no way to preview / edit / crop a picture before sending like WhatsApp or Telegram; and swipe to reply".
+- Picture editor (engine, `pe*`): picking a picture opens a full-screen editor — preview, Crop (free / square / 4:3 / 16:9,
+  8 drag handles, move the frame, rule-of-thirds grid, dimmed outside), Rotate 90°, Flip, Draw (6 colours, thin / thick,
+  smooth strokes), Undo (60 steps), Reset, caption field (pre-filled with the message box) and Send. All on a canvas in the
+  browser: crop and strokes are kept in 0–1 coordinates of the rotated picture so rotating / flipping carries them along;
+  the result is a JPEG (≤ 2560 px) that goes through the normal send (rules, upload, preview generation). Escape leaves a
+  tool, then closes. Pictures the browser can't decode (e.g. HEIC outside Safari) fall back to the old direct attach.
+  If sending fails, the edited picture and caption stay in the box for another try.
+- Swipe to reply already worked with touch (verified: bubble follows the finger, reply starts). Now also with a mouse /
+  trackpad: drag a message to the right (not from buttons, the picture or the voice player), no text selected while
+  dragging; a plain click does nothing.
+- Verified in the browser: crop square (481×481 frame) → rotate → red stroke → caption → arrived as a 695×695 picture with
+  "Cropped, rotated, drawn"; mouse drag → reply bar, plain click → none. Test accounts and their messages removed.
+
+### 2026-11-25 — stickers in the photo editor (team stickers + personal stickers)
+- Owner: "add stickers and resize them; import our own stickers — personal ones only for their owner, and stickers managed
+  in the admin for everyone".
+- Editor (engine `pe*`): Stickers tool → tray in three sections: **My stickers** ("+" turns a picture into a personal sticker,
+  saved on the account; ✕ deletes it), **Team stickers** (back office), **Emoji** (30). A sticker lands in the middle,
+  selected: drag to move, round handle = resize + rotate (snaps to straight angles), mouse wheel resizes, ✕ / Delete removes,
+  tap another to select it, tap the photo to deselect; touched sticker comes to the front. Stickers are kept like the
+  drawing (0–1 of the rotated picture) so rotate / flip / undo / reset carry them; they are drawn into the exported JPEG.
+- Team stickers: collection `stickers` (name, image → media, active, order); back office **Stickers** (Community): upload
+  several (or drop), rename, show / hide, reorder, delete; processing `prepareSticker` (trims transparent margins, ≤ 512 px
+  WebP with alpha). Sent to the site in `cfg.stickers`.
+- Personal stickers: collection `member-stickers` (upload, R2) with read access = owner (+ team); chat-api `stickers` (list),
+  multipart `sticker` (add, max 60 per account), `sticker-remove` (own only).
+- Verified: team sticker trimmed 600×600 → 300×200; emoji moved / resized (361 px) / rotated, team + device stickers drawn into
+  the exported picture (upload intercepted, nothing sent); member A: "+" saved and placed, still there after reload, ✕
+  deletes; member B never sees A's sticker and gets 403 on its file (A: 200). Test sticker, accounts and files removed.
+
+### 2026-11-25 — one reaction per person; swipe to reply both ways + trackpad
+- Owner: "you can't react twice with different emojis — the new one must replace the current one; and swipe to reply".
+- Reactions: the server keeps one reaction per person per message — choosing another emoji removes the previous one; tapping
+  the current one removes it. (Already-stored double reactions stay until that person reacts again.)
+- Swipe to reply now works either way (right like WhatsApp, left like Telegram) with a finger and a mouse drag, and with a
+  two-finger trackpad swipe (horizontal wheel events; also blocks the browser's swipe-back navigation over a message). The
+  reply icon appears on the side the message moves away from. Vertical scrolling over messages is unaffected.
+- Verified: ⚽ then 🔥 on one message → only 🔥 stored and highlighted; trackpad right / left, mouse drag left, finger swipe
+  left all opened the reply; vertical wheel did not. Test accounts removed.
+
+### 2026-11-25 — replies: quotes were never saved; picture / voice quotes
+- Owner: "a sent reply shows no preview, as if not attached; replying to a picture shows only text, no thumbnail".
+- Root cause: the quoted message's id was stored as `reply.id`; Payload treats `id` inside a group as reserved and silently
+  dropped it, so every stored reply lost its link and the chat hid the quote (since the beginning). Now `reply.msgId`
+  (old `reply.id` still read if present). Replies sent before this fix have no link and stay without a quote.
+- Quotes also remember what was quoted: `reply.kind` (photo | voice), `reply.thumb` (the picture's ~200-byte preview), `reply.dur`
+  (voice length) — read by the server from the quoted message. The reply bar above the box and the quote in the bubble show
+  📷 + caption (or "Photo") with the picture's thumbnail on the right (sharp when the original is already on the device), or
+  🎤 "Voice message · 0:12". Viewers who may not see the room's media (room rule) don't get the quoted thumbnail.
+- Verified: text reply in a private chat shows its quote (also after reload); reply to a voice note → 🎤 "Voice message · 0:02"
+  in the bar and the quote; reply to a captioned picture (menu → Reply) → thumbnail + 📷 caption in the bar and the quote.
+  Test accounts and their messages removed.
+- Follow-up (owner: "closing the reply with ✕ dismisses the keyboard and the reply stays — a second tap is needed"): on
+  phones the tap first blurred the text box, the keyboard closed, the layout jumped and the tap missed. ✕ on the reply bar
+  and on the picture bar now act on the first touch (`tapKeepFocus`: pointerdown with preventDefault, so the box keeps
+  focus and the keyboard stays open; click still works for keyboards). Verified with touch at 390 px: one tap → reply gone,
+  text box still focused.
+
+### 2026-11-25 — invite links, voice-record feedback, room sheet tab motion
+- Owner: "animate the mic like stretching when recording starts, add start / stop sounds like WhatsApp, the room sheet has no
+  motion between tabs, and where is the invite link — there are many ways to add members, you added only one".
+- Invite links for groups and channels: `chat-rooms.inviteToken`. Chat room sheet → Members tab → "Invite link": create,
+  Copy, Share (phone share sheet), New link (the old one stops working), Turn off. Back office: group editor → Invite link box
+  (Copy / New link / Turn off). Opening `/<lang>/chat/join-<token>`: a signed-in member joins and lands in the room; a visitor
+  is asked to sign in first and joins right after. Works even for invite-only rooms. Only the room's admins (and the team)
+  see or change the link. Server: `roomInvite` / `roomJoinLink` (`/chat-api/room-invite`, `/chat-api/join-link`).
+  The other ways stay: invite by username, join requests, open rooms, auto-add.
+- Mic: the button squeezes and pops when tapped, the recording bar stretches open, the red dot pulses; short start / stop /
+  cancel blips made with WebAudio (no sound files). Recording starts ~170 ms after the start sound so the sound isn't recorded.
+- Room sheet tabs: the green pill slides between tabs and the content slides in from that side. It keeps going smoothly when
+  the tab redraws on data arriving (members, invite link). Respects reduced motion.
+- Verified: pill and pane slide both ways; A created a link, B opened it and landed in the room ("You joined …"); a visitor got
+  the sign-in prompt; after "New link" the old link answers "This invite link doesn't work any more"; Turn off / create;
+  mic press + bar animation, start sound, timer + waveform running, cancel sound. Test accounts and room removed.
+- Follow-up (owner: "creating a new invite link opens a prompt instead of a dialog"): every "are you sure?" in the site chat
+  used the browser's `window.confirm`. Now one themed dialog (`#confirmSheet`, engine `askConfirm(message, okLabel, danger)`,
+  passed to the adapter as `h.confirm`): the question as the title, the rest as the explanation, the action's own word on the
+  button (red for destructive ones, which also get focus on Cancel). Escape, the backdrop and Cancel say no; the room sheet
+  underneath stays open. Used for: new link / turn off link, block, leave room, archive / delete room, remove member, delete
+  a personal sticker. Verified at 1100 and 390 px (no browser dialogs left). Test account and room removed.
+- Follow-up (owner: "the tab switcher is inconsistent when tapped, and after creating a new link it goes to the last tab
+  twice"): the room sheet redraws on every data change (members loaded, link created / renewed…) and each redraw rebuilt
+  the tab pill at zero width on the left, so it slid back to the tab again; a redraw during a tab switch restarted the slide.
+  Now a redraw starts the pill exactly where it is (even mid-slide) and only glides if the tab changed; the scroll position
+  is kept; opening the sheet starts clean. Verified by sampling the pill every 30 ms: open = still, tab switch = one glide,
+  create / new link = no movement, rapid back-and-forth taps = smooth reversals, no jump. Test account and room removed.
+
+### 2026-11-25 — groups made by the team: owner and member count
+- Owner: "I don't see the owner of the group; I invited someone and it shows the invite; he sees one member when he should
+  see two". "Les Agents" was made from the back office: such rooms have `createdBy` (a team account) and no member owner,
+  and the team account is not stored as a membership, so the creator appeared nowhere and every count missed them.
+- Now the creator of a team-made room is listed first in the room sheet's members, tagged Owner (no remove / admin buttons),
+  and counts as a member everywhere: room list and header ("2 members"), back-office groups list. The group editor shows
+  "Made by <name> (team)" instead of "Team room".
+- An invited person stays under "Invited · waiting for their answer" (was just "Invited") until they accept the invite in
+  their chat ("You're invited — tap to answer"); then they move to Members for everyone, live.
+- Verified on the real room (read-only): Brillant now sees 2 members; the members list is divin don (owner, team) + Brillant.
+
+### 2026-11-25 — group info for everyone; ticks in team-made groups
+- Owner: "the one invited can see the group info, bio / description and members with their role, right? And make sure
+  sent / delivered / seen are well implemented in groups".
+- Group info sheet (`#groupSheet`): tap a group's name or picture in the chat header (a private chat's name opens the
+  person's card). Anyone who can see the group — members, people invited, and anyone for open / ask-to-join rooms — sees the
+  picture, name, "Group · N members", how people join (Anyone can join / Ask to join / Invite only), About (description),
+  Room rules, and the members with their role (Owner, Admin, Team; "· You" on oneself; tap someone → their card).
+  Actions: invited → Join / Decline; not a member → Join / Request to join / Cancel request; admins → Manage (opens the room
+  settings); members → Leave (themed confirm). Pending requests and invites stay visible to admins only. Updates live.
+  Server: `roomInfo` (`/chat-api/room-info`), allowed for whoever `roomAccess` lets see the room.
+- Ticks in groups: Sent → Delivered (any other participant's device got it) → Seen by everyone (all have read it). Fixed for
+  rooms made from the back office: the team account that made it is a participant (`teamCreatorOf`, `participantUids`):
+  it counts in "everyone", leaves its own delivered / read receipts and gets the others' live; `isOwner` is true for it.
+  (Before, counting it as a member would have made "Seen by everyone" impossible; other team accounts don't count.)
+- Verified: invitee at 390 px saw bio, rules, members + Join / Decline; joined → 3 members live; owner saw Manage;
+  co-admin tag shown. Ticks with 3 members: Sent (nobody online) → Delivered (B online elsewhere) → still Delivered after B
+  read → Seen by everyone after C read, same in the room list and after reload. Team-made room (server script): 2 members,
+  team creator = owner, its read receipt stored. Test accounts, room and messages removed.
+
+### 2026-11-25 — sticker upload "Body exceeded 6mb limit"; one fixed sticker size
+- Owner: error on Back office → Stickers upload (`Body exceeded 6mb limit`, 413) + "make them have a fixed size".
+- Cause: the page sent the original pictures, all in one server-action request (limit 6 MB, next.config).
+- Now the back office shrinks each picture in the browser (≤ 1024 px, WebP, transparency kept) and uploads them one per
+  request with an "Uploading 3 / 8…" toast; failures are listed by file name. The chat does the same for personal stickers.
+- Fixed size: every sticker (team and personal) is stored as a 512 × 512 transparent WebP — empty margins trimmed, the
+  picture centred (`STICKER_PX`, `prepareSticker` fit contain). So all stickers have the same size in the tray and when
+  placed in the photo editor. There were no stickers yet, so nothing to convert.
+- Verified: server — 1600×400, 300×900, 64×64 and a 1800×1200 photo all → 512×512 WebP; browser — a 39.4 MB 4000×3000
+  PNG went up as 448 KB and was stored as 512×512 through the real member sticker upload. Test account removed.
+  (The back-office page itself was not clicked through: no team sign-in available to me; it type-checks.)
+- Follow-up (owner: "is compressing right? a sticker can't exceed 500 KB, right?"): stored stickers are now capped at
+  100 KB (`STICKER_MAX_BYTES`, like WhatsApp's static sticker limit): WebP quality steps down 90 → 20 until it fits, then
+  a slight smoothing as a last resort; always 512 × 512. (The ≤ 1024 px file the browser sends is only for the upload.)
+  Measured: transparent logo 17 KB, photo 84 KB, worst case (random noise with random transparency) 79 KB.
+
+### 2026-11-25 — downloads show real progress (no spinner)
+- Owner: "the download button spins instead of a progress circle".
+- `mediaFetch(url, onProg, sizeHint)` now reads the response as a stream and reports the bytes received (total from
+  Content-Length, else the size we know); several views of the same file share one download. `mediaAbort(url)` cancels.
+- Picture: the "⬇ 30 KB" button turns into a ring that fills with the real progress, ✕ inside, and "4 KB / 30 KB";
+  tap again cancels (back to "⬇ 30 KB", no error). A redraw mid-download keeps showing the progress. Screen readers hear
+  "Downloading… 40%. Tap to cancel." (every 10 %). Voice notes: the same ring around the play button while it loads.
+  The spinning / pulsing animations are gone.
+- Verified with the connection slowed to 6 KB/s: ring and text rose steadily 0 → 5 → 10 … %, cancel half-way restored
+  the button without an error, a full download showed the picture; voice ring 0 → 12 → 24 %. Test account removed.
+- Follow-up (owner: "the same with voice messages"): a voice note not on this device shows a download arrow and
+  "0:03 · 12 KB"; tapping it fills the ring around the button (✕ inside, "1 KB / 12 KB"), tap again cancels, then it plays.
+  Our own voice notes and ones already cached show ▶ directly. Screen-reader label follows the progress.
+
+### 2026-11-25 — sending pictures / voice: upload progress, no flicker; recording bar on phones
+- Owner: "I don't see it uploading, it just disappears and appears with status Sent; and recording overflows on mobile".
+- Flicker cause: the pending bubble (temporary id) was removed and a new bubble built when the server's copy (real id)
+  arrived. Now the same bubble is kept and re-keyed (clientId → id). The local file is handed to the server's copy
+  (`mediaAdopt`: no re-download of our own picture / voice, and it goes into the device cache).
+- Upload progress: pictures and voice notes are sent with XHR upload progress (`upload()` in chatBackend). While sending:
+  picture → the ring with ✕ and "45%" over it; voice → the ring around the play button with ✕. Tap ✕ to cancel (until
+  100 %: once fully sent only the server's answer is left, so it can't come back as a ghost). A cancelled picture returns
+  to the box with its caption; no error message on cancel.
+- Recording bar: can't grow past the message box any more (min-width 0); the waveform scrolls inside.
+- Rings drew as a small filled circle on the voice button (an older `.v-play .icon` rule won) — fixed with a more specific
+  selector; also affected the voice download ring.
+- Verified at 360 px with a fake microphone: after 12 s of recording the send button stays inside (301–343 of 360);
+  slow upload (6 KB/s) → same bubble, ring 32 → 65 → 97 → 100 %, then "Sent" with the real id; cancel → bubble gone,
+  no toast. Picture upload uses the same code but was not clicked through. Test accounts and messages removed.
+- Follow-up (owner screenshot, wide screen: "why is it cut in half"): the recording waveform kept at most 48 bars (~240 px),
+  so on a wide screen it covered only the right part of the bar. Now it holds as many bars as fit the bar's width (3 px +
+  2 px gap, recomputed every tick, so resizing works): it starts as a full row of flat dots and the live level comes in
+  from the right. Verified in the dark WhatsApp theme: 1610 px → 207 bars spanning the whole bar, 360 px → 29 bars,
+  send button inside both times. Test account removed.
+
+### 2026-11-25 — bubble style, chosen after the chat theme
+- Owner: "let people also choose a preferred bubble; when we choose the theme it opens the bubble preference", then
+  "these bubbles look almost identical".
+- The theme sheet has two steps: picking a theme slides on to "Bubble style" (Back returns; a "Bubble style" button on
+  step 1 opens it directly). Not offered for the Discord theme (no bubbles). Kept per device (`ps_bubble`).
+- 8 styles, each clearly different, always in the theme's colours: Theme default · Classic (pointed tail at the top) ·
+  Curl (curved tail at the bottom) · Pill (capsule) · Card (square + stripe on the speaker's side) · Outline (see-through
+  with a border) · Comic (bold border + solid offset shadow) · Leaf (two sharp opposite corners). Each card is a mini chat
+  in the chosen theme with a one-line description. First version had only radius variations (round / soft / square…),
+  which looked the same — replaced.
+- CSS: `.bs-scope[data-bs]` on #messenger, #ctx and the previews, written to beat the themes' own tails (theme tails are
+  switched off unless the style draws one; top / bottom reset so a theme's top tail can't leak into a bottom tail).
+- Verified: step 2 opens after picking WhatsApp; previews use the picked theme; choice applied to the chat and kept after
+  reload; screenshots of all 8 in the WhatsApp and OddsClub themes.
+
+### 2026-11-25 — loading a room: skeleton bubbles, then a soft fade-in
+- Owner: "messages appear out of nowhere, no loading state like a skeleton".
+- Before: placeholders only for the very first lounge load, and only once the live connection was up — so the room said
+  "Start the conversation" (empty) while loading; groups / private chats / help threads had nothing at all.
+- `roomReady(id)` knows when each kind of room has its messages (lounge & match rooms & help chat: first load; a group:
+  its list; a private chat: once accepted; a member's help thread for the team: when opened). Until then: 7 placeholder
+  bubbles (incoming with avatar, outgoing on the right, one or two lines), built as real rows so they take the theme's
+  colours and the chosen bubble style, with a soft shimmer. Then the newest 14 messages fade up one after another
+  (`soft-in`) instead of popping in; placeholders no longer count as messages (no "new message" bounce).
+- Verified with the live stream held back 3 s: 7 placeholders shown (OddsClub theme; WhatsApp + Comic bubbles), then the
+  messages arrived with the fade, no empty-room card in between. Group / private-chat loading uses the same path but
+  wasn't slowed down separately.
+
+### 2026-11-25 — group info polish: no link underline, tags on one line, long member lists
+- Owner screenshots: the room name in the chat header was underlined on hover (looked like a link); the "Team" tag
+  wrapped onto its own line and stretched across the row; "what if there are many members?".
+- Header: no underline; a light fade on hover only (still tappable / keyboard-reachable).
+- Tags: the "Team" tag used the class `team`, which the match cards style as a full-width flex row → renamed
+  `rs-tag-team`. Member rows (`nameLine`) keep the name and its tags on one line: the name shortens with "…", the tags
+  never wrap. Same in the admins' room sheet (it also shows "· You" and the Team tag now).
+- Many members: group info shows the first 8, a search box ("Search members", filters as you type without losing focus)
+  and "Show all N members". The admins' room sheet shows 10 per section, then "Show N more".
+- Verified (French, dark WhatsApp theme, team-made group with 15 members): no underline on hover; "Propriétaire" +
+  "Équipe" on the name's line; 8 shown + search + "Voir les 15 membres"; "mo" → Jules Moreau, Moussa Traoré; show all → 15.
+  Test accounts and room removed.
+
+### 2026-11-25 — chat wallpapers (managed in the back office); welcome page when no conversation is chosen
+- Owner: "add wallpapers in conversations — they will be managed in admin, we add them manually"; and "opening the chat
+  opens the first conversation directly; there must be a blank page with a description and logo like WhatsApp".
+- Wallpapers: new collection `wallpapers` + back office → Wallpapers (`/admin/wallpapers`, nav under Stickers): upload
+  photos or patterns (shrunk in the browser first, one per request; server: WebP, photo ≤ 2000 px and ≤ 450 KB, pattern
+  ≤ 600 px), live preview behind two sample bubbles, rename, Photo / Pattern switch, Darken slider (mixes in the chat
+  theme's background colour so messages stay readable), shown / hidden, order, delete. Sent to the site as
+  `cfg.wallpapers`.
+- Chat: the theme sheet now has 3 steps — Theme → Bubble style → Wallpaper ("Wallpaper →" from step 2; a "Wallpaper"
+  button on step 1; Discord goes straight from the theme to the wallpaper). Choices: Theme default, Plain, then ours,
+  each a mini chat preview in the chosen theme and bubble style. Kept per device (`ps_wall`); a deleted wallpaper falls back
+  to the theme's. Pictures start loading when the sheet opens.
+- Welcome page: opening the chat with no room chosen (wide screens) now shows a welcome page — logo, the chat's title,
+  "Pick a room or a conversation on the left…", three highlights, "House rules apply · 18+" — instead of the lounge. Nothing
+  counts as viewing the lounge behind it (`viewing()`): no presence in it, no read marking, no unread reset, no highlight
+  in the room list. Phones keep showing the room list first.
+- Verified (visitor, 1280 px): /chat → welcome page, no room highlighted; sheet → 4 wallpaper cards (Theme default, Plain,
+  a test photo, a test pattern) with previews; picking the photo → the conversation shows it (darkened 20 %); opening a room
+  hides the welcome page. Test wallpapers removed. The back-office page type-checks but wasn't clicked through (no team
+  sign-in available to me).
+
+### 2026-11-25 — messages page by page per conversation; voice messages play one after another
+- Owner: "it doesn't fetch all messages at the same time, right? there is pagination and per conversation?" and "no auto
+  play for voice messages like WhatsApp".
+- Before: on connect the server sent the latest 400 messages of the lounge + all match rooms together (a busy lounge could
+  push a match room's history out), 300 of the help chat, 60 per private chat (≤ 40), 80 per group (≤ 30); nothing older
+  could ever be reached.
+- Now: `PAGE = 40` per conversation — the lounge and each match room get their own latest 40, as do the help chat, every
+  private chat, every group, and a member's thread for the team. New `history` action (`/chat-api/history`
+  {room, before}) returns the 40 before a time + `more`, with the same rights as live reading (group: canRead; private
+  chat: its two members, accepted; help chat: its member / the team) and the same media locks.
+- Chat: scrolling near the top of a conversation loads the previous page (dots at the top while loading); what is on
+  screen stays put (scroll anchored from the bottom; older rows don't count as "new" and don't animate in); if a page
+  doesn't fill the screen the next one loads by itself; at the beginning "This is the start of the conversation". The
+  browser keeps up to 3000 messages per list.
+- Voice: when a voice message ends and the very next message is a voice message too, it plays next after a short pause
+  (scrolled into view; downloads first if needed). Tapping another voice message or stopping cancels the chain.
+- Verified (help chat with 90 older texts + 2 voice notes): opened with 40; top → 80, view kept in place; top again → all
+  92 and "This is the start of the conversation"; voice 1 played, then voice 2 by itself. Test account and data removed.
+
+### 2026-11-25 — load-test data: thousands of messages in the lounge and the group
+- Owner: "insert as many messages as possible in the lounge and in any existing group".
+- New script `src/scripts/seed-chat-load.ts` (`pnpm seed:chat-load`, options `--lounge N --group N`, `--remove`):
+  creates 24 "seed fan" accounts (seed-fan-NN@oddsclub.test), then writes straight to the database (no live broadcast):
+  lounge ≈ 3000 messages over the last 30 days (¼ from the team account, the rest from the seed fans), every active group
+  ≈ 1500 written by its own members + its team creator (memberships unchanged; channels: only admins / the team). Bursts
+  of back-and-forth and ~12 % replies quoting an earlier message. All tagged (clientId "seed-load-…");
+  `pnpm seed:chat-load --remove` deletes the messages and the seed fan accounts.
+- Ran it: lounge 3002 messages (3000 + the 2 real ones), "Les Agents" 1504; 548 replies. Stored like real messages
+  (ObjectIds, dates; Payload reads authors). Browser: the lounge opens with 40 and each scroll to the top adds 40
+  (checked up to 280), replies and names show.
+
+### 2026-11-25 — the member's help chat has an id in its address; refresh stays in it
+- Owner: "why doesn't the partner conversation have an id instead of 'support'? and refreshing in it goes to the blank
+  page".
+- Address: the member's help chat is now /chat/team-<member id> — the conversation's own id (the team opens the same
+  conversation as /chat/sup-<member id>). Old /chat/support links still open it and switch to the new address.
+  (Internally the room stays 'support'.)
+- Refresh: after a refresh the account arrives a moment after the page, so 'support' wasn't a known room yet and the chat
+  fell back to the welcome page (private chats and groups already waited; the help chat didn't). Now it waits for it too,
+  showing placeholders with the header / box hidden (`want-room`) instead of another room or the welcome page; a visitor
+  (no account) gets the welcome page.
+- Verified: open → /en/chat/team-<id>; reload → straight back in the help chat with its messages; /en/chat/support → same
+  conversation, address switched. Test account removed.
+
+### 2026-11-25 — darken the wallpaper yourself; palette button menu (Theme / Wallpaper)
+- Owner: "let them darken the wallpaper they choose, and a quick way to the wallpaper (not through theme etc.), without
+  touching the current flow" → then "the same button, with a popover: Wallpaper or Theme".
+- Darken: picking one of our wallpapers shows a "Darken" slider (0–80 %) under the list; it starts at the back office's
+  value, changes the chat behind the sheet and the chosen card live, and is kept per wallpaper on the device
+  (`ps_wall_dim`). Hidden for "Theme default" / "Plain".
+- The palette buttons (chat header and room list) open a small menu: "Chat theme" (the usual theme → bubbles → wallpaper
+  steps, unchanged) or "Wallpaper" (straight to the wallpaper step). Closes on outside tap, Escape (focus back to the
+  button), Tab, resize; ↑ / ↓ move between the two. No extra button in the header.
+- Verified: menu items, Wallpaper → step 3, Chat theme → step 1, outside / Escape close, arrows, room-list button menu
+  on screen; slider 20 → 60 % applied live and kept after reload. Test wallpaper removed (the team's own uploads kept).
+
+### 2026-11-25 — groups & channels: who sees it, reading before joining, how people join (separate settings)
+- Owner: "no setting for whether people who aren't signed in can see a group / channel, or non-members, and whether they
+  request to join or join directly".
+- Before, one "join" setting decided everything (open = everyone sees & reads; request = everyone sees, nobody reads;
+  invite = hidden). Now three separate settings on `chat-rooms`:
+  · visibility: Everyone (also visitors) · Signed-in members · Only its members (hidden; invited / requesting people see it)
+  · preview: "Can read before joining" (people who see it read it without joining; off → locked card + join / request)
+  · join: Join directly · Ask to join (admins accept) · Invite only (by name or the invite link; a visible invite-only
+    room now says "…is invite only. Ask one of its admins…" instead of a request button that can't work).
+  Older rooms keep their behaviour (empty fields derived from join: `roomVisibility()`).
+- Enforced on the server (`rules()` in chat/groups.ts: visible / canRead), in live delivery (hooks: non-members get new
+  messages only where they may read), history, receipts. Editable in the back office (room page + new room; list shows
+  "Who can see it" and "How people join") and in the chat's room settings (owners / admins). Join wording updated in
+  the database where it hadn't been edited.
+- Verified with 4 test rooms: visitor sees A (locked) + D (reads), not B (signed-in only) or C (hidden); a signed-in
+  non-member also reads B; the owner sees all; "Les Agents" unchanged. Browser: owner's settings show the 3 choices;
+  turning on "read before joining" lets a visitor read A at once; D shows the invite-only message; a non-member gets a
+  new message in B live. Test rooms and accounts removed.
+
+### 2026-11-25 — sign-in offered when opening the chat signed out (continue as guest)
+- Owner: "when the chat opens, the sign-in dialog must show if he isn't signed in, but he can dismiss it and continue as
+  a guest".
+- Opening the chat (a chat address, or from the site) while not signed in: once the chat knows nobody is signed in, the
+  sign-in sheet opens by itself (~0.7 s), with "Sign in to write, react and chat privately. You can also look around as a
+  guest." and the way out labelled "Continue as guest" (Escape / backdrop also close it). Shown once per browser session
+  (sessionStorage `oc_auth_prompted`), never when signed in, not over another open sheet, not when an invite link is being
+  handled (that opens sign-in itself). The usual "Sign in" buttons keep "Not now" and the normal intro.
+- Verified: visitor on /en/chat → sheet with "Continue as guest" → closed → reload: not shown again; gate "Sign in"
+  button → normal sheet; new visitor via the home page's "Open chat" → shown; signed-in member → never. Test account removed.
+
+### 2026-11-25 — switching conversations animates
+- Owner: "messages show up instantly, without motion, when going from one conversation to another".
+- On a room change: the message area fades in (`#wallIn.room-in`, .28 s), the newest 14 messages rise in one after
+  another (the `soft-in` used after the loading placeholders, 12 ms apart), and the header's picture (scale) and name
+  (slide from the right) come in (`hdr-in`). Not on redraws inside the same room; nothing moves with reduced motion.
+- Verified (lounge ↔ Les Agents, sampled every 60 ms): area 0 → 1, older rows before the newest, title 8 px → 0, all
+  done in ≈ 350 ms.
+- Follow-up (owner: "when I go back to the site and open the chat again the dialog doesn't show, as if it persists"):
+  it was once per browser session. Now it is offered every time the chat is opened signed out (from the site, a link, a
+  reload) — but only once per opening, not on every room change (`UI.prompted`, reset when the chat closes). Verified:
+  open → shown; guest + room switch → not shown; close to the site and open again → shown; reload → shown.
+
+### 2026-11-25 — group / channel picture (photo or colours), confirm before upload, tap to see full size
+- Owner: "we can't edit or change the profile of a group or channel, even in admin" → "choosing an image must not upload
+  right away (a wrong pick wastes space): preview it and confirm" → "tapping a profile should preview it" → "also in the
+  admin portal".
+- Rooms now have a picture: `chat-rooms.photo` (media, cropped square 512 px) or one of 10 colours (`ROOM_COLORS`,
+  `gradient`). Shown in the room list, header, group info, room settings, back-office list and room page; changes reach open
+  chats live.
+- Chat (owner / admins / the team → room settings): picking a photo shows it as a preview ("Preview — not saved yet",
+  dashed frame) with Save photo / Choose another / Cancel — nothing is uploaded until Save (closing the sheet drops it);
+  Remove photo; colour swatches (saved at once). Server: `room-photo` (multipart; adminOf) and `room-color`.
+- Back office → Groups → a room: "Picture" card with the same preview → Save photo / Choose another / Cancel, Remove photo
+  and the colours (`groupPhoto`, `groupColor`).
+- Tap / click to see full size: the room's picture in group info and room settings (also an unsaved preview), a person's
+  picture on their card (chat); in the back office (`PhotoZoom`): the room page picture, a member's photo on their page,
+  the team chat profile photo. Profile pictures are now stored at 512 px (was 256) so they're sharp full size.
+- Fixes found while testing: the room photo url needs `filename` in the media `select` (else url is null); Escape now
+  closes the full-size viewer before the sheet under it.
+- Already fine (checked): a member's own profile photo and the team chat profile photo only upload on Save.
+- Verified in the chat: pick → local preview, no upload; Cancel → old picture; Save → exactly 1 upload, the photo (512×512)
+  in list + header for the owner and live for a member, group info shows it; tap → full size; Escape closes only the
+  viewer; Remove → colours back; a swatch → new colours live for the member. Back office type-checks (no team sign-in
+  available to me to click through). Test room and accounts removed.
+
+### 2026-11-25 — message texts encrypted at rest (master key + one key per conversation)
+- Owner: "are text messages encrypted?" (no — readable in the database) → "yes do it, explain first" → "with the strong
+  key from .env plus a key per conversation" → "go ahead".
+- `src/chat/crypto.ts` + `chat-keys` collection (details in ARCHITECTURE "Message encryption"): CHAT_MASTER_KEY locks a
+  random key per conversation; texts (messages, reply quotes, report snapshots, request notes) encrypted with AES-256-GCM
+  bound to their conversation; Payload field hooks encrypt on save / decrypt on read, so the chat, live delivery, history,
+  moderation and back office are unchanged. Room / account deletion erases the conversation key.
+- `pnpm chat:crypto` (status, `--encrypt [--dry-run]`, `--decrypt`, `--rotate`); the load-test seed encrypts too.
+  A strong key was generated into the local `.env` (git-ignored); `.env.example` documents it.
+- Migrated: 5065 existing texts encrypted in ≈ 2 s; 0 plain left; 3 conversation keys (lounge, Les Agents, one
+  other conversation).
+- Verified: raw database shows only `enc:v2:…` (message, reply quote, report snapshot, request note), the conversation key
+  only locked, `/api/chat-keys` → 403; the chat shows normal text (new message + reply quote, after reload; lounge 40 →
+  160 messages by paging, 0 unreadable); reporting works and moderators read the text; erasing a conversation key makes its
+  texts read "🔒 … can’t be read"; `--decrypt --dry-run` sees all 4514 documents. Test data removed.
+- Production: add CHAT_MASTER_KEY (same value as local, or a new one + run `pnpm chat:crypto --encrypt` there) BEFORE
+  deploying; keep a backup of the key.
+
+- Follow-up: `docs/ENCRYPTION.md` — operations guide for owners / developers (what is encrypted, keys, `pnpm chat:crypto` commands, encrypting a new environment, decrypting, rotating the master key, shredding, troubleshooting). Linked from HANDOFF and ARCHITECTURE.
+
+### 2026-11-25 — full database snapshot: `pnpm data:export` → `pnpm seed` restores it on a new database
+- Owner: "create a full seed of the data we have now so when we move we just run seed" — everything, database only (files
+  stay on R2, same bucket).
+- `src/seed/snapshot.ts`: `pnpm data:export` writes every collection (MongoDB Extended JSON, one document per line, so ids,
+  dates and relations come back exactly) + `manifest.json` (date, counts, master-key fingerprint) into `seed-data/snapshot/`
+  (previous kept as `snapshot-previous`; `/seed-data/` git-ignored: e-mails, password hashes, private messages). Skips
+  `payload-locked-documents`, `payload-kvs`.
+- `pnpm seed` (and the automatic seed on start): empty database + snapshot present → restore it, then add any newer texts;
+  otherwise unchanged. `pnpm seed --restore --yes` replaces a non-empty database. Restoring stops before writing if the
+  server's CHAT_MASTER_KEY differs from the snapshot's (encrypted texts would be unreadable).
+- Guide: `docs/MOVING-DATA.md` (linked from HANDOFF commands; `OC_SNAPSHOT_DIR` in .env.example).
+- Verified: export 5254 documents / 24 collections in ≈ 2 s (2.3 MB); `pnpm seed` into a new empty database restored all
+  of them (every count equal), messages decrypt with authors, partners keep their hero images, group and site settings
+  there, team account same id + password hash; a second `pnpm seed` doesn't restore again; `--restore` without `--yes`
+  refuses; another master key → stops with a clear message. Test databases dropped; the real database untouched.

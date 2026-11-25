@@ -19,10 +19,13 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/backoffice/components/ui/alert-dialog'
 import { COLOR_FIELDS, contrast, partnerSchema, type ColorKey, type PartnerForm } from '@/backoffice/lib/partner-schema'
-import { deletePartner, savePartner } from '@/backoffice/actions/partners'
+import { deletePartner, savePartner, setPartnerHero } from '@/backoffice/actions/partners'
+import { BrandImage } from './brand-image'
+import { HeroMotionFields } from './hero-motion-fields'
+import { HERO_MOTION_DEFAULT, heroMotionOf } from '@/lib/hero-motion'
 import { PartnerPreview } from './partner-preview'
 
-export function PartnerEditor({ id, initial, languages, canDelete, updatedAt }: { id: string; initial: PartnerForm; languages: { code: string; name: string }[]; canDelete: boolean; updatedAt: string }) {
+export function PartnerEditor({ id, initial, languages, canDelete, updatedAt, heroUrl = null }: { id: string; initial: PartnerForm; languages: { code: string; name: string }[]; canDelete: boolean; updatedAt: string; heroUrl?: string | null }) {
   const router = useRouter()
   const [pending, start] = useTransition()
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -109,6 +112,30 @@ export function PartnerEditor({ id, initial, languages, canDelete, updatedAt }: 
 
           <Card>
             <CardHeader>
+              <CardTitle>First screen picture</CardTitle>
+              <CardDescription>
+                The person on the left of the first screen while {v.name || 'this partner'} is selected (in front of the headline,
+                behind the phone). No picture = no person for this partner. The picture saves as soon as you pick it.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-6">
+              <BrandImage
+                kind="hero"
+                label="Person picture (optional)"
+                hint="PNG or WebP with a transparent background, at least 1200 px tall, up to 10 MB. Empty space around the person is trimmed automatically; the feet fade into the background."
+                url={heroUrl}
+                save={(fd) => setPartnerHero(id, fd)}
+                onDone={() => router.refresh()}
+              />
+              <div className="border-t pt-5">
+                <HeroMotionFields control={control} errors={formState.errors.heroMotion} heroUrl={heroUrl} colors={colors}
+                  onReset={() => form.setValue('heroMotion', { ...HERO_MOTION_DEFAULT }, { shouldDirty: true, shouldValidate: true })} />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
               <CardTitle>Theme colours</CardTitle>
               <CardDescription>Copy them from the partner’s own site. The preview updates as you pick.</CardDescription>
             </CardHeader>
@@ -133,8 +160,8 @@ export function PartnerEditor({ id, initial, languages, canDelete, updatedAt }: 
 
         <div className="xl:sticky xl:top-20 xl:self-start">
           <p className="mb-2 text-sm font-medium">Live preview</p>
-          <PartnerPreview c={colors as Record<ColorKey, string>} name={v.name} promo={v.promoCode} bonus={firstText?.bonus || ''} />
-          <p className="mt-2 text-xs text-muted-foreground">A simplified view of the hero, the 3D phone screen, the odds board and the footer.</p>
+          <PartnerPreview c={colors as Record<ColorKey, string>} name={v.name} promo={v.promoCode} bonus={firstText?.bonus || ''} heroUrl={heroUrl} motion={heroMotionOf(v.heroMotion)} />
+          <p className="mt-2 text-xs text-muted-foreground">A simplified view of the hero (with the person and its switch animation — ▶ replays it), the 3D phone screen, the odds board and the footer.</p>
         </div>
       </div>
 

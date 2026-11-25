@@ -40,7 +40,9 @@ G.registerPlugin(ScrollTrigger, Draggable);
 document.body.classList.add('ready');
 if (G && !REDUCE){ G.set('.headline .ln span', {transition:'none'}); G.fromTo('.headline .ln span', {yPercent:105, y:0}, {yPercent:0, y:0, duration:1.3, ease:'expo.out', stagger:.12, delay:.1}); }
 // Lenis: smooth page scrolling, kept in sync with ScrollTrigger
-var lenis = !REDUCE ? new Lenis({lerp:.1, smoothWheel:true}) : null;
+// allowNestedScroll / prevent: the wheel scrolls whatever scrollable box it is over (sheets, chat lists, dropdowns) instead of
+// being taken by the page's smooth scroll
+var lenis = !REDUCE ? new Lenis({lerp:.1, smoothWheel:true, allowNestedScroll:true, prevent:function(node){ return !!(node.classList && (node.classList.contains('sheet') || node.classList.contains('sheet-wrap'))) || node.id === 'messenger'; }}) : null;
 if (lenis){
   lenis.on('scroll', ScrollTrigger.update); G.ticker.add(function(t){ lenis.raf(t * 1000); }); G.ticker.lagSmoothing(0);
   document.addEventListener('click', function(e){
@@ -54,7 +56,31 @@ function $(id){ return document.getElementById(id); }
 var NO_TRANSLATE = /(^|\s)(badge|ini|r-score|s|scorepill)(\s|$)/;
 function el(tag, cls, text){ var e = document.createElement(tag); if (cls){ e.className = cls; if (NO_TRANSLATE.test(cls)){ e.setAttribute('translate', 'no'); e.classList.add('notranslate'); } } if (text != null) e.textContent = text; return e; }
 function svg(path){ var s = document.createElementNS('http://www.w3.org/2000/svg','svg'); s.setAttribute('viewBox','0 0 24 24'); s.setAttribute('class','icon'); s.setAttribute('aria-hidden','true'); s.innerHTML = path; return s; }
-var ICON = {check:'<path d="M5 12l5 5 9-10"/>', clock:'<circle cx="12" cy="12" r="8"/><path d="M12 8v4l2 2"/>'};
+var ICON = {check:'<path d="M5 12l5 5 9-10"/>', check2:'<path d="M2.5 12.5l4.5 4.5 9-10"/><path d="M10.5 16.2l.8.8 9-10"/>', clock:'<circle cx="12" cy="12" r="8"/><path d="M12 8v4l2 2"/>'};
+// one-to-one chats: how far the other side has received / seen it {room: {delivered, read}} (from the chat backend)
+var RCPT = {};
+// groups & channels: every other member's position {'g:<id>': {memberId: {delivered, read}}}
+var RCPTG = {};
+/* Status of one of OUR messages in a room: 'pending' (sending) · 'sent' · 'delivered' · 'read'. One-to-one chats: the other side's
+   position. Groups & channels: delivered = at least one other member received it, read = every other member saw it.
+   Lounge / match rooms: just sent. Used by the conversation and by the room list, so both always agree. */
+function tickState(roomId, m){
+  if (!m || CHAT.pending[m.id]) return 'pending';
+  if (isDmRoom(roomId)){ var rc = RCPT[roomId]; return rc && rc.read >= m.ts ? 'read' : rc && rc.delivered >= m.ts ? 'delivered' : 'sent'; }
+  var g = grpOf(roomId);
+  if (g){
+    var pos = RCPTG[roomId] || {}, others = (g.members || 0) - (g.status === 'member' || g.isOwner ? 1 : 0), seenN = 0, got = false;
+    for (var u in pos){ if (u === CHAT.uid) continue; if (pos[u].delivered >= m.ts || pos[u].read >= m.ts) got = true; if (pos[u].read >= m.ts) seenN++; }
+    return others > 0 && seenN >= others ? 'read' : got ? 'delivered' : 'sent';
+  }
+  return 'sent';
+}
+function tickIcon(state, inGroup){
+  var ic = svg(state === 'pending' ? ICON.clock : state === 'read' || state === 'delivered' ? ICON.check2 : ICON.check);
+  ic.setAttribute('role', 'img'); ic.removeAttribute('aria-hidden'); if (state === 'read') ic.classList.add('read');
+  ic.setAttribute('aria-label', state === 'pending' ? S('chat.sending') : state === 'read' ? S(inGroup ? 'chat.readAll' : 'chat.read') : state === 'delivered' ? S('chat.delivered') : S('chat.sent'));
+  return ic;
+}
 
 var LIVE = {matches: [], messages: [], profiles: {}, dirty: true, me: null};
 var CHAT = {db:null, user:null, room:null, uid:null, canPost:false, canEdit:false, active:'lounge', replyTo:null, lastSend:0, typingTimer:0, peers:[], pending:{}, renderToken:0, unseenBelow:0};
@@ -63,17 +89,46 @@ var CHAT = {db:null, user:null, room:null, uid:null, canPost:false, canEdit:fals
 var hero = document.querySelector('.hero'), feat = $('features');
 var callouts = Array.prototype.slice.call(document.querySelectorAll('.callout')), dots = Array.prototype.slice.call(document.querySelectorAll('.dots i'));
 var S2 = {pA:0, pB:0, pC:0, feature:-1, prevFeature:-1, inFeat:false, local:0};
-function featureLocal(f){ if (f < 0) return 0; return Math.max(0, Math.min(1, (S2.pB * 4.4 - f) / (f === 3 ? 1.4 : 1))); }
+// the section's scroll is split into 4 features + a short hold at the end (FEAT_UNITS − 4), so the last progress bar fills
+// before the section ends instead of crawling to the very bottom
+var FEAT_UNITS = 4.08;
+/* Phones (same query as the CSS and the 3D phone): the features are NOT pinned. They are 4 blocks stacked down the page,
+   each with an empty "slot" at its top where the phone sits. The phone rides with the current block, then glides DOWN to
+   the next block's slot while turning once, landing (facing you, new screen) as that block reaches the rest line. */
+var FLOW_MQ = window.matchMedia ? window.matchMedia('(max-width:760px), (max-width:1100px) and (orientation:portrait)') : null;
+function isFlow(){ return !!(FLOW_MQ && FLOW_MQ.matches); }
+var FLOW_R = 0.35;                       // rest line: where the phone's centre sits on screen (share of the viewport height)
+var flowCallouts = null, flowSlotH = 0;  // callouts in reading order, slot height (= their padding-top), refreshed on layout
+function flowMeasure(){
+  flowCallouts = callouts.slice().sort(function(a, b){ return +a.dataset.i - +b.dataset.i; });
+  flowSlotH = flowCallouts.length ? (parseFloat(getComputedStyle(flowCallouts[0]).paddingTop) || 0) : 0;
+}
+function flowEase(t){ var x = Math.max(0, Math.min(1, (t - 0.04) / 0.92)); return x * x * (3 - 2 * x); }   // smoothstep, barely held at the ends: the phone rides up a little, glides down, settles
+/** phase before | between | after, the block k we leave, travel progress e (0→1) and the phone's centre on screen (px) */
+function flowInfo(){
+  if (!flowCallouts) flowMeasure();
+  var vh = window.innerHeight, R = vh * FLOW_R, c = flowCallouts.map(function(el){ return el.getBoundingClientRect().top + flowSlotH / 2; }), n = c.length;
+  if (!n) return {phase:'after', k:0, e:1, y:R, R:R};
+  if (c[0] > R) return {phase:'before', k:0, e:0, y:c[0], R:R};
+  if (c[n - 1] <= R) return {phase:'after', k:n - 1, e:0, y:R, R:R};   // last block reached: its turn is done (no extra spin)
+  var k = 0; while (k < n - 2 && c[k + 1] <= R) k++;
+  var D = c[k + 1] - c[k], t = D > 0 ? (R - c[k]) / D : 1, e = flowEase(t);
+  return {phase:'between', k:k, e:e, y:c[k] + D * e, R:R};
+}
+window.__flowInfo = flowInfo;
+function featureLocal(f){ if (f < 0) return 0; return Math.max(0, Math.min(1, S2.pB * FEAT_UNITS - f)); }
 var progEls = [];
 function paintProgress(f){
-  S2.local = featureLocal(f);
+  S2.local = isFlow() ? (f >= 0 ? 1 : 0) : featureLocal(f);
   var els = f >= 0 ? [dots[f], callouts.filter(function(c){ return +c.dataset.i === f; })[0]].filter(Boolean).map(function(e){ return e.classList && e.classList.contains('callout') ? e.querySelector('.rule') : e; }).filter(Boolean) : [];
   progEls.forEach(function(e){ if (els.indexOf(e) < 0) e.style.setProperty('--p', '0'); });
   els.forEach(function(e){ e.style.setProperty('--p', S2.local.toFixed(4)); });
   progEls = els;
 }
 function applyFeature(){
-  var f = S2.inFeat && S2.pC < 1 ? Math.min(3, Math.floor(S2.pB * 4.4)) : -1;
+  var f;
+  if (isFlow()){ var fi = flowInfo(); f = S2.inFeat && S2.pC < 1 ? Math.min(3, fi.phase === 'between' ? fi.k + (fi.e >= 0.5 ? 1 : 0) : fi.k) : -1; }
+  else f = S2.inFeat && S2.pC < 1 ? Math.min(3, Math.floor(S2.pB * FEAT_UNITS)) : -1;
   paintProgress(f);
   if (f !== S2.feature){ S2.feature = f;
     callouts.forEach(function(c){ var i = +c.dataset.i; c.classList.toggle('on', i === f); c.classList.toggle('seen', f >= 0 && i < f); });
@@ -85,6 +140,16 @@ function applyFeature(){
 function isNarrow(){ return window.innerWidth <= 860; }
 function animateCallouts(f, prev, instant){
   feat.classList.add('gsap-callouts');
+  if (isFlow()){
+    callouts.forEach(function(c){
+      var i = +c.dataset.i, parts = c.querySelectorAll('.ic, h3, p'), rule = c.querySelector('.rule');
+      G.killTweensOf([c, parts, rule]); G.set(c, {autoAlpha:1, y:0});
+      if (i === f && !c._seen && !instant && !REDUCE){ c._seen = true; G.fromTo(parts, {opacity:0, y:26}, {opacity:1, y:0, duration:.7, ease:'power3.out', stagger:.08}); }
+      else if (!G.isTweening(parts)) G.set(parts, {opacity:1, y:0});
+      G.set(rule, {width:90});
+    });
+    return;
+  }
   var narrow = isNarrow();
   callouts.forEach(function(c){
     var i = +c.dataset.i, parts = c.querySelectorAll('.ic, h3, p'), rule = c.querySelector('.rule');
@@ -112,7 +177,7 @@ ScrollTrigger.create({trigger:feat, start:'top top', end:'bottom bottom', onUpda
 ScrollTrigger.create({trigger:feat, start:'bottom bottom', end:function(){ return '+=' + window.innerHeight * 0.8; }, onUpdate:function(st){ S2.pC = st.progress; applyFeature(); }});
 ScrollTrigger.create({start:40, end:'max', onToggle:function(st){ navState(); }, onUpdate:navState});
 function navState(){ var r = feat.getBoundingClientRect(), light = r.top < 60 && r.bottom > 60; document.body.classList.toggle('scrolled', window.scrollY > 40 && !light); document.body.classList.toggle('on-light', light); }
-navState(); ScrollTrigger.addEventListener('refresh', navState); window.addEventListener('load', function(){ setTimeout(navState, 50); }); setTimeout(navState, 300);
+navState(); ScrollTrigger.addEventListener('refresh', navState); ScrollTrigger.addEventListener('refresh', flowMeasure); window.addEventListener('load', function(){ setTimeout(navState, 50); }); setTimeout(navState, 300);
 
 /* ---------- Back to top: appears once you start scrolling, ring shows progress ---------- */
 (function(){
@@ -165,7 +230,7 @@ function renderSportTabs(){
 }
 var SITE = {bookmaker:'', promo:'', bonus:'', payments:'', signupUrl:'', termsUrl:'', agentName: cfg.agentName || ''};
 /* Partners: each one re-themes the whole site. Colours and texts are managed in the back office (Partners). */
-var BRANDS = (cfg.partners || []).map(function(p){ return {id:p.id, name:p.name, c:p.c}; });
+var BRANDS = (cfg.partners || []).map(function(p){ return {id:p.id, name:p.name, c:p.c, hero:p.hero || null, motion:p.motion || null}; });
 var BRAND_DATA = {}; (cfg.partners || []).forEach(function(p){ var o = {}; ['promo','bonus','payments','signupUrl','termsUrl'].forEach(function(k){ if (typeof p[k] === 'string' && p[k]) o[k] = p[k].slice(0, 300); }); BRAND_DATA[p.id] = o; });
 var CUR_BRAND = null;
 function brandById(id){ for (var i = 0; i < BRANDS.length; i++) if (BRANDS[i].id === id) return BRANDS[i]; return null; }
@@ -181,7 +246,7 @@ function movePartnerPill(btn, instant){
               .to(pill, {x:x, width:w, duration:.6, ease:'elastic.out(1, .75)'});
 }
 function setBrand(id, opts){
-  opts = opts || {}; if (!BRANDS.length) return; var b = brandById(id) || BRANDS[0], first = !CUR_BRAND;
+  opts = opts || {}; if (!BRANDS.length) return; var b = brandById(id) || BRANDS[0], first = !CUR_BRAND, prevBrand = CUR_BRAND;
   if (!first && b === CUR_BRAND && !opts.force) return;
   CUR_BRAND = b; var f = brandFields(b);
   SITE.bookmaker = b.name; SITE.promo = f.promo; SITE.bonus = f.bonus; SITE.payments = f.payments; SITE.signupUrl = f.signupUrl; SITE.termsUrl = f.termsUrl;
@@ -196,17 +261,92 @@ function setBrand(id, opts){
   if (word){ if (!first && !REDUCE){ G.timeline().to(word, {yPercent:40, opacity:0, duration:.25, ease:'power2.in'}).add(function(){ word.textContent = b.name; }).fromTo(word, {yPercent:-40, opacity:0}, {yPercent:0, opacity:1, duration:.6, ease:'expo.out'}); } else word.textContent = b.name; }
   if (!first && !REDUCE) G.fromTo('.js-code, .js-bookmaker, .js-bonus', {opacity:0, y:6}, {opacity:1, y:0, duration:.5, stagger:.015, ease:'power2.out', clearProps:'transform'});
   if (window.phoneBrand) window.phoneBrand(b, first);
+  // which side the new picture comes from: given by the caller (arrows / phone drag), else where the partner sits in the switcher
+  swapHero(b, first, opts.from || (prevBrand && BRANDS.indexOf(b) < BRANDS.indexOf(prevBrand) ? -1 : 1));
   store('ps_brand', b.id);
   if (!opts.fromHash && !first && !document.body.classList.contains('chat-open')){ try { history.replaceState(null, '', '#b-' + b.id); } catch(e){} }
 }
 (function(){
   var box = $('partners');
   BRANDS.forEach(function(b){ var bt = el('button', 'p-btn', b.name); bt.type = 'button'; bt.dataset.id = b.id; bt.setAttribute('aria-pressed', 'false'); bt.onclick = function(){ setBrand(b.id); }; box.appendChild(bt); });
-  box.addEventListener('keydown', function(e){ if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return; var i = BRANDS.indexOf(CUR_BRAND), n = BRANDS.length; i = (i + (e.key === 'ArrowRight' ? 1 : n - 1)) % n; setBrand(BRANDS[i].id); var nb = box.querySelector('.p-btn[data-id="' + BRANDS[i].id + '"]'); if (nb) nb.focus(); e.preventDefault(); });
+  box.addEventListener('keydown', function(e){ if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return; var i = BRANDS.indexOf(CUR_BRAND), n = BRANDS.length; i = (i + (e.key === 'ArrowRight' ? 1 : n - 1)) % n; setBrand(BRANDS[i].id, {from: e.key === 'ArrowRight' ? 1 : -1}); var nb = box.querySelector('.p-btn[data-id="' + BRANDS[i].id + '"]'); if (nb) nb.focus(); e.preventDefault(); });
   window.addEventListener('resize', function(){ movePartnerPill(document.querySelector('.p-btn[aria-pressed="true"]'), true); });
   if (window.ResizeObserver) new ResizeObserver(function(){ movePartnerPill(document.querySelector('.p-btn[aria-pressed="true"]'), true); }).observe(box);
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(function(){ movePartnerPill(document.querySelector('.p-btn[aria-pressed="true"]'), true); });
 })();
+/* first-screen person picture: each partner's own (a partner without one shows none).
+   Switching moves it sideways, following the partner: a partner to the right (or the next one when you drag the phone left)
+   comes in from the right while the old person drifts out to the left — and the other way round. Unhurried on purpose:
+   the old one leaves over .9 s, the new one glides in over 1.6 s with a soft ease-out, the two overlapping so there's no
+   empty moment. The new file is decoded first so it never pops in half-drawn. Reduced motion: plain .6 s crossfade.
+   First load (no switch): the page's own opening rise. */
+var HERO = {el: document.querySelector('.hero-person'), seq: 0, preloaded: false, out: []};
+// defaults; each partner can set its own in the back office (Partners → partner → First screen picture → Switch animation)
+var HERO_MOTION = {style:'slide', inMs:1600, outMs:900, delay:180, dx:140, ease:'cubic-bezier(.22,.61,.36,1)', outEase:'cubic-bezier(.45,0,.55,1)'};
+function heroFrames(M, from, entering){
+  // entering: from the side (slide) / from below (rise) / in place (fade); leaving goes the opposite way, a bit less far
+  var d = entering ? M.dx : -Math.round(M.dx * .8);
+  var t = M.style === 'rise' ? 'translateY(' + (entering ? M.dx : Math.round(M.dx * .6)) + 'px)' : M.style === 'fade' ? 'none' : 'translateX(' + (from * d) + 'px)';
+  return t;
+}
+function heroOf(b){ return (b && b.hero) || null; }
+function heroDecode(url){
+  return new Promise(function(ok){
+    var pre = new Image(); pre.decoding = 'async'; pre.src = url;
+    var done = function(){ ok(); };
+    if (pre.decode) pre.decode().then(done, done); else { pre.onload = pre.onerror = done; }
+    setTimeout(done, 4000); // never wait forever on a slow network
+  });
+}
+function heroSet(img, h){ if (h.w) img.width = h.w; else img.removeAttribute('width'); if (h.h) img.height = h.h; else img.removeAttribute('height'); img.src = h.url; }
+function heroAnim(img, frames, ms, ease, delay){
+  var a = img.animate(frames, {duration: ms, easing: ease, delay: delay || 0, fill: 'both'});
+  return new Promise(function(ok){ a.onfinish = function(){ ok(a); }; a.oncancel = function(){ ok(null); }; });
+}
+function swapHero(b, first, from){
+  from = from < 0 ? -1 : 1;
+  var M = Object.assign({}, HERO_MOTION, (b && b.motion) || {}); if (REDUCE) M.style = 'fade';
+  var img = HERO.el; if (!img) return;
+  var h = heroOf(b), url = h ? h.url : null, cur = img.hidden ? null : img.getAttribute('src');
+  if (url === cur) return;
+  var seq = ++HERO.seq;
+  if (first){
+    // the server rendered another partner's picture: keep it invisible until the right one is loaded, then the normal opening rise
+    if (!url){ img.hidden = true; return; }
+    img.style.transition = 'none'; img.style.opacity = '0'; img.style.transform = 'translateY(40px)';
+    heroSet(img, h); img.hidden = false;
+    heroDecode(url).then(function(){ if (seq !== HERO.seq) return; void img.offsetWidth; img.style.transition = ''; img.style.opacity = ''; img.style.transform = ''; });
+    return;
+  }
+  // a quick second switch: drop whatever was still leaving
+  HERO.out.forEach(function(o){ if (o.parentNode) o.parentNode.removeChild(o); }); HERO.out = [];
+  (url ? heroDecode(url) : Promise.resolve()).then(function(){
+    if (seq !== HERO.seq) return;
+    var old = cur ? img : null;
+    if (old){
+      HERO.out.push(old);
+      old.getAnimations().forEach(function(a){ a.commitStyles && a.commitStyles(); a.cancel(); });
+      old.style.transition = 'none';
+      var o0 = getComputedStyle(old).opacity, t0 = getComputedStyle(old).transform; if (!t0 || t0 === 'none') t0 = 'translateX(0)';
+      heroAnim(old, [{opacity:o0, transform:t0}, {opacity:0, transform:heroFrames(M, from, false)}], REDUCE ? 600 : M.outMs, REDUCE ? 'ease' : M.outEase).then(function(){
+        HERO.out = HERO.out.filter(function(o){ return o !== old; });
+        if (url){ if (old.parentNode) old.parentNode.removeChild(old); }
+        else { old.hidden = true; old.getAnimations().forEach(function(a){ a.cancel(); }); old.style.opacity = ''; old.style.transform = ''; old.style.transition = ''; }
+      });
+    }
+    if (!url) return;
+    var next = old ? img.cloneNode(false) : img;
+    if (old){ next.removeAttribute('style'); next.removeAttribute('fetchpriority'); old.parentNode.insertBefore(next, old.nextSibling); }
+    next.style.transition = 'none'; next.style.opacity = '0';
+    heroSet(next, h); next.hidden = false; HERO.el = next;
+    heroAnim(next, [{opacity:0, transform:heroFrames(M, from, true), offset:0}, {opacity:1, offset: M.style === 'fade' ? 1 : .85}, {opacity:1, transform:'none', offset:1}], REDUCE ? 600 : M.inMs, REDUCE ? 'ease' : M.ease, REDUCE ? 0 : old ? M.delay : 0).then(function(a){
+      if (seq !== HERO.seq && HERO.el !== next) return;
+      next.style.opacity = ''; next.style.transform = ''; if (a) a.cancel(); next.style.transition = '';
+    });
+  });
+}
+// warm the other partners' pictures: when someone reaches for the switcher, or anyway once the page has settled
+(function(){ var box = $('partners'); if (!box || !HERO.el) return; function warm(){ if (HERO.preloaded) return; HERO.preloaded = true; BRANDS.forEach(function(b){ var h = heroOf(b); if (h){ var i = new Image(); i.decoding = 'async'; i.src = h.url; } }); } box.addEventListener('pointerenter', warm); box.addEventListener('focusin', warm); box.addEventListener('touchstart', warm, {passive:true}); window.addEventListener('load', function(){ setTimeout(function(){ (window.requestIdleCallback || function(f){ setTimeout(f, 1); })(warm); }, 2500); }); })();
 function brandFromHash(){ var m = /^#b-([a-z0-9-]+)$/.exec(location.hash); return m && brandById(m[1]) ? m[1] : null; }
 window.addEventListener('hashchange', function(){ var id = brandFromHash(); if (id) setBrand(id, {fromHash:true}); });
 function safeUrl(u){ return typeof u === 'string' && /^https:\/\//.test(u) ? u : ''; }
@@ -318,7 +458,7 @@ var segPill = LiquidPill($('segPill'), 'x'), roomPill = LiquidPill($('roomPill')
 var wallPush = Spring(0, .5, .9, .2).on(function(v){ $('wallIn').style.transform = Math.abs(v) < .2 ? '' : 'translateY(' + v.toFixed(2) + 'px)'; });
 
 var DM = {agent:{uid:null, lastSeen:0}, mine:[], threads:{}, msgs:{}, subs:{}};
-// fan-to-fan private chats (consent first): PM.rels[uid] = {status: pending-out | pending-in | accepted | blocked, lastSeen}, PM.msgs[uid] = messages
+// member-to-member private chats (consent first): PM.rels[uid] = {status: pending-out | pending-in | accepted | blocked, lastSeen}, PM.msgs[uid] = messages
 var PM = {rels:{}, msgs:{}};
 // groups & channels (made by the team): GR.list = rooms this viewer sees ({id, name, kind, join, status, canRead, canPost, members, rules…}), GR.msgs[id]
 var GR = {list:[], msgs:{}};
@@ -364,7 +504,35 @@ function fetchName(id){ if (!id || NAMES.asked[id] || !CHAT.user) return; NAMES.
   NAMES.timer = setTimeout(function(){ var q = NAMES.queue; NAMES.queue = []; names(q).then(function(){ refreshChat(); }); }, 60); }
 function nameOf(id){ if (id && id === CHAT.uid) return S('chat.you'); var p = LIVE.profiles[id]; if (p && p.name) return p.name; if (id && id === DM.agent.uid) return agentName();
   if (!id) return S('chat.guest'); if (NAMES.gone[id]) return S('chat.deletedUser'); fetchName(id); return '…'; }
-function msgPreview(m){ return (m && (m.text || (m.image ? S('chat.photo') : ''))) || ''; }
+/* one line describing a quoted message: its text, or 📷 Photo / 🎤 Voice message · 0:12 (with an icon) */
+function quoteLine(box, q){
+  box.textContent = '';
+  if (q.kind) box.appendChild(svg(q.kind === 'voice' ? '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>' : '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 8"/>'));
+  box.appendChild(document.createTextNode(q.text || (q.kind === 'voice' ? S('chat.voice') + (q.dur ? ' · ' + fmtDur(q.dur) : '') : q.kind === 'photo' ? S('chat.photo') : '')));
+}
+function msgPreview(m){ return (m && (m.text || (m.image || m.expired === 'photo' || (m.locked && m.locked.kind === 'photo') ? S('chat.photo') : m.voice || m.expired === 'voice' || (m.locked && m.locked.kind === 'voice') ? S('chat.voice') + (m.voice && m.voice.dur ? ' · ' + fmtDur(m.voice.dur) : '') : ''))) || ''; }
+/* Are this room's messages here yet? (each kind of room loads on its own: the lounge with the first load, a group's
+   messages with the group list, a private chat once accepted, a member's help thread when the team opens it) */
+function roomReady(id){
+  if (!UI.loaded || CHAT.wantRoom) return false;
+  if (pmUid(id)){ var rel = PM.rels[pmUid(id)]; return PM.msgs[pmUid(id)] !== undefined || !(rel && rel.status === 'accepted'); }
+  if (grpId(id)){ var g = grpOf(id); return GR.msgs[grpId(id)] !== undefined || !(g && g.canRead); }
+  if (String(id).indexOf('sup:') === 0) return DM.msgs[id.slice(4)] !== undefined;
+  return true;
+}
+/* placeholder bubbles while a room loads — real rows, so they take the theme's colours and the chosen bubble style */
+function skeletonRows(){
+  if (UI.skels) return UI.skels;
+  var spec = [['in', 58, 2], ['in', 34, 1], ['out', 46, 1], ['out', 64, 2], ['in', 40, 1], ['out', 28, 1], ['in', 52, 2]];
+  UI.skels = spec.map(function(x, i){
+    var prev = spec[i - 1], next = spec[i + 1];
+    var r = el('div', 'row skel-row ' + x[0] + (!prev || prev[0] !== x[0] ? ' gap' : '') + (!next || next[0] !== x[0] ? ' tail' : '')); r.setAttribute('aria-hidden', 'true');
+    if (x[0] === 'in'){ var av = el('div', 'av' + (!next || next[0] !== x[0] ? '' : ' hide')); av.appendChild(el('span', 'ini skel-av')); r.appendChild(av); }
+    var w = el('div', 'bwrap'); w.style.width = x[1] + '%'; var b = el('div', 'bubble skel-b'); for (var k = 0; k < x[2]; k++){ var ln = el('i'); ln.style.width = (k === x[2] - 1 && x[2] > 1 ? 60 : 92) + '%'; b.appendChild(ln); }
+    w.appendChild(b); r.appendChild(w); r.style.animationDelay = (i * 90) + 'ms'; return r;
+  });
+  return UI.skels;
+}
 function roomMsgs(id){ if (id === 'support') return DM.mine; if (pmUid(id)) return PM.msgs[pmUid(id)] || []; if (grpId(id)) return GR.msgs[grpId(id)] || []; if (String(id).indexOf('sup:') === 0) return DM.msgs[id.slice(4)] || []; return LIVE.messages.filter(function(m){ return (m.room || 'lounge') === id; }); }
 
 var toastTimer = 0;
@@ -381,6 +549,7 @@ function personAvatar(uid, showOnline, agent){
 }
 function roomAvatar(r, showOnline){
   if (r.dm) return personAvatar(r.uid, showOnline, r.agent);
+  if (r.group && r.group.photo){ var gp = el('div', 'r-av person'); gp.setAttribute('aria-hidden', 'true'); var im = document.createElement('img'); im.alt = ''; im.src = r.group.photo; gp.appendChild(im); if (showOnline && online(r.id) > 0) gp.appendChild(el('span', 'on')); return gp; }   // the room's photo
   if (r.group){ var ga = el('div', 'r-av person'); ga.setAttribute('aria-hidden', 'true'); var gi = el('span', 'ini'); gi.style.background = r.group.gradient || 'linear-gradient(135deg,#3E63DD,#8E4EC6)';
     gi.appendChild(svg(r.group.kind === 'channel' ? '<path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1z"/><path d="M15 9a4 4 0 0 1 0 6M18 6a8 8 0 0 1 0 12"/>' : '<circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3 19c0-3 2.7-5 6-5s6 2 6 5M15 14.5c2.8 0 5 1.6 5 4.5"/>'));
     ga.appendChild(gi); if (showOnline && online(r.id) > 0) ga.appendChild(el('span', 'on')); return ga; }
@@ -415,15 +584,17 @@ function renderRooms(){
   placeRoomPill();
 }
 function placeRoomPill(){
-  var li = UI.roomEls.get(CHAT.active), show = !!(li && li.isConnected && isOpen() && window.innerWidth > 820);
+  var li = UI.roomEls.get(CHAT.active), show = !!(li && li.isConnected && viewing() && window.innerWidth > 820);
   if (li && li.isConnected) roomPill.move(li.offsetTop, li.offsetTop + li.offsetHeight, show); else roomPill.move(0, 0, false);
 }
 function fillRoom(b, r){
   var msgs = roomMsgs(r.id), last = msgs[msgs.length - 1];
   var unread = msgs.filter(function(m){ return m.ts > (lastSeen[r.id] || 0) && m.by !== CHAT.uid; }).length;
-  if (!last && r.dm && r.uid && DM.threads[r.uid] && DM.threads[r.uid].lastTs){ var th = DM.threads[r.uid]; last = {id:'t' + th.lastTs, text:String(th.lastText || (th.photo ? S('chat.photo') : '')), ts:Number(th.lastTs), by:th.lastBy}; if (last.ts > (lastSeen[r.id] || 0) && last.by !== CHAT.uid) unread = 1; }
-  var typ = typersIn(r.id), current = r.id === CHAT.active && isOpen();
-  var sig = [r.title, !!r.pendingOut, r.group && [r.group.status, r.group.canRead, r.group.kind, r.group.gradient, r.group.description].join(','), last && last.id, msgPreview(last), unread, typ.length, r.dm ? isOnline(r.uid) : online(r.id) > 0, r.dm && LIVE.profiles[r.uid] && (LIVE.profiles[r.uid].avatarUrl || LIVE.profiles[r.uid].gradient), r.match && [r.match.status, r.match.hs, r.match.as, r.match.kickoff], current, last && nameOf(last.by)].join('|');
+  if (!last && r.dm && r.uid && DM.threads[r.uid] && DM.threads[r.uid].lastTs){ var th = DM.threads[r.uid]; last = {id:'t' + th.lastTs, text:String(th.lastText || (th.photo ? S('chat.photo') : th.voice ? S('chat.voice') : '')), ts:Number(th.lastTs), by:th.lastBy}; if (last.ts > (lastSeen[r.id] || 0) && last.by !== CHAT.uid) unread = 1; }
+  var typ = typersIn(r.id), current = r.id === CHAT.active && viewing();
+  // our last message: its status, like WhatsApp (also for a team thread whose messages aren't loaded yet: its summary has the time)
+  var myTick = !typ.length && last && last.by === CHAT.uid && last.ts ? tickState(r.id, last) : '';
+  var sig = [myTick, r.title, !!r.pendingOut, r.group && [r.group.status, r.group.canRead, r.group.kind, r.group.gradient, r.group.photo, r.group.description].join(','), last && last.id, msgPreview(last), unread, typ.length, r.dm ? isOnline(r.uid) : online(r.id) > 0, r.dm && LIVE.profiles[r.uid] && (LIVE.profiles[r.uid].avatarUrl || LIVE.profiles[r.uid].gradient), r.match && [r.match.status, r.match.hs, r.match.as, r.match.kickoff], current, last && nameOf(last.by)].join('|');
   if (b._sig === sig) return; b._sig = sig;
   b.textContent = ''; if (current) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
   b.appendChild(roomAvatar(r, true));
@@ -436,9 +607,11 @@ function fillRoom(b, r){
   if (r.group && (!r.group.canRead || r.group.status === 'invited')){ var gs = r.group.status;
     main.appendChild(el('div', 'r-last' + (gs === 'invited' ? ' typing' : ''), gs === 'invited' ? S('groups.invitedShort') : gs === 'requested' ? S('groups.requestedShort') : (r.group.description || S('groups.membersOnly')))); b.appendChild(main); return; }
   var prev = typ.length ? (typ.length === 1 ? S('chat.isTyping', {name: nameOf(peerId(typ[0]))}) : S('chat.peopleTyping', {n: typ.length}))
-    : (!last && r.group) ? (r.group.description || S('groups.sub', {kind: S('groups.kind.' + r.group.kind), n: r.group.members}))
+    : (!last && r.group) ? (r.group.description || S(r.group.members === 1 ? 'groups.sub1' : 'groups.sub', {kind: S('groups.kind.' + r.group.kind), n: r.group.members}))
     : last ? (last.by === CHAT.uid ? S('chat.lastByYou', {text: msgPreview(last)}) : (r.dm ? msgPreview(last) : S('chat.lastBy', {name: nameOf(last.by), text: msgPreview(last)}))) : r.dm ? (r.agent ? S('chat.agentHint') : S('chat.noMessages')) : (r.lounge ? S('chat.loungeHint') : (r.match.status === 'upcoming' ? S('chat.starts', {time: r.match.kickoff || S('chat.soon')}) : (r.match.league || S('chat.eventRoom'))));
-  main.appendChild(el('div', 'r-last' + (typ.length ? ' typing' : ''), prev)); b.appendChild(main);
+  var lastEl = el('div', 'r-last' + (typ.length ? ' typing' : '') + (myTick ? ' has-tick' : ''), prev);
+  if (myTick) lastEl.insertBefore(tickIcon(myTick, !!r.group), lastEl.firstChild);
+  main.appendChild(lastEl); b.appendChild(main);
   var side = el('div', 'r-side'); side.appendChild(el('span', 'r-time', last ? listTime(last.ts) : ''));
   if (unread && !current) side.appendChild(el('span', 'unread', unread > 99 ? '99+' : String(unread)));
   b.appendChild(side);
@@ -448,18 +621,25 @@ function fillRoom(b, r){
 /* ---------- Header (updated in place, never rebuilt mid-view) ---------- */
 function renderHeader(){
   var r = roomById(CHAT.active), on = r.dm && isOnline(r.uid);
-  var key = r.id + '|' + r.title + '|' + on + '|' + (r.dm && LIVE.profiles[r.uid] ? (LIVE.profiles[r.uid].avatarUrl || LIVE.profiles[r.uid].gradient || '') : '');
-  if (UI.hdrRoom !== key){ var av = $('cAvatar'); av.textContent = ''; av.appendChild(roomAvatar(r, true)); $('cTitle').textContent = r.title; UI.hdrRoom = key; }
+  var key = r.id + '|' + r.title + '|' + on + '|' + (r.dm && LIVE.profiles[r.uid] ? (LIVE.profiles[r.uid].avatarUrl || LIVE.profiles[r.uid].gradient || '') : '') + '|' + (r.group ? (r.group.photo || r.group.gradient || '') : '');
+  if (UI.hdrRoom !== key){ var swap = UI.hdrId !== undefined && UI.hdrId !== r.id; UI.hdrId = r.id;
+    if (swap && !REDUCE) [ $('cAvatar'), document.querySelector('.c-head .c-title') ].forEach(function(e){ if (!e) return; e.classList.remove('hdr-in'); void e.offsetWidth; e.classList.add('hdr-in'); });   // another room: name and picture slide in
+    var av = $('cAvatar'); av.textContent = ''; av.appendChild(roomAvatar(r, true)); $('cTitle').textContent = r.title; UI.hdrRoom = key; }
+  // tap the room's name / picture: group info (anyone who can see the group) or the person's card (private chat)
+  var info = r.group ? function(){ backend.groupInfo(r.group.id, roomAvatar(r, false), {left: function(){ goChat('', {replace: true}); }}); } : r.pm ? function(){ backend.openPerson(r.uid); } : null;
+  [document.querySelector('.c-head .c-title'), $('cAvatar')].forEach(function(e){ if (!e) return; e.onclick = info; e.classList.toggle('tappable', !!info);
+    if (info){ e.setAttribute('role', 'button'); e.tabIndex = 0; e.setAttribute('aria-label', r.group ? S('gi.infoAria', {name: r.title}) : r.title); e.onkeydown = function(ev){ if (ev.key === 'Enter' || ev.key === ' '){ ev.preventDefault(); info(); } }; }
+    else { e.removeAttribute('role'); e.removeAttribute('tabindex'); e.removeAttribute('aria-label'); e.onkeydown = null; } });
   var mg = $('cManage'); if (mg){ mg.hidden = !(r.group && r.group.isAdmin); mg.onclick = function(){ backend.manageRoom(r.group.id); }; }
-  var lv = $('cLeave'); if (lv){ lv.hidden = !(r.group && r.group.status === 'member' && !CHAT.canEdit && !r.group.isOwner); lv.onclick = function(){ if (window.confirm(S('groups.leaveConfirm', {name: r.group.name}))) backend.groupLeave(r.group.id).then(function(){ toast(S('groups.left', {name: r.group.name}), true); goChat('', {replace: true}); }, function(e){ toast(e.message); }); }; }
+  var lv = $('cLeave'); if (lv){ lv.hidden = !(r.group && r.group.status === 'member' && !CHAT.canEdit && !r.group.isOwner); lv.onclick = function(){ askConfirm(S('groups.leaveConfirm', {name: r.group.name}), S('groups.leave'), true).then(function(y){ if (y) backend.groupLeave(r.group.id).then(function(){ toast(S('groups.left', {name: r.group.name}), true); goChat('', {replace: true}); }, function(e){ toast(e.message); }); }); }; }
   var pin = $('pinned'); if (pin){ if (!pin._orig) pin._orig = pin.lastElementChild.innerHTML; var txt = pin.lastElementChild, rules = r.group && r.group.rules;
     if (rules){ if (pin._room !== r.id){ txt.textContent = ''; txt.appendChild(el('b', null, S('groups.rulesTitle'))); txt.appendChild(document.createTextNode(' · ' + rules)); pin._room = r.id; } }
     else if (pin._room){ txt.innerHTML = pin._orig; pin._room = null; } }
-  var blk = $('cBlock'); if (blk){ blk.hidden = !(r.pm && PM.rels[r.uid] && PM.rels[r.uid].status === 'accepted'); blk.onclick = function(){ if (window.confirm(S('pm.blockConfirm', {name: nameOf(r.uid)}))) backend.pmRespond(r.uid, 'block'); }; }
+  var blk = $('cBlock'); if (blk){ blk.hidden = !(r.pm && PM.rels[r.uid] && PM.rels[r.uid].status === 'accepted'); blk.onclick = function(){ askConfirm(S('pm.blockConfirm', {name: nameOf(r.uid)}), S('pm.block'), true).then(function(y){ if (y) backend.pmRespond(r.uid, 'block'); }); }; }
   var sub = $('cSub'), typ = typersIn(CHAT.active), text = '', cls = '', dot = false;
   if (typ.length){ cls = 'typing'; text = r.dm ? S('chat.typingShort') : (typ.length === 1 ? S('chat.isTyping', {name: nameOf(peerId(typ[0]))}) : S('chat.peopleAreTyping', {n: typ.length})); }
   else if (r.pendingOut){ text = S('pm.waitingShort'); }
-  else if (r.group){ text = S('groups.sub', {kind: S('groups.kind.' + r.group.kind), n: r.group.members}); }
+  else if (r.group){ text = S(r.group.members === 1 ? 'groups.sub1' : 'groups.sub', {kind: S('groups.kind.' + r.group.kind), n: r.group.members}); }
   else if (r.dm){
     if (on){ cls = 'on'; text = S('chat.online'); }
     else { text = seenText(lastSeenOf(r.uid)) || (r.agent ? S('chat.agentSub') : S('chat.offline')); }
@@ -494,17 +674,210 @@ function lbFit(w, h){
 function lbPlace(r, radius){ var f = LB._frame; f.style.left = r.x + 'px'; f.style.top = r.y + 'px'; f.style.width = r.w + 'px'; f.style.height = r.h + 'px'; f.style.borderRadius = radius; }
 function lbRectOf(elm){ var r = elm.getBoundingClientRect(); return {x: r.left, y: r.top, w: r.width, h: r.height}; }
 function lbVisible(elm){ if (!elm || !elm.isConnected) return false; var r = elm.getBoundingClientRect(); return r.width > 0 && r.bottom > 0 && r.top < window.innerHeight && r.right > 0 && r.left < window.innerWidth; }
-function openLightbox(url, thumb, w, h){
+/* ---------- Chat media: pictures and voice messages, downloaded on demand and kept in the browser's cache ----------
+   Pictures arrive as a tiny blurred preview (inside the message) + a download button with the size; the file is fetched
+   once (only when asked, or automatically for our own), stored in Cache Storage ('oc-media-v1') and shown from a local
+   blob URL — next time (even after a reload) it appears at once, without the network. Voice messages load on first play. */
+var MEDIA = {blobs:{}, loading:{}, cache:null, subs:{}, last:{}, ctl:{}};
+/* sending a picture / voice note: {clientId: {k: 0..1, ctl, url (the local copy)}} */
+var UPLOADS = {};
+/* our own file just sent: the server's copy is the same file → use the local one (and keep it in the cache), no download */
+function mediaAdopt(m, url){
+  var u = m && m.clientId && UPLOADS[m.clientId], k = mediaKey(url);
+  if (!u || !u.url || MEDIA.blobs[k] || /^blob:/.test(url)) return;
+  MEDIA.blobs[k] = u.url;
+  fetch(u.url).then(function(r){ return mediaStore().then(function(c){ if (c) return c.put(k, r); }); }).catch(function(){});
+}
+function uploadOf(m){ return m && CHAT.pending[m.id] && UPLOADS[m.id]; }
+/* sending: the same filling ring as a download, ✕ inside = cancel the send; "45%" on a picture */
+function paintUpload(row, m){
+  var u = uploadOf(m), pct = u ? Math.round(u.k * 100) : 0;
+  if (row._pic){
+    row._pic.classList.toggle('is-uploading', !!(u && m.image));
+    if (u && m.image){
+      if (!row._up){ row._up = el('span', 'b-up'); row._up._r = progressRing(true); row._up.appendChild(row._up._r); row._up._t = el('span'); row._up.appendChild(row._up._t); row._pic.appendChild(row._up); }
+      row._up._r.set(u.k); row._up._t.textContent = pct + '%'; row._pic.classList.toggle('up-done', u.k >= 1); row._pic.setAttribute('aria-label', S('media.uploading', {n: pct}));
+    }
+  }
+  if (row._voice){
+    var v = row._voice; v.classList.toggle('uploading', !!(u && m.voice));
+    if (u && m.voice){ if (!v._ring){ v._ring = progressRing(false); v._btn.appendChild(v._ring); } v._ring.set(u.k); v._btn.setAttribute('aria-label', S('media.uploading', {n: pct})); }
+  }
+}
+function uploadProgress(clientId, sent, total){
+  var u = UPLOADS[clientId]; if (!u) return; u.k = total ? Math.min(1, sent / total) : 0;
+  var row = UI.rows.get(clientId); if (row && row._m) paintUpload(row, row._m);
+}
+function uploadCancel(m){ var u = uploadOf(m); if (!u) return false; if (u.k >= 1) return true; u.cancelled = true; if (u.ctl.abort) u.ctl.abort(); return true; }   // fully sent: only the server's answer is left, too late to cancel (it would come back)
+function mediaStore(){ if (!MEDIA.cache) MEDIA.cache = (window.caches && window.isSecureContext) ? caches.open('oc-media-v1').catch(function(){ return null; }) : Promise.resolve(null); return MEDIA.cache; }
+function mediaKey(url){ try { return new URL(url, location.href).href; } catch(e){ return url; } }
+/** the object URL if this file is already on the device (memory or cache), else null — never uses the network */
+function mediaCached(url){
+  var k = mediaKey(url); if (MEDIA.blobs[k]) return Promise.resolve(MEDIA.blobs[k]);
+  return mediaStore().then(function(c){ return c ? c.match(k) : null; }).then(function(r){ return r ? r.blob() : null; })
+    .then(function(b){ return b ? (MEDIA.blobs[k] = MEDIA.blobs[k] || URL.createObjectURL(b)) : null; }).catch(function(){ return null; });
+}
+/** download once (shared by everyone asking at the same time), keep it in the cache, give an object URL */
+/* Download a picture / voice note once (then it lives in the cache). onProg(loaded, total) follows the real bytes as they
+   arrive — the ring on the download button fills with them. sizeHint: the size we already know, when the server sends none. */
+function mediaFetch(url, onProg, sizeHint){
+  var k = mediaKey(url); if (MEDIA.blobs[k]) return Promise.resolve(MEDIA.blobs[k]);
+  if (onProg){ (MEDIA.subs[k] = MEDIA.subs[k] || []).push(onProg); if (MEDIA.last[k]) onProg(MEDIA.last[k][0], MEDIA.last[k][1]); }
+  if (MEDIA.loading[k]) return MEDIA.loading[k];
+  var ctl = window.AbortController ? new AbortController() : null; MEDIA.ctl[k] = ctl;
+  var emit = function(a, b){ MEDIA.last[k] = [a, b]; (MEDIA.subs[k] || []).forEach(function(f){ try { f(a, b); } catch (e) {} }); };
+  var p = mediaCached(k).then(function(u){ if (u) return u;
+    return fetch(k, {credentials:'same-origin', signal: ctl ? ctl.signal : undefined}).then(function(r){
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      var type = r.headers.get('content-type') || '', total = Number(r.headers.get('content-length')) || Number(sizeHint) || 0;
+      var rd = r.body && r.body.getReader ? r.body.getReader() : null;
+      emit(0, total);
+      if (!rd){ var copy = r.clone(); mediaStore().then(function(c){ if (c) c.put(k, copy).catch(function(){}); }); return r.blob(); }
+      var parts = [], got = 0;
+      return (function pump(){ return rd.read().then(function(x){ if (x.done) return; parts.push(x.value); got += x.value.length; emit(got, Math.max(total, got)); return pump(); }); })()
+        .then(function(){ var b = new Blob(parts, {type: type}); mediaStore().then(function(c){ if (c) c.put(k, new Response(b, {headers: {'content-type': type}})).catch(function(){}); }); return b; });
+    }).then(function(b){ return (MEDIA.blobs[k] = URL.createObjectURL(b)); }); });
+  MEDIA.loading[k] = p;
+  var done = function(){ delete MEDIA.loading[k]; delete MEDIA.subs[k]; delete MEDIA.last[k]; delete MEDIA.ctl[k]; };
+  p.then(done, done);
+  return p;
+}
+function mediaAbort(url){ var c = MEDIA.ctl[mediaKey(url)]; if (c) c.abort(); }
+/* A progress ring (fills clockwise from the top) — on the picture's download button and around the voice play button. */
+var RING_C = 2 * Math.PI * 10;
+function progressRing(withX){
+  var r = svg('<circle class="pr-track" cx="12" cy="12" r="10"/><circle class="pr-fill" cx="12" cy="12" r="10"/>' + (withX ? '<path class="pr-x" d="M9 9l6 6M15 9l-6 6"/>' : ''));
+  r.classList.add('pr-ring'); var f = r.querySelector('.pr-fill'); f.style.strokeDasharray = RING_C; f.style.strokeDashoffset = RING_C;
+  r.set = function(k){ f.style.strokeDashoffset = RING_C * (1 - Math.max(0, Math.min(1, k || 0))); };
+  return r;
+}
+function fmtBytes(n){ n = Number(n) || 0; return n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB'; }
+function fmtDur(s){ s = Math.max(0, Math.round(Number(s) || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+/** keep a picture or voice note on the device: the share sheet on phones (→ "Save image"), a download elsewhere */
+function mediaSave(objUrl, name){
+  fetch(objUrl).then(function(r){ return r.blob(); }).then(function(b){
+    var file = new File([b], name, {type: b.type || 'application/octet-stream'});
+    var touch = window.matchMedia && window.matchMedia('(pointer:coarse)').matches;
+    if (touch && navigator.canShare && navigator.canShare({files:[file]})) return navigator.share({files:[file]}).catch(function(){});
+    var a = document.createElement('a'); a.href = objUrl; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  }).catch(function(){ toast(S('media.saveFailed')); });
+}
+
+/* A picture bubble: shown at once when it is ours, already on this device, or a local (just picked) file; otherwise the tiny
+   blurred preview + "⬇ 240 KB" until someone taps it. */
+function picShow(row, m, url){ if (row._m !== m) return; row._picUrl = url; if (row._picImg.getAttribute('src') !== url) row._picImg.src = url; row._pic.classList.remove('is-thumb', 'is-loading'); row._pic.setAttribute('aria-label', S('chat.viewImage')); }
+function picIdle(row, im){   // the "⬇ 240 KB" button
+  row._pic.classList.remove('is-loading');
+  row._picDl.textContent = ''; row._picDl.appendChild(svg('<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>')); if (im.size) row._picDl.appendChild(el('span', null, fmtBytes(im.size)));
+  row._pic.setAttribute('aria-label', S('media.downloadPhoto', {size: im.size ? fmtBytes(im.size) : ''}));
+}
+function picDownload(row, m){
+  var im = m.image;
+  if (row._pic.classList.contains('is-loading')){ row._picCancelled = true; mediaAbort(im.url); return; }   // tap again: cancel (like WhatsApp)
+  row._picCancelled = false; row._pic.classList.add('is-loading');
+  var ring = progressRing(true), txt = el('span', null, im.size ? '0 / ' + fmtBytes(im.size) : '0%');
+  row._picDl.textContent = ''; row._picDl.appendChild(ring); row._picDl.appendChild(txt);
+  var lastPct = -1;
+  mediaFetch(im.url, function(got, total){
+    if (row._m !== m) return; var k = total ? got / total : 0; ring.set(k);
+    txt.textContent = total ? fmtBytes(got) + ' / ' + fmtBytes(total) : fmtBytes(got);
+    var pct = Math.round(k * 100); if (pct !== lastPct && pct % 10 === 0){ lastPct = pct; row._pic.setAttribute('aria-label', S('media.downloading', {n: pct})); }
+  }, im.size).then(function(u){ if (row._m === m){ ring.set(1); picShow(row, m, u); } }, function(){
+    if (row._m !== m) return; var cancelled = row._picCancelled; row._picCancelled = false; picIdle(row, im);
+    if (!cancelled) toast(S('media.loadFailed'));
+  });
+}
+function paintPic(row, m, mine){
+  var im = m.image, iw = Number(im.w) || 4, ih = Number(im.h) || 3;
+  row._pic.style.aspectRatio = iw + ' / ' + ih;
+  if (row._picFor === im.url) return; row._picFor = im.url;
+  row._picUrl = null; row._pic.classList.remove('is-loading');
+  if (!/^blob:/.test(im.url) && MEDIA.loading[mediaKey(im.url)] && !MEDIA.blobs[mediaKey(im.url)]){ row._pic.classList.add('is-thumb'); row._picImg.src = im.thumb || 'data:image/gif;base64,R0lGODlhAQABAAAAACw='; picDownload(row, m); return; }   // redrawn mid-download: keep showing its progress
+  if (/^blob:/.test(im.url)){ picShow(row, m, im.url); return; }                     // just sent from this device
+  var k = mediaKey(im.url);
+  if (MEDIA.blobs[k]){ picShow(row, m, MEDIA.blobs[k]); return; }
+  row._pic.classList.add('is-thumb'); row._picImg.src = im.thumb || 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
+  picIdle(row, im);
+  mediaCached(im.url).then(function(u){ if (u) picShow(row, m, u); else if (mine) picDownload(row, m); });   // in the cache already? ours? → no button
+}
+function paintVoice(row, m){
+  var v = row._voice, pk = (m.voice.peaks && m.voice.peaks.length ? m.voice.peaks : Array.apply(null, Array(32)).map(function(_, i){ return 30 + 25 * Math.abs(Math.sin(i * 1.7)); }));
+  if (v._for !== m.voice.url){ v._for = m.voice.url; v._wave.textContent = ''; v._bars = pk.map(function(h){ var b = el('i'); b.style.height = Math.max(12, Math.min(100, h)) + '%'; v._wave.appendChild(b); return b; });
+    // like a picture: not on this device yet → a download button with its size; tapping it shows the progress, then plays
+    var url = m.voice.url, k = mediaKey(url), mine = m.by === CHAT.uid;
+    voiceNeedDl(row, !(/^blob:/.test(url) || MEDIA.blobs[k] || mine));
+    if (!/^blob:/.test(url) && !MEDIA.blobs[k] && !mine) mediaCached(url).then(function(u){ if (u && row._m === m) voiceNeedDl(row, false); });
+    if (MEDIA.loading[k] && !MEDIA.blobs[k] && VOICE.loadingRow !== row) voiceDownloadUI(row, m);   // redrawn mid-download
+  }
+  voiceUI(row);
+}
+
+/* Voice player: one at a time. Bars fill as it plays; tap the bars to jump. */
+var VOICE = {audio:null, row:null, raf:0};
+function voiceUI(row){
+  var v = row._voice, m = row._m, dur = (m && m.voice && m.voice.dur) || 0, a = VOICE.audio, mine = VOICE.row === row && a;
+  var t = mine ? a.currentTime : 0, k = dur ? Math.min(1, t / dur) : 0;
+  v.classList.toggle('playing', !!(mine && !a.paused));
+  if (!v.classList.contains('loading')) v._btn.setAttribute('aria-label', mine && !a.paused ? S('voice.pause') : v.classList.contains('need-dl') ? S('media.downloadVoice', {size: m && m.voice && m.voice.size ? fmtBytes(m.voice.size) : ''}) : S('voice.play'));
+  v._bars.forEach(function(b, i){ b.classList.toggle('on', (i + 0.5) / v._bars.length <= k); });
+  v._time.textContent = fmtDur(mine && (t > 0 || !a.paused) ? t : dur);
+}
+function voiceNeedDl(row, need){
+  var v = row._voice, m = row._m; v.classList.toggle('need-dl', !!need);
+  v._size.textContent = need && m && m.voice && m.voice.size ? ' · ' + fmtBytes(m.voice.size) : '';
+}
+/* the ring around the button fills with the bytes; the button shows ✕ (tap = cancel) */
+function voiceDownloadUI(row, m){
+  var v = row._voice; v.classList.add('loading');
+  if (!v._ring){ v._ring = progressRing(false); v._btn.appendChild(v._ring); } v._ring.set(0);
+  v._btn.setAttribute('aria-label', S('media.downloading', {n: 0}));
+  var lastPct = 0;
+  return mediaFetch(m.voice.url, function(got, total){ if (row._m !== m) return; var k = total ? got / total : 0, pct = Math.floor(k * 10) * 10; v._ring.set(k); v._size.textContent = ' · ' + fmtBytes(got) + ' / ' + fmtBytes(total || got); if (pct !== lastPct){ lastPct = pct; v._btn.setAttribute('aria-label', S('media.downloading', {n: pct})); } }, m.voice.size);
+}
+/* like WhatsApp: when a voice message ends and the very next message is a voice message too, it plays next */
+function nextVoiceRow(row){
+  var m = row._m; if (!m) return null;
+  var msgs = roomMsgs(CHAT.active), i = msgs.findIndex(function(x){ return x.id === m.id; }), n = i >= 0 ? msgs[i + 1] : null;
+  if (!n || !n.voice || n.locked || n.expired || CHAT.pending[n.id]) return null;
+  return UI.rows.get(n.id) || null;
+}
+function voiceStop(){ var r = VOICE.row; VOICE.chain = null; if (VOICE.audio){ VOICE.audio.pause(); } cancelAnimationFrame(VOICE.raf); VOICE.row = null; if (r && r._voice) voiceUI(r); }
+function voiceToggle(row, seekK){
+  var m = row._m; if (!m || !m.voice) return;
+  if (VOICE.row === row && VOICE.audio){ if (seekK != null){ VOICE.audio.currentTime = seekK * (m.voice.dur || VOICE.audio.duration || 0); voiceUI(row); return; } if (VOICE.audio.paused) VOICE.audio.play().catch(function(){}); else VOICE.audio.pause(); voiceUI(row); return; }
+  var v = row._voice;
+  if (uploadCancel(m)) return;                                                                   // sending: ✕ cancels it
+  if (v.classList.contains('loading')){ v._cancelled = true; mediaAbort(m.voice.url); return; }   // tap during the download: cancel
+  voiceStop(); v._cancelled = false; VOICE.loadingRow = row;
+  (m.voice.url.indexOf('blob:') === 0 ? Promise.resolve(m.voice.url) : voiceDownloadUI(row, m)).then(function(u){
+    if (VOICE.loadingRow === row) VOICE.loadingRow = null;
+    if (v._ring) v._ring.set(1); v.classList.remove('loading'); voiceNeedDl(row, false); if (row._m !== m) return;
+    if (!VOICE.audio){ VOICE.audio = new Audio(); VOICE.audio.preload = 'auto'; VOICE.audio.addEventListener('ended', function(){ var r = VOICE.row; cancelAnimationFrame(VOICE.raf); if (r){ VOICE.audio.currentTime = 0; VOICE.row = null; voiceUI(r); var nx = nextVoiceRow(r); if (nx){ VOICE.chain = nx; setTimeout(function(){ if (VOICE.chain !== nx || VOICE.row) return; VOICE.chain = null; nx.scrollIntoView({block: 'nearest', behavior: REDUCE ? 'auto' : 'smooth'}); voiceToggle(nx); }, 380); } } }); VOICE.audio.addEventListener('pause', function(){ if (VOICE.row) voiceUI(VOICE.row); }); }
+    VOICE.row = row; VOICE.audio.src = u;
+    VOICE.audio.addEventListener('loadedmetadata', function once(){ VOICE.audio.removeEventListener('loadedmetadata', once); if (seekK != null) VOICE.audio.currentTime = seekK * (m.voice.dur || VOICE.audio.duration || 0); }, {once:true});
+    VOICE.audio.play().then(function(){ (function loop(){ if (VOICE.row !== row) return; voiceUI(row); VOICE.raf = requestAnimationFrame(loop); })(); }, function(){ toast(S('voice.cantPlay')); VOICE.row = null; voiceUI(row); });
+  }, function(){
+    if (VOICE.loadingRow === row) VOICE.loadingRow = null;
+    v.classList.remove('loading'); voiceNeedDl(row, v.classList.contains('need-dl')); voiceUI(row);
+    if (!v._cancelled) toast(S('media.loadFailed')); v._cancelled = false;
+  });
+}
+
+function openLightbox(url, thumb, w, h, nosave){
   if (!LB){
     LB = el('div', 'lightbox'); LB.setAttribute('role', 'dialog'); LB.setAttribute('aria-modal', 'true'); LB.setAttribute('aria-label', S('chat.viewImage'));
     LB.appendChild(el('div', 'lb-bg'));
     var fr = el('div', 'lb-frame'), im = document.createElement('img'); im.alt = ''; im.draggable = false; fr.appendChild(im); LB.appendChild(fr); LB._frame = fr; LB._img = im;
     var x = el('button', 'iconbtn lb-close'); x.type = 'button'; x.setAttribute('aria-label', S('chat.closeImage')); x.appendChild(svg('<path d="M6 6l12 12M18 6L6 18"/>')); LB.appendChild(x);
+    // keep the picture on the device
+    var sv = el('button', 'lb-save'); sv.type = 'button'; sv.appendChild(svg('<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>')); sv.appendChild(el('span', null, S('media.save'))); LB.appendChild(sv);
+    LB.addEventListener('contextmenu', function(e){ if (LB.classList.contains('nosave')) e.preventDefault(); });
+    sv.addEventListener('click', function(e){ e.stopPropagation(); if (LB._url && !LB.classList.contains('nosave')) mediaSave(LB._url, 'oddsclub-photo-' + new Date().toISOString().slice(0, 10) + '.webp'); });
     x.addEventListener('click', function(e){ e.stopPropagation(); closeLightbox(); });
     LB.addEventListener('click', function(){ if (!LB._dragged) closeLightbox(); LB._dragged = false; });
     document.body.appendChild(LB);
-    document.addEventListener('keydown', function(e){ if (e.key === 'Escape' && LB.classList.contains('open')){ e.stopImmediatePropagation(); closeLightbox(); } }, true);
-    window.addEventListener('resize', function(){ if (LB.classList.contains('show') && !LB._closing){ LB._frame.style.transition = 'none'; lbPlace(lbFit(LB._w, LB._h), '12px'); } });
+    window.addEventListener('keydown', function(e){ if (e.key === 'Escape' && LB.classList.contains('open')){ e.stopImmediatePropagation(); closeLightbox(); } }, true);   // window: before any sheet underneath (room settings, group info…)
+    window.addEventListener('resize', function(){ if (LB.classList.contains('show') && !LB._closing){ LB._frame.style.transition = 'none'; lbPlace(lbFit(LB._w, LB._h), '0px'); } });
     // drag down (or up) to close
     var sy = 0, dy = 0, dragging = false;
     fr.addEventListener('pointerdown', function(e){ if (LB._closing) return; dragging = true; sy = e.clientY; dy = 0; fr.setPointerCapture(e.pointerId); fr.style.transition = 'none'; });
@@ -518,14 +891,14 @@ function openLightbox(url, thumb, w, h){
   var fr = LB._frame, start = thumb && lbVisible(thumb) ? lbRectOf(thumb) : null;
   LB._thumb = thumb || null; LB._w = w || (thumb && thumb.naturalWidth) || 4; LB._h = h || (thumb && thumb.naturalHeight) || 3; LB._closing = false; LB._dragged = false;
   LB._radius = thumb ? getComputedStyle(thumb.parentNode).borderRadius || '12px' : '12px';
-  LB._img.src = url; LB.style.removeProperty('--lb-bg'); fr.style.transform = ''; fr.style.opacity = '';
+  LB._img.src = url; LB._url = url; LB.classList.toggle('nosave', !!nosave); LB.style.removeProperty('--lb-bg'); fr.style.transform = ''; fr.style.opacity = '';
   var target = lbFit(LB._w, LB._h);
   fr.style.transition = 'none';
-  if (start && !REDUCE){ lbPlace(start, LB._radius); } else { lbPlace(target, '12px'); }
+  if (start && !REDUCE){ lbPlace(start, LB._radius); } else { lbPlace(target, '0px'); }   // full size: square corners (they round off only while it travels to/from the bubble)
   LB.classList.add('open'); if (thumb) thumb.style.visibility = 'hidden';
   void fr.offsetWidth;   // apply the start position before animating
   LB.classList.add('show');
-  if (start && !REDUCE){ fr.style.transition = 'left .46s cubic-bezier(.2,.85,.25,1), top .46s cubic-bezier(.2,.85,.25,1), width .46s cubic-bezier(.2,.85,.25,1), height .46s cubic-bezier(.2,.85,.25,1), border-radius .46s'; lbPlace(target, '12px'); }
+  if (start && !REDUCE){ fr.style.transition = 'left .46s cubic-bezier(.2,.85,.25,1), top .46s cubic-bezier(.2,.85,.25,1), width .46s cubic-bezier(.2,.85,.25,1), height .46s cubic-bezier(.2,.85,.25,1), border-radius .46s'; lbPlace(target, '0px'); }
   setTimeout(function(){ LB.querySelector('.lb-close').focus({preventScroll:true}); }, 60);
 }
 function closeLightbox(){
@@ -554,15 +927,29 @@ function buildRow(m){
   var sw = el('span', 'swipe-ic'); sw.appendChild(svg('<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 6 6v3"/>')); b.appendChild(sw);
   row._name = el('div', 'b-name'); row._quote = el('div', 'b-quote'); row._text = el('div', 'b-text'); row._meta = el('span', 'b-meta');
   row._pic = el('button', 'b-pic'); row._pic.type = 'button'; row._pic.setAttribute('aria-label', S('chat.viewImage')); row._picImg = document.createElement('img'); row._picImg.alt = ''; row._picImg.loading = 'lazy'; row._pic.appendChild(row._picImg);
-  row._pic.addEventListener('click', function(e){ e.stopPropagation(); if (row._m && row._m.image) openLightbox(row._m.image.url, row._picImg, row._m.image.w, row._m.image.h); });
-  [row._name, row._quote, row._pic, row._text].forEach(function(x){ b.appendChild(x); });
+  row._picDl = el('span', 'b-pic-dl'); row._pic.appendChild(row._picDl);
+  row._pic.addEventListener('click', function(e){ e.stopPropagation(); var m = row._m; if (!m || !m.image) return;
+    if (uploadCancel(m)) return;                                                                // sending: ✕ cancels it
+    if (row._pic.classList.contains('is-thumb')) picDownload(row, m);                       // preview: download it (once)
+    else if (row._picUrl) openLightbox(row._picUrl, row._picImg, m.image.w, m.image.h, !!m.nosave); });   // downloaded: full screen
+  // voice message: play / pause · waveform (tap to jump) · time
+  row._voice = el('div', 'b-voice'); row._voice.hidden = true;
+  var vb = el('button', 'v-play'); vb.type = 'button'; vb.appendChild(svg('<path class="i-play" d="M8 5.5v13l10.5-6.5z"/><path class="i-pause" d="M8 5v14M16 5v14"/><path class="i-dl" d="M12 5v10M8 11l4 4 4-4M7 19h10"/><path class="i-x" d="M8.5 8.5l7 7M15.5 8.5l-7 7"/>')); row._voice.appendChild(vb); row._voice._btn = vb;
+  var vw = el('div', 'v-wave'); row._voice.appendChild(vw); row._voice._wave = vw; row._voice._bars = [];
+  var vf = el('div', 'v-foot'); row._voice.appendChild(vf); row._voice._foot = vf;
+  row._voice._time = el('span', 'v-time'); vf.appendChild(row._voice._time);
+  row._voice._size = el('span', 'v-size'); vf.appendChild(row._voice._size);   // "· 12 KB" until it is on this device
+  vb.addEventListener('click', function(e){ e.stopPropagation(); voiceToggle(row); });
+  vw.addEventListener('click', function(e){ e.stopPropagation(); var r = vw.getBoundingClientRect(); voiceToggle(row, Math.max(0, Math.min(1, (e.clientX - r.left) / r.width))); });
+  row._gone = el('div', 'b-gone'); row._gone.hidden = true;   // "Photo expired" / "Voice message expired"
+  [row._name, row._quote, row._pic, row._voice, row._gone, row._text].forEach(function(x){ b.appendChild(x); });
   row._reacts = el('div', 'reacts');
   var acts = el('div', 'acts glass'); acts.setAttribute('role', 'toolbar'); acts.setAttribute('aria-label', S('chat.actionsAria'));
   REACTS.forEach(function(rx){ var bt = el('button', 'emo', rx[1]); bt.type = 'button'; bt.setAttribute('aria-label', S('chat.reactAria', {name: S('react.' + rx[0])})); bt.onclick = function(e){ e.stopPropagation(); toggleReact(row._m, rx[0]); }; acts.appendChild(bt); });
   acts.appendChild(el('span', 'sep'));
   var rp = el('button'); rp.type = 'button'; rp.setAttribute('aria-label', S('chat.reply')); rp.appendChild(svg('<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 6 6v3"/>')); rp.onclick = function(e){ e.stopPropagation(); startReply(row._m); }; acts.appendChild(rp);
   var mo = el('button'); mo.type = 'button'; mo.setAttribute('aria-label', S('chat.moreActions')); mo.appendChild(svg('<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>')); mo.onclick = function(e){ e.stopPropagation(); openCtx(row); }; acts.appendChild(mo);
-  bw.appendChild(acts); bw.appendChild(b); bw.appendChild(row._reacts);
+  row._acts = acts; bw.appendChild(acts); bw.appendChild(b); bw.appendChild(row._reacts);
   row.appendChild(av); row.appendChild(bw); row._bubble = b;
   b.addEventListener('contextmenu', function(e){ e.preventDefault(); openCtx(row); });
   b.addEventListener('dblclick', function(){ startReply(row._m); });
@@ -570,14 +957,33 @@ function buildRow(m){
   row._quote.addEventListener('click', function(e){ e.stopPropagation(); var q = row._m.reply; if (!q) return; var t = UI.rows.get(q.id); if (!t){ toast(S('chat.quoteGone')); return; }
     t.scrollIntoView({block:'center', behavior: REDUCE ? 'auto' : 'smooth'}); t.classList.remove('flash'); void t.offsetWidth; t.classList.add('flash'); });
   // touch: press-and-hold opens the menu, swipe right replies (spring back)
-  var sx = 0, sy = 0, drag = false, swiping = false, holdTimer = 0, sp = Spring(0, .42, .72, .3).on(function(v){ b.style.translate = Math.abs(v) < .3 ? '' : v.toFixed(1) + 'px 0'; sw.style.opacity = Math.min(1, v / 50); sw.style.transform = 'scale(' + (0.5 + Math.min(.5, v / 100)) + ')'; });
-  b.addEventListener('pointerdown', function(e){ if (e.pointerType === 'mouse') return; sx = e.clientX; sy = e.clientY; drag = true; swiping = false; b.classList.add('pressing');
+  var sx = 0, sy = 0, drag = false, swiping = false, holdTimer = 0, sp = Spring(0, .42, .72, .3).on(function(v){ b.style.translate = Math.abs(v) < .3 ? '' : v.toFixed(1) + 'px 0'; var av = Math.abs(v); sw.classList.toggle('from-right', v < 0); sw.style.opacity = Math.min(1, av / 50); sw.style.transform = 'scale(' + (0.5 + Math.min(.5, av / 100)) + ')'; });
+  /* swipe to reply, either way (right like WhatsApp, left like Telegram): finger, mouse drag (not from the message's buttons,
+     picture or voice player) and the two-finger trackpad swipe (wheel events) */
+  var mouse = false, dir = 1;
+  b.addEventListener('pointerdown', function(e){
+    mouse = e.pointerType === 'mouse';
+    if (mouse && (e.button !== 0 || (e.target.closest && e.target.closest('button, a, .v-wave, .b-pic')))) return;
+    sx = e.clientX; sy = e.clientY; drag = true; swiping = false;
+    if (mouse) return;   // a mouse opens the menu with right-click / "⋯", not by holding
+    b.classList.add('pressing');
     holdTimer = setTimeout(function(){ if (drag && !swiping){ drag = false; b.classList.remove('pressing'); if (navigator.vibrate) try { navigator.vibrate(8); } catch(e2){} openCtx(row); } }, 420); });
   b.addEventListener('pointermove', function(e){ if (!drag) return; var dx = e.clientX - sx, dy = e.clientY - sy;
-    if (!swiping && (Math.abs(dx) > 8 || Math.abs(dy) > 8)){ clearTimeout(holdTimer); b.classList.remove('pressing'); if (Math.abs(dx) > Math.abs(dy) && dx > 0) swiping = true; else { drag = false; return; } }
-    if (swiping){ var x = Math.max(0, dx); sp.set(x * 0.7 / (1 + x / 260)); } });
-  function end(){ clearTimeout(holdTimer); b.classList.remove('pressing'); if (!drag) return; drag = false; if (swiping && sp.v > 46) startReply(row._m); swiping = false; sp.to(0); }
+    if (!swiping && (Math.abs(dx) > 8 || Math.abs(dy) > 8)){ clearTimeout(holdTimer); b.classList.remove('pressing');
+      if (Math.abs(dx) > Math.abs(dy)){ swiping = true; dir = dx > 0 ? 1 : -1; if (mouse){ try { b.setPointerCapture(e.pointerId); } catch(e3){} b.classList.add('swiping'); var sel = window.getSelection && window.getSelection(); if (sel) sel.removeAllRanges(); } }
+      else { drag = false; return; } }
+    if (swiping){ var x = Math.max(0, dx * dir); sp.set(dir * x * 0.7 / (1 + x / 260)); } });
+  function end(){ clearTimeout(holdTimer); b.classList.remove('pressing', 'swiping'); if (!drag) return; drag = false; if (swiping && Math.abs(sp.v) > 46) startReply(row._m); swiping = false; sp.to(0); }
   b.addEventListener('pointerup', end); b.addEventListener('pointercancel', end);
+  // trackpad: a two-finger sideways swipe arrives as horizontal wheel events
+  var acc = 0, wheelT = 0, wheelDone = false;
+  b.addEventListener('wheel', function(e){
+    if (Math.abs(e.deltaX) < Math.abs(e.deltaY) * 1.2 || CTX.row) return;
+    e.preventDefault();   // also stops the browser's "swipe back" page navigation
+    clearTimeout(wheelT);
+    if (!wheelDone){ acc -= e.deltaX; var x = Math.abs(acc); sp.set((acc < 0 ? -1 : 1) * x * 0.7 / (1 + x / 260)); if (Math.abs(sp.v) > 60){ wheelDone = true; if (navigator.vibrate) try { navigator.vibrate(8); } catch(e4){} startReply(row._m); sp.to(0); } }
+    wheelT = setTimeout(function(){ acc = 0; wheelDone = false; sp.to(0); }, 160);   // fingers lifted (and the inertia is over)
+  }, {passive:false});
   return row;
 }
 function fillRow(row, m, f){
@@ -585,23 +991,40 @@ function fillRow(row, m, f){
   var mine = m.by && m.by === CHAT.uid, on = f.online[m.by], flat = CHAT.theme === 'discord', dm = isDmRoom(CHAT.active);
   row.classList.toggle('out', !!mine); row.classList.toggle('in', !mine); row.classList.toggle('gap', f.first); row.classList.toggle('tail', f.tail);
   var rx = m.reactions || {}, rsig = REACTS.map(function(r){ var o = rx[r[0]] || {}; return Object.keys(o).filter(function(k){ return o[k]; }).sort().join(','); }).join('|');
-  var sig = [CHAT.theme, dm, m.text, m.image && m.image.url, mine, f.first, f.tail, !!on, nameOf(m.by), !!CHAT.pending[m.id], m.reply && m.reply.id, rsig, UI.reports[m.id] || 0, m.mod, LIVE.profiles[m.by] && (LIVE.profiles[m.by].avatarUrl || LIVE.profiles[m.by].gradient), LIVE.profiles[m.by] && LIVE.profiles[m.by].badge && LIVE.profiles[m.by].badge.label].join('§');
+  var grp = !dm && grpOf(CHAT.active), rstate = mine ? tickState(CHAT.active, m) : '';
+  var sig = [m.reply && [m.reply.kind, !!m.reply.thumb, m.reply.text].join('|'), rstate, CHAT.theme, dm, m.text, m.image && m.image.url, m.voice && m.voice.url, m.expired, m.locked && m.locked.why, !!m.nosave, mine, f.first, f.tail, !!on, nameOf(m.by), !!CHAT.pending[m.id], m.reply && m.reply.id, rsig, UI.reports[m.id] || 0, m.mod, LIVE.profiles[m.by] && (LIVE.profiles[m.by].avatarUrl || LIVE.profiles[m.by].gradient), LIVE.profiles[m.by] && LIVE.profiles[m.by].badge && LIVE.profiles[m.by].badge.label].join('§');
   if (row._sig === sig) return; row._sig = sig;
   row._av.className = 'av' + ((flat ? f.first : f.tail) ? '' : ' hide'); row._av.hidden = (!!mine || dm) && !flat;
   var p = LIVE.profiles[m.by], ini = row._av.querySelector('.ini');
   if (p && p.avatarUrl){ if (row._img.getAttribute('src') !== p.avatarUrl) row._img.src = p.avatarUrl; row._img.hidden = false; if (ini) ini.remove(); }
-  else { row._img.hidden = true; if (!ini){ ini = el('span', 'ini'); row._av.insertBefore(ini, row._img); } ini.textContent = initials(mine && LIVE.me && LIVE.me.name ? LIVE.me.name : nameOf(m.by)); ini.style.background = (p && (p.gradient || p.color)) || teamColor(m.by || 'fan'); }
+  else { row._img.hidden = true; if (!ini){ ini = el('span', 'ini'); row._av.insertBefore(ini, row._img); } ini.textContent = initials(mine && LIVE.me && LIVE.me.name ? LIVE.me.name : nameOf(m.by)); ini.style.background = (p && (p.gradient || p.color)) || teamColor(m.by || 'member'); }
   var dot = row._av.querySelector('.on'); if (on && !dot) row._av.appendChild(el('span', 'on')); if (!on && dot) dot.remove();
   row._name.hidden = (mine && !flat) || (dm && !flat) || !f.first; row._name.textContent = '';
   if (!row._name.hidden){ row._name.appendChild(el('span', null, mine ? (flat ? ((LIVE.me && LIVE.me.name) || S('chat.you')) : S('chat.you')) : nameOf(m.by))); row._name.style.color = mine && flat ? '' : ((p && p.color) || 'var(--c-accent)'); if (m.mod) row._name.appendChild(el('span', 'mod', S('chat.modTag'))); else if (p && p.badge){ var rb = el('span', 'mod role-badge', p.badge.label); rb.style.background = p.badge.color; rb.style.color = '#fff'; row._name.appendChild(rb); } }
   row._quote.hidden = !(m.reply && m.reply.id); row._quote.textContent = '';
-  if (!row._quote.hidden){ row._quote.appendChild(el('b', null, nameOf(m.reply.by))); row._quote.appendChild(el('span', null, String(m.reply.text || '').slice(0, 140))); }
-  row._pic.hidden = !m.image;
-  if (m.image){ var iw = Number(m.image.w) || 4, ih = Number(m.image.h) || 3; row._pic.style.aspectRatio = iw + ' / ' + ih; if (row._picImg.getAttribute('src') !== m.image.url) row._picImg.src = m.image.url; }
-  row._text.textContent = m.text || ''; row._text.classList.toggle('only-meta', !m.text); row._text.appendChild(row._meta);
+  if (!row._quote.hidden){ var qt = el('div', 'q-text'); qt.appendChild(el('b', null, nameOf(m.reply.by))); var ql = el('span'); quoteLine(ql, m.reply); qt.appendChild(ql); row._quote.appendChild(qt);
+    if (m.reply.kind === 'photo'){ var qi = el('img', 'q-thumb'); qi.alt = '';
+      // sharp when the original picture is already on this device, else its tiny preview
+      var orig = roomMsgs(CHAT.active).filter(function(x){ return x.id === m.reply.id; })[0], full = orig && orig.image && (MEDIA.blobs[mediaKey(orig.image.url)] || (/^blob:/.test(orig.image.url) ? orig.image.url : null));
+      qi.src = full || m.reply.thumb || 'data:image/gif;base64,R0lGODlhAQABAAAAACw='; row._quote.appendChild(qi); } }
+  row._pic.hidden = !m.image; if (m.image){ mediaAdopt(m, m.image.url); paintPic(row, m, mine); }
+  row._voice.hidden = !m.voice; if (m.voice){ mediaAdopt(m, m.voice.url); paintVoice(row, m); }
+  paintUpload(row, m);
+  row._pic.classList.toggle('nosave', !!m.nosave); row._picImg.draggable = !m.nosave;
+  if (m.locked){ row._gone.hidden = false; row._gone.textContent = ''; row._gone.classList.add('locked');
+    row._gone.appendChild(svg('<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>'));
+    row._gone.appendChild(el('span', null, S('media.lock.' + m.locked.why, {what: S(m.locked.kind === 'voice' ? 'media.whatVoice' : 'media.whatPhoto')})));
+    if (m.locked.why === 'signin'){ var si = el('button', 'b-gone-btn', S('chat.signIn')); si.type = 'button'; si.onclick = function(e){ e.stopPropagation(); backend.openSignIn(); }; row._gone.appendChild(si); } }
+  else row._gone.classList.remove('locked');
+  if (!m.locked) row._gone.hidden = !m.expired; if (m.expired && !m.locked){ row._gone.textContent = ''; row._gone.appendChild(svg(m.expired === 'voice' ? '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M4 4l16 16"/>' : '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 15l5-5 5 5M4 4l16 16"/>')); row._gone.appendChild(el('span', null, S(m.expired === 'voice' ? 'media.voiceExpired' : 'media.photoExpired'))); }
+  row._text.textContent = m.text || ''; row._text.classList.toggle('only-meta', !m.text);
+  // a voice message without text: time + ticks sit under the waveform (like WhatsApp), no extra line
+  var voiceOnly = !!(m.voice && !m.text); row._text.hidden = voiceOnly; (voiceOnly ? row._voice._foot : row._text).appendChild(row._meta);
   row._meta.textContent = ''; row._meta.appendChild(document.createTextNode(hhmm(m.ts)));
   if (CHAT.canEdit && UI.reports[m.id]){ var fl = svg('<path d="M5 21V4h11l-2 4 2 4H5"/>'); fl.classList.add('flag'); fl.setAttribute('role','img'); fl.removeAttribute('aria-hidden'); fl.setAttribute('aria-label', S('chat.reportsAria', {n: UI.reports[m.id]})); row._meta.appendChild(fl); }
-  if (mine){ var pend = !!CHAT.pending[m.id], ic = svg(pend ? ICON.clock : ICON.check); ic.setAttribute('role','img'); ic.removeAttribute('aria-hidden'); ic.setAttribute('aria-label', pend ? S('chat.sending') : S('chat.sent')); row._meta.appendChild(ic); }
+  // ticks on our own messages: clock = sending · ✓ = sent · ✓✓ = reached their device · ✓✓ coloured = seen (one-to-one chats)
+  if (mine) row._meta.appendChild(tickIcon(rstate, !!grp));
+  if (row._acts) row._acts.querySelectorAll('.emo').forEach(function(bt, i){ var o = rx[REACTS[i][0]] || {}; bt.classList.toggle('mine', !!o[CHAT.uid]); });   // our reaction, highlighted like in the menu
   row._reacts.textContent = '';
   REACTS.forEach(function(r){ var o = rx[r[0]] || {}, who = Object.keys(o).filter(function(k){ return o[k]; }); if (!who.length) return;
     var bt = el('button', 'react' + (who.indexOf(CHAT.uid) >= 0 ? ' mine' : '')); bt.type = 'button';
@@ -622,25 +1045,43 @@ function emptyEl(){ if (!UI.emptyEl){ var e = el('div', 'c-empty glass');
 function typingEl(typ){
   if (!UI.typingEl){ var r = el('div', 'row in tail typingrow enter'); var av = el('div', 'av'); var ini = el('span', 'ini'); av.appendChild(ini); r.appendChild(av);
     var bw = el('div', 'bwrap'), b = el('div', 'bubble'), d = el('div', 'dots3'); d.innerHTML = '<i></i><i></i><i></i>'; b.appendChild(d); bw.appendChild(b); r.appendChild(bw); r.setAttribute('aria-label', S('chat.someoneTyping')); UI.typingEl = r; }
-  var id = peerId(typ[0]), p = LIVE.profiles[id], ini2 = UI.typingEl.querySelector('.ini'); ini2.textContent = initials(nameOf(id)); ini2.style.background = (p && (p.gradient || p.color)) || teamColor(id || 'fan');
+  var id = peerId(typ[0]), p = LIVE.profiles[id], ini2 = UI.typingEl.querySelector('.ini'); ini2.textContent = initials(nameOf(id)); ini2.style.background = (p && (p.gradient || p.color)) || teamColor(id || 'member');
   return UI.typingEl;
 }
 var renderToken = 0;
+/* The open one-to-one conversation is on screen (tab visible, chat open, conversation showing on phones): tell the other side
+   we have seen it, up to their newest message. */
+function markReadActive(msgs){
+  var g = grpOf(CHAT.active);   // groups count only for their members
+  if (!backend || !backend.markRead || document.hidden || !viewing() || !document.body.classList.contains('chat-open') || !(isDmRoom(CHAT.active) || (g && (g.status === 'member' || g.isOwner)))) return;
+  if (window.innerWidth <= 860 && !$('messenger').classList.contains('in-convo')) return;
+  var ts = 0; (msgs || roomMsgs(CHAT.active)).forEach(function(m){ if (m.by !== CHAT.uid && !CHAT.pending[m.id] && m.ts > ts) ts = m.ts; });
+  if (ts) backend.markRead(CHAT.active, ts);
+}
+document.addEventListener('visibilitychange', function(){ if (!document.hidden) markReadActive(); });
+window.addEventListener('focus', function(){ markReadActive(); });
 async function renderConvo(mode){
   var token = ++renderToken, wall = $('wall'), inner = $('wallIn'), roomChanged = UI.renderedRoom !== CHAT.active;
   var msgs = roomMsgs(CHAT.active);
   await names(msgs.map(function(m){ return m.by; }).concat(msgs.map(function(m){ return m.reply && m.reply.by; })).concat(viewers().map(peerId)));
   if (token !== renderToken) return;
+  markReadActive(msgs);
   if (roomChanged){
     inner.textContent = ''; UI.rows.clear(); UI.days.clear(); UI.renderedRoom = CHAT.active; UI.typingEl = null; wallPush.set(0);
     var seen = lastSeen[CHAT.active] || 0, firstNew = msgs.filter(function(m){ return m.ts > seen && m.by !== CHAT.uid; })[0];
     UI.newBefore = seen && firstNew ? firstNew.id : null; UI.newEl = null; CHAT.unseenBelow = 0;
   }
-  var initial = roomChanged || !inner.querySelector('.row:not(.typingrow)');
+  var initial = roomChanged || !inner.querySelector('.row:not(.typingrow):not(.skel-row)');   // placeholders don't count as messages
   var atBottom = wall.scrollHeight - wall.scrollTop - wall.clientHeight < 80, oldH = inner.offsetHeight;
+  var fromBottom = wall.scrollHeight - wall.scrollTop;   // older messages added above: keep what's on screen where it is
   var desired = [];
-  if (!UI.loaded && CHAT.db){ if (!UI.skels){ UI.skels = []; for (var s = 0; s < 5; s++){ var sk = el('div', 'skel'); sk.style.width = (40 + (s * 37) % 45) + '%'; sk.style.alignSelf = s % 2 ? 'flex-end' : 'flex-start'; UI.skels.push(sk); } } desired = desired.concat(UI.skels); }
+  var ready = roomReady(CHAT.active);
+  if (!ready && !UI.unavailable){ desired = desired.concat(skeletonRows()); UI.skelShown = CHAT.active; }   // (also before the live connection is up)   // still loading: placeholder bubbles, not "no messages yet"
   else if (!msgs.length) desired.push(emptyEl());
+  var softIn = ready && UI.skelShown === CHAT.active; if (ready) UI.skelShown = null;
+  var enterRoom = roomChanged && ready && !softIn;   // switched to a conversation that was already here: it glides in too
+  if (roomChanged && !REDUCE){ inner.classList.remove('room-in'); void inner.offsetWidth; inner.classList.add('room-in'); }
+  if (ready && msgs.length){ var top = histTop(); if (top) desired.push(top); }   // loading older… / start of the conversation   // just loaded: the messages fade in where the placeholders were
   var online = onlineSet(), lastDay = '', added = 0;
   msgs.forEach(function(m, i){
     var day = dayLabel(m.ts); if (day !== lastDay){ desired.push(dayEl(day)); lastDay = day; }
@@ -649,7 +1090,9 @@ async function renderConvo(mode){
     var first = !prev || prev.by !== m.by || m.ts - prev.ts > 300000 || dayLabel(prev.ts) !== day || m.id === UI.newBefore;
     var tail = !next || next.by !== m.by || next.ts - m.ts > 300000 || dayLabel(next.ts) !== day || next.id === UI.newBefore;
     var row = UI.rows.get(m.id);
-    if (!row){ row = buildRow(m); UI.rows.set(m.id, row); if (!initial){ row.classList.add('enter'); added++; } }
+    if (!row && m.clientId && UI.rows.get(m.clientId)){ row = UI.rows.get(m.clientId); UI.rows.delete(m.clientId); UI.rows.set(m.id, row); row.dataset.id = m.id; }   // our pending bubble became the real message: same bubble, no flicker
+    if (!row){ row = buildRow(m); UI.rows.set(m.id, row); if (!initial && mode !== 'older'){ row.classList.add('enter'); added++; }
+      else if ((softIn || enterRoom) && msgs.length - i <= 14){ row.classList.add('soft-in'); row.style.animationDelay = (14 - (msgs.length - i)) * (enterRoom ? 12 : 18) + 'ms'; } }   /* the last 14 fade in, oldest first */
     fillRow(row, m, {first:first, tail:tail, online:online});
     desired.push(row);
   });
@@ -660,7 +1103,8 @@ async function renderConvo(mode){
   var ref = inner.firstChild;
   desired.forEach(function(node){ if (node === ref) ref = ref.nextSibling; else inner.insertBefore(node, ref); });
   // scroll without jumps: keep the view pinned to the bottom and let the content glide up on a spring
-  if (initial){
+  if (mode === 'older' && !initial){ wall.scrollTop = wall.scrollHeight - fromBottom; }
+  else if (initial){
     if (UI.newEl && UI.newEl.isConnected) UI.newEl.scrollIntoView({block:'center'}); else wall.scrollTop = wall.scrollHeight;
     markSeen();
   } else if (atBottom || mode === 'mine'){
@@ -670,17 +1114,58 @@ async function renderConvo(mode){
     CHAT.unseenBelow = 0; markSeen();
   } else if (added) CHAT.unseenBelow += added;
   updateJump();
+  if (ready) setTimeout(loadOlderMaybe, 0);   // the first page doesn't fill the screen yet: fetch more
 }
-function markSeen(){ if (!isOpen()) return; var msgs = roomMsgs(CHAT.active), l = msgs[msgs.length - 1]; if (l && (lastSeen[CHAT.active] || 0) < l.ts){ lastSeen[CHAT.active] = l.ts; store('ps_seen', lastSeen); renderRooms(); } }
+/* the row at the top of a conversation: a loader while older messages come, or "start of the conversation" */
+function histTop(){
+  var st = backend.historyState ? backend.historyState(CHAT.active) : null; if (!st) return null;
+  if (!UI.histEl){ UI.histEl = el('div', 'hist-top'); UI.histEl.setAttribute('role', 'status'); }
+  if (UI.histEl._st !== st){ UI.histEl._st = st; UI.histEl.className = 'hist-top ' + st; UI.histEl.textContent = '';
+    if (st === 'loading' || st === 'more'){ var d = el('span', 'dots3'); d.innerHTML = '<i></i><i></i><i></i>'; UI.histEl.appendChild(d); UI.histEl.setAttribute('aria-label', S('chat.loadingOlder')); }
+    else { UI.histEl.appendChild(el('span', null, S('chat.historyStart'))); UI.histEl.removeAttribute('aria-label'); } }
+  return UI.histEl;
+}
+/* near the top (or the page doesn't fill the screen): load the previous page of this conversation */
+function loadOlderMaybe(){
+  if (!backend.loadOlder || !viewing()) return;
+  var w = $('wall'), room = CHAT.active;
+  if (w.scrollTop > 400 && w.scrollHeight > w.clientHeight + 40) return;
+  var p = backend.loadOlder(room); if (!p) return;
+  if (UI.histEl){ UI.histEl._st = null; histTop(); }
+  p.then(null, function(){ if (CHAT.active === room) renderConvo('older'); });
+}
+function markSeen(){ if (!viewing()) return; var msgs = roomMsgs(CHAT.active), l = msgs[msgs.length - 1]; if (l && (lastSeen[CHAT.active] || 0) < l.ts){ lastSeen[CHAT.active] = l.ts; store('ps_seen', lastSeen); renderRooms(); } }
 function updateJump(){ var w = $('wall'), far = w.scrollHeight - w.scrollTop - w.clientHeight > 220; $('jump').classList.toggle('show', far); var c = $('jumpCount'); c.hidden = !(far && CHAT.unseenBelow); c.textContent = CHAT.unseenBelow; }
-$('wall').addEventListener('scroll', function(){ var w = this; if (w.scrollHeight - w.scrollTop - w.clientHeight < 60){ CHAT.unseenBelow = 0; markSeen(); } updateJump(); }, {passive:true});
+$('wall').addEventListener('scroll', function(){ var w = this; if (w.scrollHeight - w.scrollTop - w.clientHeight < 60){ CHAT.unseenBelow = 0; markSeen(); } updateJump(); if (w.scrollTop < 400) loadOlderMaybe(); }, {passive:true});
 $('jump').onclick = function(){ var w = $('wall'); w.scrollTo({top: w.scrollHeight, behavior: REDUCE ? 'auto' : 'smooth'}); };
 
 /* ---------- iOS-style context menu: the message lifts, reactions above, actions below ---------- */
 var CTX = {row:null, clone:null, lift:null};
+/* Message menu ("⋯", right-click, Enter, press and hold): the message lifts over a blurred background, reactions above,
+   actions below. Same actions everywhere. Closes on: outside tap / click, Escape, resize, changing room, any action. */
+function ctxItems(menu, m, mine){
+  menu.textContent = '';
+  function item(label, path, fn, danger){ var bt = el('button', danger ? 'danger' : ''); bt.type = 'button'; bt.setAttribute('role', 'menuitem'); bt.appendChild(el('span', null, label)); bt.appendChild(svg(path)); bt.onclick = function(){ closeCtx(); fn(); }; menu.appendChild(bt); }
+  if (CHAT.canPost) item(S('chat.reply'), '<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 6 6v3"/>', function(){ startReply(m); });
+  if (m.text) item(S('chat.copy'), '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>', function(){
+    try { navigator.clipboard.writeText(m.text).then(function(){ toast(S('chat.copied'), true); }, function(){ toast(S('chat.copyBlocked')); }); } catch(e){ toast(S('chat.copyBlocked')); } });
+  if ((m.image || m.voice) && !m.nosave && !/^blob:/.test((m.image || m.voice).url)) item(S('media.save'), '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>', function(){
+    var day = new Date(m.ts).toISOString().slice(0, 10), url = (m.image || m.voice).url, ext = m.image ? 'webp' : (/\.(\w+)$/.exec(url) || [0, 'webm'])[1];
+    mediaFetch(url).then(function(u){ mediaSave(u, 'oddsclub-' + (m.image ? 'photo' : 'voice') + '-' + day + '.' + ext); }, function(){ toast(S('media.loadFailed')); }); });
+  if (!mine && CHAT.canPost) item(UI.reported[m.id] ? S('chat.reported') : S('chat.report'), '<path d="M5 21V4h11l-2 4 2 4H5"/>', function(){ report(m); });
+  if (CHAT.canEdit && !mine && m.by) item(UI.mod.muted[m.by] ? S('chat.unmute', {name: nameOf(m.by)}) : S('chat.mute', {name: nameOf(m.by)}), '<path d="M11 5L6 9H3v6h3l5 4z"/><path d="M22 9l-6 6M16 9l6 6"/>', function(){ setMuted(m.by, !UI.mod.muted[m.by]); }, true);
+  if (CHAT.canEdit || (mine && CHAT.canPost)) item(S('chat.delete'), '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>', function(){ backend.remove(m).then(function(){ toast(S('chat.deleted'), true); }, function(){ toast(S('chat.deleteFailed')); }); }, true);
+}
 function openCtx(row){
+  // the same press can arrive twice (our hold timer + the phone's own long-press event): open once
+  if (CTX.row === row && Date.now() - (CTX.at || 0) < 700) return;
   if (CTX.row) closeCtx(true);
-  var m = row._m, mine = m.by === CHAT.uid, b = row._bubble, r = b.getBoundingClientRect(), ctx = $('ctx'), W = window.innerWidth, H = window.innerHeight;
+  if (CTX.ending){ CTX.ending(); CTX.ending = null; }
+  var m = row._m; if (!m) return;
+  CTX.at = Date.now();
+  var mine = m.by === CHAT.uid, ctx = $('ctx');
+  document.body.classList.add('ctx-on');
+  var b = row._bubble, r = b.getBoundingClientRect(), W = window.innerWidth, H = window.innerHeight;
   var clone = b.cloneNode(true); clone.classList.add('ctx-bubble', mine ? 'out' : 'in'); clone.classList.remove('pressing'); clone.removeAttribute('tabindex');
   clone.style.left = r.left + 'px'; clone.style.top = r.top + 'px'; clone.style.width = r.width + 'px'; clone.style.transformOrigin = mine ? 'right center' : 'left center';
   ctx.insertBefore(clone, $('ctxReact')); b.classList.add('lifted-src');
@@ -689,16 +1174,9 @@ function openCtx(row){
   REACTS.forEach(function(rx, i){ var on = m.reactions && m.reactions[rx[0]] && m.reactions[rx[0]][CHAT.uid];
     var bt = el('button', on ? 'mine' : '', rx[1]); bt.type = 'button'; bt.setAttribute('aria-label', S('chat.reactAria', {name: S('react.' + rx[0])})); bt.style.transitionDelay = (40 + i * 30) + 'ms';
     bt.onclick = function(){ toggleReact(m, rx[0]); closeCtx(); }; rbar.appendChild(bt); });
-  // actions
-  var menu = $('ctxMenu'); menu.textContent = '';
-  function item(label, path, fn, danger){ var bt = el('button', danger ? 'danger' : ''); bt.type = 'button'; bt.setAttribute('role', 'menuitem'); bt.appendChild(el('span', null, label)); bt.appendChild(svg(path)); bt.onclick = function(){ closeCtx(); fn(); }; menu.appendChild(bt); }
-  item(S('chat.reply'), '<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 6 6v3"/>', function(){ startReply(m); });
-  item(S('chat.copy'), '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>', function(){
-    try { navigator.clipboard.writeText(m.text).then(function(){ toast(S('chat.copied'), true); }, function(){ toast(S('chat.copyBlocked')); }); } catch(e){ toast(S('chat.copyBlocked')); } });
-  if (!mine && CHAT.canPost) item(UI.reported[m.id] ? S('chat.reported') : S('chat.report'), '<path d="M5 21V4h11l-2 4 2 4H5"/>', function(){ report(m); });
-  if (CHAT.canEdit && !mine && m.by) item(UI.mod.muted[m.by] ? S('chat.unmute', {name: nameOf(m.by)}) : S('chat.mute', {name: nameOf(m.by)}), '<path d="M11 5L6 9H3v6h3l5 4z"/><path d="M22 9l-6 6M16 9l6 6"/>', function(){ setMuted(m.by, !UI.mod.muted[m.by]); }, true);
-  if (CHAT.canEdit || (mine && CHAT.canPost)) item(S('chat.delete'), '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>', function(){ backend.remove(m).then(function(){ toast(S('chat.deleted'), true); }, function(){ toast(S('chat.deleteFailed')); }); }, true);
-  ctx.classList.add('open'); ctx.setAttribute('aria-hidden', 'false');
+  // actions (same list as on a computer)
+  var menu = $('ctxMenu'); ctxItems(menu, m, mine);
+  ctx.classList.remove('closing'); ctx.classList.add('open'); ctx.setAttribute('aria-hidden', 'false');
   // fit everything on screen: move the lifted bubble so reactions fit above and the menu below
   var rh = 56, mh = menu.offsetHeight, gap = 10, top = r.top, maxTop = H - mh - gap * 2 - r.height - 20, minTop = rh + gap + 20 + (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--sat')) || 0);
   top = Math.max(minTop, Math.min(maxTop, top));
@@ -713,14 +1191,33 @@ function openCtx(row){
   computePosition(ref, menu, {strategy:'fixed', placement: mine ? 'bottom-end' : 'bottom-start', middleware:[fuOffset(12), fuFlip(), fuShift({padding:12})]}).then(function(pos){ menu.style.left = pos.x + 'px'; menu.style.top = pos.y + 'px'; menu.style.transformOrigin = (pos.placement.indexOf('top') === 0 ? 'bottom ' : 'top ') + side; });
   setTimeout(function(){ var f = rbar.querySelector('button'); if (f) f.focus({preventScroll:true}); }, 60);
 }
+/* Closing is the opening played backwards: the blur fades, reactions and actions shrink away, and the lifted message glides
+   back to its exact place and size (its shadow fading) before the real message takes over — no jump. The overlay stays
+   visible ('closing') until then; a new menu or an instant close cuts it short. */
 function closeCtx(instant){
   var ctx = $('ctx'); if (!CTX.row) return; var row = CTX.row, clone = CTX.clone;
-  ctx.classList.remove('open'); ctx.setAttribute('aria-hidden', 'true');
-  var finish = function(){ if (clone.isConnected) clone.remove(); row._bubble.classList.remove('lifted-src'); };
+  ctx.classList.remove('open'); ctx.setAttribute('aria-hidden', 'true'); document.body.classList.remove('ctx-on');
+  if (!instant && !REDUCE && clone){
+    ctx.classList.add('closing'); clone.classList.add('settling');
+    var done = false, end = function(){ if (done) return; done = true; clearTimeout(CTX.endTimer); CTX.ending = null;
+      // swap back to the real message in the same frame, without its own fade (that caused a blink)
+      var b = row._bubble; b.style.transition = 'none'; b.classList.remove('lifted-src'); if (clone.isConnected) clone.remove(); void b.offsetWidth; b.style.transition = '';
+      if (!CTX.row) ctx.classList.remove('closing'); };
+    CTX.row = null; CTX.endTimer = setTimeout(end, 700);   // safety net
+    CTX.lift.to(0, end); CTX.ending = end;
+    // swap as soon as the glide is visually home (the spring's last tiny wobbles are invisible)
+    (function watch(){ if (done) return; if (Math.abs(CTX.lift.v) < 0.006) end(); else requestAnimationFrame(watch); })();
+    return;
+  }
+  ctx.classList.remove('closing');
+  var finish = function(){ var b = row._bubble; b.style.transition = 'none'; b.classList.remove('lifted-src'); if (clone && clone.isConnected) clone.remove(); void b.offsetWidth; b.style.transition = ''; };
   CTX.row = null;
   if (instant || REDUCE) finish(); else CTX.lift.to(0, finish);
 }
-$('ctxBg').addEventListener('click', function(){ closeCtx(); });
+// lifting the finger after a long press lands on the background: don't treat that as "close"
+$('ctxBg').addEventListener('click', function(){ if (Date.now() - (CTX.at || 0) < 450) return; closeCtx(); });
+$('ctxBg').addEventListener('contextmenu', function(e){ e.preventDefault(); closeCtx(); });
+window.addEventListener('resize', function(){ if (CTX.row) closeCtx(true); });
 function needsRules(){ if (!CHAT.canPost){ toast(CHAT.uid ? S('chat.cannotPost') : S('chat.signInToJoin')); return true; }
   if (UI.mod.muted[CHAT.uid]){ toast(S('chat.mutedToast')); return true; }
   if (!UI.accepted){ openRules(); return true; } return false; }
@@ -738,18 +1235,30 @@ function setMuted(id, on){
 }
 function startReply(m){
   if (!m || needsRules()) return;
-  CHAT.replyTo = {id:m.id, by:m.by || null, text:msgPreview(m).slice(0,140)};
-  $('replyWho').textContent = S('chat.replyingTo', {name: nameOf(m.by)}); $('replyText').textContent = msgPreview(m); $('replyWrap').classList.add('show'); $('msgInput').focus({preventScroll:true});
+  // what is quoted: its text, and for a picture / voice message its kind + preview / length (the server re-reads all of it)
+  var kind = m.image ? 'photo' : m.voice ? 'voice' : null, local = m.image && (MEDIA.blobs[mediaKey(m.image.url)] || (/^blob:/.test(m.image.url) ? m.image.url : null));
+  CHAT.replyTo = {id:m.id, by:m.by || null, text:String(m.text || '').slice(0,140), kind:kind, thumb: m.image ? (m.image.thumb || local || null) : null, dur: m.voice ? m.voice.dur : null};
+  var rt = $('replyThumb'); rt.hidden = kind !== 'photo'; if (kind === 'photo') rt.src = local || m.image.thumb || '';
+  $('replyWho').textContent = S('chat.replyingTo', {name: nameOf(m.by)}); quoteLine($('replyText'), CHAT.replyTo); $('replyWrap').classList.add('show'); $('msgInput').focus({preventScroll:true});
 }
 function clearReply(){ CHAT.replyTo = null; $('replyWrap').classList.remove('show'); }
-$('replyClose').onclick = clearReply;
+/* ✕ on the reply / picture bar: act on the first touch and keep the text box focused (keyboard stays open). Without this the
+   tap first blurred the box, the keyboard closed, the page jumped and the tap missed — a second tap was needed. */
+function tapKeepFocus(btn, fn){
+  var done = 0;
+  btn.addEventListener('pointerdown', function(e){ if (e.button > 0) return; e.preventDefault(); done = Date.now(); fn(); });
+  btn.addEventListener('mousedown', function(e){ e.preventDefault(); });   // older browsers: no focus change either
+  btn.addEventListener('click', function(){ if (Date.now() - done > 600) fn(); });   // keyboard (Enter / Space) and fallbacks
+}
+tapKeepFocus($('replyClose'), clearReply);
 
 /* ---------- Rules: checked before a message is sent (the server checks again) ---------- */
 var BAD = ((cfg.chat && cfg.chat.bannedWords) || []).map(function(w){ return String(w).toLowerCase().replace(/[^a-z]/g, ''); }).filter(Boolean);
 function norm(s){ return s.toLowerCase().replace(/[0@]/g,'o').replace(/[1!|]/g,'i').replace(/3/g,'e').replace(/4/g,'a').replace(/[5$]/g,'s').replace(/7/g,'t').replace(/[^a-z]/g,''); }
 function checkMessage(text){
+  if (CHAT.canEdit) return null;   // the team may share links, codes and contact details, and is never slowed (the server agrees)
   if (UI.mod.muted[CHAT.uid]) return S('rule.muted');
-  if (Date.now() < UI.slowUntil) return S('rule.slow', {s: Math.ceil((UI.slowUntil - Date.now()) / 1000)});
+  if (slowApplies() && Date.now() < UI.slowUntil) return S('rule.slow', {s: Math.ceil((UI.slowUntil - Date.now()) / 1000)});
   if (/(https?:\/\/|www\.|t\.me\/|wa\.me\/|\b[a-z0-9-]{2,}\.(com|net|org|io|bet|xyz|me|co|ly|app|link|site|online|info|biz|tv|gg)\b)/i.test(text)) return S('rule.links');
   if (!CHAT.canEdit && /(promo\s*-?\s*code|promocode|bonus\s*code|ref(erral)?\s*(code|link)|invite\s*(code|link)|use\s*(my|this)\s*code|code\s*[:=])/i.test(text) && text.toUpperCase().indexOf(String(SITE.promo).toUpperCase()) < 0) return S('rule.codes');
   if (/[^\s@]+@[^\s@]+\.[^\s@]+/.test(text)) return S('rule.emails');
@@ -758,29 +1267,361 @@ function checkMessage(text){
   var n = norm(text); for (var i = 0; i < BAD.length; i++) if (n.indexOf(BAD[i]) >= 0) return S('rule.language');
   var letters = text.replace(/[^A-Za-z]/g, ''); if (letters.length >= 12 && letters.replace(/[^A-Z]/g, '').length / letters.length > 0.7) return S('rule.caps');
   if (/(.)\1{9,}/.test(text)) return S('rule.spam');
-  if (text.toLowerCase() === UI.lastText && Date.now() - UI.lastTextAt < 120000) return S('rule.repeat');
+  if (!isDmRoom(CHAT.active) && text.toLowerCase() === UI.lastText && Date.now() - UI.lastTextAt < 120000) return S('rule.repeat');   // shared rooms only
   return null;
 }
 
 /* ---------- Composer ---------- */
-function setPresence(){ if (!CHAT.db) return; backend.presence({room: isOpen() ? CHAT.active : null, typing: isOpen() && !!$('msgInput').value.trim()}); }
-function refreshSend(){ var v = $('msgInput').value.trim() || UI.pic; $('composer').classList.toggle('has-text', !!v || Date.now() < UI.slowUntil); $('sendBtn').disabled = !v || Date.now() < UI.slowUntil; }
-function canAttach(){ return !!(CHAT.db && CHAT.canPost && (CHAT.canEdit || CHAT.active === 'support' || (CHAT.perms && CHAT.perms.sendPictures && !pmUid(CHAT.active)))); }
-function updateAttach(){ var ok = canAttach(); $('attachBtn').hidden = !ok; if (!ok) clearPic(); }
+function setPresence(){ if (!CHAT.db) return; backend.presence({room: viewing() ? CHAT.active : null, typing: viewing() && !!$('msgInput').value.trim()}); }
+function refreshSend(){ var v = $('msgInput').value.trim() || UI.pic, slow = slowApplies() && Date.now() < UI.slowUntil; $('composer').classList.toggle('has-text', !!v || slow); $('sendBtn').disabled = !v || slow; if ($('micBtn')) updateMic(); }
+function roomMediaRule(id){ id = String(id); if (isDmRoom(id)) return null; if (grpId(id)){ var g = grpOf(id); return (g && g.media) || null; } return (cfg.chat && cfg.chat.loungeMedia) || null; }
+function mediaOff(){ var r = roomMediaRule(CHAT.active); return !!(r && r.view === 'none'); }   // text-only room: no pictures / voice at all
+function canAttach(){ return !mediaOff() && !!(CHAT.db && CHAT.canPost && (CHAT.canEdit || CHAT.active === 'support' || (CHAT.perms && CHAT.perms.sendPictures && !pmUid(CHAT.active)))); }
+function updateAttach(){ var ok = canAttach(); $('attachBtn').hidden = !ok; if (!ok) clearPic(); updateMic(); }
+
+/* ---------- Voice messages: record in the browser (MediaRecorder), then send or throw away ----------
+   Allowed: the team; a member in their chat with the team and in private chats; in shared rooms members need the role right
+   for pictures & voice (the server checks the same). The mic shows while the box is empty. */
+var REC = null, VOICE_MAX = Math.max(10, Number(cfg.chat && cfg.chat.voiceMax) || 120);
+function canVoice(){
+  if (!(window.MediaRecorder && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) || mediaOff()) return false;
+  return !!(CHAT.db && CHAT.canPost && (CHAT.canEdit || CHAT.active === 'support' || pmUid(CHAT.active) || (CHAT.perms && CHAT.perms.sendPictures)));
+}
+function updateMic(){ var ok = canVoice() && !REC; $('micBtn').hidden = !ok; $('composer').classList.toggle('voice-ok', ok); }
+function recMime(){ var c = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg;codecs=opus', 'audio/webm']; for (var i = 0; i < c.length; i++) if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(c[i])) return c[i]; return ''; }
+/* short UI sounds made on the fly (no files): a rising blip when recording starts, a falling one when it stops / sends,
+   a soft low one when it is thrown away */
+var SFX = null;
+function sfx(kind){
+  try {
+    if (!SFX) SFX = new (window.AudioContext || window.webkitAudioContext)();
+    if (SFX.state === 'suspended') SFX.resume();
+    var t = SFX.currentTime, o = SFX.createOscillator(), g = SFX.createGain(), f = kind === 'start' ? [620, 990] : kind === 'stop' ? [880, 520] : [330, 220];
+    o.type = 'sine'; o.frequency.setValueAtTime(f[0], t); o.frequency.exponentialRampToValueAtTime(f[1], t + 0.11);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(kind === 'cancel' ? 0.12 : 0.2, t + 0.015); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+    o.connect(g).connect(SFX.destination); o.start(t); o.stop(t + 0.18);
+  } catch(e){}
+}
+function recStart(){
+  if (REC || !canVoice()) return;
+  var mb = $('micBtn'); mb.classList.remove('pressed'); void mb.offsetWidth; mb.classList.add('pressed');   // squeeze + pop: the tap was taken
+  var problem = checkMessage(''); if (problem && UI.mod.muted[CHAT.uid]){ toast(problem); return; }
+  if (needsRules()) return;
+  navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true, noiseSuppression:true}}).then(function(stream){
+    var mime = recMime(), mr;
+    try { mr = mime ? new MediaRecorder(stream, {mimeType:mime, audioBitsPerSecond:32000}) : new MediaRecorder(stream); } catch(e){ stream.getTracks().forEach(function(t){ t.stop(); }); toast(S('voice.unsupported')); return; }
+    var ac = null, an = null, buf = null;
+    try { ac = new (window.AudioContext || window.webkitAudioContext)(); an = ac.createAnalyser(); an.fftSize = 512; ac.createMediaStreamSource(stream).connect(an); buf = new Uint8Array(an.fftSize); } catch(e){}
+    REC = {mr:mr, stream:stream, chunks:[], t0:Date.now(), levels:[], ac:ac, an:an, buf:buf, timer:0, send:false, room:CHAT.active, reply:CHAT.replyTo || null};
+    mr.ondataavailable = function(e){ if (e.data && e.data.size) REC && REC.chunks.push(e.data); };
+    mr.onstop = recFinish;
+    sfx('start'); if (navigator.vibrate) try { navigator.vibrate(12); } catch(e){}
+    setTimeout(function(){ if (REC && REC.mr === mr && mr.state === 'inactive'){ REC.t0 = Date.now(); mr.start(250); } }, 170);   // after the blip
+    $('composer').classList.add('recording'); var bar = $('recBar'); bar.hidden = false; bar.classList.remove('opening'); void bar.offsetWidth; bar.classList.add('opening'); updateMic();
+    // the waveform always spans the whole bar: as many bars as fit (3 px + 2 px gap), flat dots first, the live level
+    // comes in from the right and scrolls left (works on a phone and on a wide screen, and when the window is resized)
+    var wave = $('recWave'), cap = function(){ return Math.max(12, Math.floor((wave.clientWidth + 2) / 5)); };
+    wave.textContent = ''; requestAnimationFrame(function(){ for (var i = 0, n = cap(); i < n; i++){ var d = el('i', 'idle'); wave.appendChild(d); } });
+    REC.timer = setInterval(function(){
+      if (!REC) return;
+      var secs = (Date.now() - REC.t0) / 1000, lvl = 0;
+      if (REC.an){ REC.an.getByteTimeDomainData(REC.buf); var sum = 0; for (var i = 0; i < REC.buf.length; i++){ var d = (REC.buf[i] - 128) / 128; sum += d * d; } lvl = Math.min(1, Math.sqrt(sum / REC.buf.length) * 3.2); }
+      REC.levels.push(lvl);
+      $('recTime').textContent = fmtDur(secs) + (secs > VOICE_MAX - 10 ? ' / ' + fmtDur(VOICE_MAX) : '');
+      var b = el('i'); b.style.height = Math.max(10, Math.round(lvl * 100)) + '%'; wave.appendChild(b); var n = cap(); while (wave.childNodes.length > n) wave.removeChild(wave.firstChild); while (wave.childNodes.length < n) wave.insertBefore(el('i', 'idle'), wave.firstChild);
+      if (secs >= VOICE_MAX) recStop(true);   // the longest allowed: send it
+    }, 100);
+  }, function(err){ toast(S(err && err.name === 'NotAllowedError' ? 'voice.micDenied' : 'voice.unsupported')); });
+}
+function recStop(send){ if (!REC) return; REC.send = !!send; sfx(send ? 'stop' : 'cancel'); clearInterval(REC.timer); try { if (REC.mr.state !== 'inactive') REC.mr.stop(); else recFinish(); } catch(e){ recFinish(); } }
+function recFinish(){
+  var r = REC; if (!r) return; REC = null;
+  r.stream.getTracks().forEach(function(t){ t.stop(); }); if (r.ac) r.ac.close().catch(function(){});
+  $('composer').classList.remove('recording'); $('recBar').hidden = true; $('recBar').classList.remove('opening'); $('recWave').textContent = ''; $('recTime').textContent = '0:00'; updateMic();
+  var dur = (Date.now() - r.t0) / 1000;
+  if (!r.send) return;
+  if (dur < 0.8 || !r.chunks.length){ toast(S('voice.tooShort')); return; }
+  var blob = new Blob(r.chunks, {type: (r.mr.mimeType || r.chunks[0].type || 'audio/webm')});
+  // 40-bar waveform from the levels measured while recording
+  var n = 40, L = r.levels.length || 1, peaks = [], mx = Math.max.apply(null, r.levels.concat([0.05]));
+  for (var i = 0; i < n; i++){ var a = Math.floor(i * L / n), z = Math.max(a + 1, Math.floor((i + 1) * L / n)), v = 0; for (var j = a; j < z; j++) v = Math.max(v, r.levels[j] || 0); peaks.push(Math.round(Math.max(0.08, v / mx) * 100)); }
+  sendVoice(blob, Math.min(dur, VOICE_MAX), peaks, r.room, r.reply);
+}
+async function sendVoice(blob, dur, peaks, room, reply){
+  var dmTo = room === 'support' ? CHAT.uid : (String(room).indexOf('sup:') === 0 ? room.slice(4) : null), pmTo = pmUid(room);
+  var clientId = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8), local = URL.createObjectURL(blob);
+  var doc = {clientId: clientId, text: '', room: dmTo || pmTo ? null : room, dmTo: dmTo, pmTo: pmTo, reply: reply || null};
+  if (room === CHAT.active) clearReply();
+  CHAT.pending[clientId] = true;
+  backend.addOptimistic({id: clientId, by: CHAT.uid, text: '', ts: Date.now(), room: dmTo ? (dmTo === CHAT.uid ? 'support' : 'sup:' + dmTo) : room, reply: doc.reply, mod: CHAT.canEdit || undefined, voice: {url: local, dur: dur, peaks: peaks}}, dmTo, pmTo);
+  renderConvo('mine');
+  var up = UPLOADS[clientId] = {k: 0, ctl: {}, url: local};
+  try { await backend.sendVoice(doc, blob, {dur: dur, peaks: peaks}, function(a, t){ uploadProgress(clientId, a, t); }, up.ctl); delete CHAT.pending[clientId]; renderConvo('mine'); }
+  catch(err){ delete CHAT.pending[clientId]; delete UPLOADS[clientId]; backend.dropOptimistic(clientId, dmTo, pmTo); renderConvo(); if (!(err && err.aborted)) toast(err && err.message ? err.message : S('chat.sendFailed')); }
+}
+$('micBtn').addEventListener('click', recStart);
+$('recCancel').addEventListener('click', function(){ recStop(false); });
+$('recSend').addEventListener('click', function(){ recStop(true); });
+document.addEventListener('visibilitychange', function(){ if (document.hidden && REC) recStop(false); });   // never keep the mic on in the background
 function clearPic(){ UI.pic = null; $('picWrap').classList.remove('show'); refreshSend(); }
 function setPic(f){
   if (!f) return;
   if (!/^image\//.test(f.type || 'image/')){ toast(S('auth.err.photoType')); return; }
   if (f.size > 10 * 1024 * 1024){ toast(S('chat.err.imageTooBig')); return; }
+  peOpen(f);   // preview + crop / rotate / flip / draw + caption, then send (see the picture editor below)
+}
+// a picture the editor can't open (e.g. HEIC outside Safari): send it as it is, like before
+function setPicRaw(f){
   var url = URL.createObjectURL(f), probe = new Image();
   probe.onload = function(){ UI.pic = {file:f, url:url, w:probe.naturalWidth, h:probe.naturalHeight}; $('picThumb').src = url; $('picName').textContent = f.name || S('chat.photo');
     $('picWrap').classList.add('show'); refreshSend(); $('msgInput').focus({preventScroll:true}); };
   probe.onerror = function(){ URL.revokeObjectURL(url); toast(S('auth.err.photoType')); };
   probe.src = url;
 }
+
+/* ---------- Picture editor (before sending), like WhatsApp / Telegram ----------
+   Full screen: the picture, tools (crop with free / square / 4:3 / 16:9 and drag handles · rotate · flip · draw with 6 colours
+   and 2 sizes · undo · reset), a caption and Send. Everything is done in the browser on a canvas; the result (JPEG, at most
+   2560 px) goes through the normal send (rules, slow mode, upload). Crop and drawing are kept in coordinates of the rotated
+   picture (0–1), so rotating / flipping carries them along. */
+var PE = null;
+var PE_COLORS = ['#FFFFFF', '#111111', '#E5484D', '#FFC53D', '#30A46C', '#3E63DD'];
+function peEl(){
+  if (PE && PE.root) return PE;
+  var r = el('div', 'pe'); r.setAttribute('role', 'dialog'); r.setAttribute('aria-modal', 'true'); r.setAttribute('aria-label', S('pe.title'));
+  var top = el('div', 'pe-top'), btn = function(cls, label, path, fn){ var b = el('button', 'pe-btn ' + cls); b.type = 'button'; b.setAttribute('aria-label', label); b.title = label; b.appendChild(svg(path)); b.onclick = function(e){ e.stopPropagation(); fn(); }; return b; };
+  top.appendChild(btn('pe-close', S('pe.close'), '<path d="M6 6l12 12M18 6L6 18"/>', peClose));
+  top.appendChild(el('span', 'pe-title', S('pe.title')));
+  var tools = el('div', 'pe-tools');
+  var tCrop = btn('', S('pe.crop'), '<path d="M6 2v14a2 2 0 0 0 2 2h14M2 6h14a2 2 0 0 1 2 2v14"/>', function(){ peMode(PE.mode === 'crop' ? 'view' : 'crop'); });
+  var tRot = btn('', S('pe.rotate'), '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>', function(){ peRotate(); });
+  var tFlip = btn('', S('pe.flip'), '<path d="M12 3v18M8 7l-5 5 5 5V7zM16 7l5 5-5 5V7z"/>', function(){ peFlip(); });
+  var tDraw = btn('', S('pe.draw'), '<path d="M15 5l4 4L8 20H4v-4z"/><path d="M13 7l4 4"/>', function(){ peMode(PE.mode === 'draw' ? 'view' : 'draw'); });
+  var tStick = btn('', S('pe.sticker'), '<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0M9 9.5h.01M15 9.5h.01"/>', function(){ peMode(PE.mode === 'sticker' ? 'view' : 'sticker'); });
+  var tUndo = btn('', S('pe.undo'), '<path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>', peUndo);
+  [tCrop, tRot, tFlip, tDraw, tStick, tUndo].forEach(function(b){ tools.appendChild(b); }); top.appendChild(tools);
+  var stage = el('div', 'pe-stage'), cv = document.createElement('canvas'); cv.className = 'pe-cv'; stage.appendChild(cv);
+  var box = el('div', 'pe-crop'); ['nw','n','ne','e','se','s','sw','w'].forEach(function(h){ var d = el('span', 'pe-h pe-' + h); d.dataset.h = h; box.appendChild(d); }); stage.appendChild(box);
+  // the selected sticker: move it (drag), resize + rotate it (round handle), remove it (✕)
+  var sel = el('div', 'pe-sel'); sel.hidden = true; var rz = el('span', 'pe-rz'); rz.setAttribute('aria-label', S('pe.resize')); rz.title = S('pe.resize'); var del = el('button', 'pe-del'); del.type = 'button'; del.setAttribute('aria-label', S('pe.removeSticker')); del.appendChild(svg('<path d="M6 6l12 12M18 6L6 18"/>')); sel.appendChild(rz); sel.appendChild(del); stage.appendChild(sel);
+  var sub = el('div', 'pe-sub');
+  var aspects = el('div', 'pe-aspects'); [['free', 0], ['square', 1], ['4:3', 4/3], ['16:9', 16/9]].forEach(function(a){ var b = el('button', 'pe-chip', a[0] === 'free' ? S('pe.free') : a[0] === 'square' ? S('pe.square') : a[0]); b.type = 'button'; b.dataset.a = a[1]; b.onclick = function(){ peAspect(a[1]); }; aspects.appendChild(b); });
+  var colors = el('div', 'pe-colors'); PE_COLORS.forEach(function(c, i){ var b = el('button', 'pe-color'); b.type = 'button'; b.style.background = c; b.dataset.c = c; b.setAttribute('aria-label', S('pe.color', {n: i + 1})); b.onclick = function(){ PE.color = c; peSubUI(); }; colors.appendChild(b); });
+  var sz = el('button', 'pe-chip pe-size'); sz.type = 'button'; sz.onclick = function(){ PE.size = PE.size === 1 ? 2 : 1; peSubUI(); }; colors.appendChild(sz);
+  // sticker tray (filled when it opens: peFillTray): My stickers (+ = add a picture, saved on this account, only for me) ·
+  // Team stickers (back office → Stickers, for everyone) · Emoji
+  var tray = el('div', 'pe-tray');
+  var done = el('button', 'pe-chip pe-done', S('pe.done')); done.type = 'button'; done.onclick = function(){ peMode('view'); };
+  var reset = el('button', 'pe-chip', S('pe.reset')); reset.type = 'button'; reset.onclick = peReset;
+  sub.appendChild(tray); sub.appendChild(aspects); sub.appendChild(colors); sub.appendChild(reset); sub.appendChild(done);
+  var bottom = el('form', 'pe-bottom'), cap = document.createElement('input'); cap.type = 'text'; cap.maxLength = MAXLEN; cap.placeholder = S('pe.caption'); cap.setAttribute('aria-label', S('pe.caption')); cap.autocomplete = 'off';
+  var send = el('button', 'pe-send'); send.type = 'submit'; send.setAttribute('aria-label', S('pe.send')); send.appendChild(svg('<path d="M12 19V5M6 11l6-6 6 6"/>'));
+  bottom.appendChild(cap); bottom.appendChild(send); bottom.onsubmit = function(e){ e.preventDefault(); peSend(); };
+  [top, stage, sub, bottom].forEach(function(x){ r.appendChild(x); });
+  ($('messenger') || document.body).appendChild(r);
+  PE = {root:r, cv:cv, stage:stage, box:box, sel:sel, sub:sub, aspects:aspects, colors:colors, size:1, sizeBtn:sz, caption:cap, tools:{crop:tCrop, draw:tDraw, sticker:tStick, undo:tUndo}};
+  peStickerEvents(sel, rz, del);
+  // drawing
+  cv.addEventListener('pointerdown', function(e){ if (PE.mode !== 'draw'){ if (PE.mode !== 'crop') peStickerDown(e); return; } e.preventDefault(); cv.setPointerCapture(e.pointerId); pePush(); var p = peToBase(e); PE.stroke = {c:PE.color, s:PE.size, pts:[p]}; PE.strokes.push(PE.stroke); peRender(); });
+  cv.addEventListener('pointermove', function(e){ if (!PE.stroke) return; PE.stroke.pts.push(peToBase(e)); peRender(); });
+  var stopDraw = function(){ PE.stroke = null; }; cv.addEventListener('pointerup', stopDraw); cv.addEventListener('pointercancel', stopDraw);
+  // crop box: drag the box or a handle
+  box.addEventListener('pointerdown', function(e){ e.preventDefault(); box.setPointerCapture(e.pointerId); pePush(); PE.drag = {h: e.target.dataset.h || 'move', x: e.clientX, y: e.clientY, c: Object.assign({}, PE.crop)}; });
+  box.addEventListener('pointermove', function(e){ if (PE.drag) peCropDrag(e); });
+  var stopCrop = function(){ PE.drag = null; }; box.addEventListener('pointerup', stopCrop); box.addEventListener('pointercancel', stopCrop);
+  cv.addEventListener('wheel', function(e){ var st = PE.selSticker; if (!st || PE.mode === 'crop' || PE.mode === 'draw') return; e.preventDefault(); if (!PE.wheelPushed){ pePush(); PE.wheelPushed = true; } clearTimeout(PE.wheelT); PE.wheelT = setTimeout(function(){ PE.wheelPushed = false; }, 400); st.s = Math.max(0.05, Math.min(1.2, st.s * (e.deltaY < 0 ? 1.08 : 0.93))); peRender(); }, {passive:false});
+  r.addEventListener('keydown', function(e){ if ((e.key === 'Delete' || e.key === 'Backspace') && PE.selSticker && document.activeElement !== PE.caption){ e.preventDefault(); peRemoveSticker(); return; }
+    if (e.key === 'Escape'){ e.stopPropagation(); if (PE.mode !== 'view') peMode('view'); else peClose(); } });
+  window.addEventListener('resize', function(){ if (PE && PE.open) peRender(); });
+  return PE;
+}
+function peOpen(file){
+  var url = URL.createObjectURL(file), img = new Image();
+  img.onload = function(){
+    peEl(); URL.revokeObjectURL(PE.url || ''); PE.file = file; PE.url = url; PE.img = img; PE.rot = 0; PE.flip = false; PE.crop = {x:0, y:0, w:1, h:1}; PE.aspect = 0;
+    PE.strokes = []; PE.stickers = []; PE.selSticker = null; PE.hist = []; PE.color = PE.color || PE_COLORS[2]; PE.mode = 'view'; PE.caption.value = $('msgInput').value; PE.open = true;
+    peBase(); PE.root.classList.add('open'); peMode('view'); setTimeout(function(){ PE.caption.focus({preventScroll:true}); }, 60);
+  };
+  img.onerror = function(){ URL.revokeObjectURL(url); setPicRaw(file); };
+  img.src = url;
+}
+function peClose(){ if (!PE || !PE.open) return; PE.open = false; PE.root.classList.remove('open'); URL.revokeObjectURL(PE.url || ''); PE.url = null; PE.img = null; $('msgInput').focus({preventScroll:true}); }
+/* the picture with rotation / flip applied (at most 2560 px), in its own canvas */
+function peBase(){
+  var im = PE.img, w0 = im.naturalWidth, h0 = im.naturalHeight, k = Math.min(1, 2560 / Math.max(w0, h0)), w = Math.round(w0 * k), h = Math.round(h0 * k), side = PE.rot % 180 !== 0;
+  var c = PE.base || document.createElement('canvas'); c.width = side ? h : w; c.height = side ? w : h;
+  var x = c.getContext('2d'); x.setTransform(1, 0, 0, 1, 0, 0); x.clearRect(0, 0, c.width, c.height);
+  x.translate(c.width / 2, c.height / 2); if (PE.flip) x.scale(-1, 1); x.rotate(PE.rot * Math.PI / 180); x.drawImage(im, -w / 2, -h / 2, w, h);
+  PE.base = c;
+}
+function pePush(){ PE.hist.push(JSON.stringify({rot:PE.rot, flip:PE.flip, crop:PE.crop, strokes:PE.strokes, stickers:PE.stickers, aspect:PE.aspect})); if (PE.hist.length > 60) PE.hist.shift(); PE.tools.undo.disabled = false; }
+function peUndo(){ var h = PE.hist.pop(); if (!h) return; var o = JSON.parse(h), turned = o.rot !== PE.rot || o.flip !== PE.flip; PE.rot = o.rot; PE.flip = o.flip; PE.crop = o.crop; PE.strokes = o.strokes; PE.stickers = o.stickers || []; PE.selSticker = null; PE.aspect = o.aspect; if (turned) peBase(); PE.tools.undo.disabled = !PE.hist.length; peSubUI(); peRender(); }
+function peReset(){ pePush(); PE.rot = 0; PE.flip = false; PE.crop = {x:0, y:0, w:1, h:1}; PE.strokes = []; PE.stickers = []; PE.selSticker = null; PE.aspect = 0; peBase(); peSubUI(); peRender(); }
+/* rotate 90° clockwise: crop and drawing turn with the picture */
+function peRotate(){
+  pePush(); var t = function(p){ return [1 - p[1], p[0]]; }, c = PE.crop;
+  PE.crop = {x: 1 - (c.y + c.h), y: c.x, w: c.h, h: c.w};
+  PE.strokes.forEach(function(st){ st.pts = st.pts.map(t); });
+  PE.stickers.forEach(function(k){ var q = t([k.x, k.y]); k.x = q[0]; k.y = q[1]; k.r += Math.PI / 2; });
+  PE.rot = (PE.rot + (PE.flip ? 270 : 90)) % 360; peBase(); peRender();
+}
+function peFlip(){ pePush(); var c = PE.crop; PE.crop = {x: 1 - (c.x + c.w), y: c.y, w: c.w, h: c.h}; PE.strokes.forEach(function(st){ st.pts = st.pts.map(function(p){ return [1 - p[0], p[1]]; }); }); PE.stickers.forEach(function(k){ k.x = 1 - k.x; k.r = -k.r; }); PE.flip = !PE.flip; peBase(); peRender(); }
+function peAspect(a){
+  pePush(); PE.aspect = a;
+  if (a){ var bw = PE.base.width, bh = PE.base.height, c = PE.crop, cx = c.x + c.w / 2, cy = c.y + c.h / 2, w = c.w, h = (c.w * bw / a) / bh;
+    if (h > c.h){ h = c.h; w = (c.h * bh * a) / bw; }
+    PE.crop = {x: Math.max(0, Math.min(1 - w, cx - w / 2)), y: Math.max(0, Math.min(1 - h, cy - h / 2)), w: w, h: h}; }
+  peSubUI(); peRender();
+}
+function peMode(m){ PE.mode = m; PE.root.dataset.mode = m; PE.tools.crop.classList.toggle('on', m === 'crop'); PE.tools.draw.classList.toggle('on', m === 'draw'); PE.tools.sticker.classList.toggle('on', m === 'sticker'); if (m === 'crop' || m === 'draw') PE.selSticker = null; if (m === 'sticker') peFillTray(); peSubUI(); peRender(); }
+function peSubUI(){
+  PE.aspects.querySelectorAll('button').forEach(function(b){ b.classList.toggle('on', Number(b.dataset.a) === PE.aspect); });
+  PE.colors.querySelectorAll('.pe-color').forEach(function(b){ b.classList.toggle('on', b.dataset.c === PE.color); });
+  PE.sizeBtn.textContent = S(PE.size === 1 ? 'pe.thin' : 'pe.thick'); PE.tools.undo.disabled = !PE.hist.length;
+}
+/* where the picture is drawn on screen: the whole picture while cropping, otherwise the cropped part */
+function peView(){
+  var st = PE.stage, W = st.clientWidth, H = st.clientHeight, bw = PE.base.width, bh = PE.base.height, crop = PE.mode === 'crop';
+  var src = crop ? {x:0, y:0, w:1, h:1} : PE.crop, sw = src.w * bw, sh = src.h * bh, k = Math.min((W - 32) / sw, (H - 32) / sh);
+  var dw = sw * k, dh = sh * k; return {src: src, x: (W - dw) / 2, y: (H - dh) / 2, w: dw, h: dh};
+}
+function peToBase(e){ var v = PE.view, r = PE.cv.getBoundingClientRect(), px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height; return [v.src.x + px * v.src.w, v.src.y + py * v.src.h]; }
+function peStrokes(x, src, ox, oy, sw, sh){   // draw the strokes of the 'src' part of the picture into a box (ox, oy, sw × sh)
+  var bw = PE.base.width, bh = PE.base.height, unit = Math.max(bw, bh) * (sw / (src.w * bw));
+  PE.strokes.forEach(function(st){ if (!st.pts.length) return; x.strokeStyle = st.c; x.lineWidth = unit * (st.s === 2 ? 0.016 : 0.007); x.lineCap = 'round'; x.lineJoin = 'round'; x.beginPath();
+    st.pts.forEach(function(p, i){ var X = ox + (p[0] - src.x) / src.w * sw, Y = oy + (p[1] - src.y) / src.h * sh; if (i) x.lineTo(X, Y); else x.moveTo(X, Y); });
+    if (st.pts.length === 1){ var p0 = st.pts[0], X0 = ox + (p0[0] - src.x) / src.w * sw, Y0 = oy + (p0[1] - src.y) / src.h * sh; x.lineTo(X0 + .01, Y0); } x.stroke(); });
+}
+/* ---- stickers: {e: emoji | img: picture URL, x, y: centre (0–1 of the rotated picture), s: size (share of its longer side),
+   r: rotation (rad)}. Picture stickers keep their own shape inside the square. ---- */
+var PE_STICKERS = ['⚽','🏀','🎾','🏈','🏆','🥇','🔥','💯','🎉','🥳','👏','🙌','👍','🙏','💪','😂','😍','😎','🤩','😮','😭','🤑','💰','💸','🎯','⚡','⭐','❤️','✅','🍀'];
+var EMOJI_FONT = '"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif', PE_IMGS = {};
+function peStickerImg(url){ var im = PE_IMGS[url]; if (!im){ im = PE_IMGS[url] = new Image(); im.onload = function(){ if (PE && PE.open) peRender(); }; im.src = url; } return im.complete && im.naturalWidth ? im : null; }
+function peStickersDraw(x, src, ox, oy, sw, sh){
+  var bw = PE.base.width, bh = PE.base.height, k = sw / (src.w * bw), big = Math.max(bw, bh);
+  PE.stickers.forEach(function(st){ var px = ox + (st.x - src.x) / src.w * sw, py = oy + (st.y - src.y) / src.h * sh, size = st.s * big * k;
+    x.save(); x.translate(px, py); x.rotate(st.r);
+    if (st.img){ var im = peStickerImg(st.img); if (im){ var a = im.naturalWidth / im.naturalHeight, w = a >= 1 ? size : size * a, h = a >= 1 ? size / a : size; x.drawImage(im, -w / 2, -h / 2, w, h); } }
+    else { x.font = Math.round(size * 0.86) + 'px ' + EMOJI_FONT; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(st.e, 0, size * 0.04); }
+    x.restore(); });
+}
+function peStickerBox(st){   // on screen: centre and side length (px), relative to the stage
+  var v = PE.view, bw = PE.base.width, bh = PE.base.height, k = v.w / (v.src.w * bw);
+  return {cx: v.x + (st.x - v.src.x) / v.src.w * v.w, cy: v.y + (st.y - v.src.y) / v.src.h * v.h, size: st.s * Math.max(bw, bh) * k};
+}
+function peSelUI(){
+  var sel = PE.sel, st = PE.selSticker; sel.hidden = !st || PE.mode === 'crop' || PE.mode === 'draw'; if (sel.hidden) return;
+  var b = peStickerBox(st); sel.style.left = (b.cx - b.size / 2) + 'px'; sel.style.top = (b.cy - b.size / 2) + 'px'; sel.style.width = sel.style.height = b.size + 'px'; sel.style.transform = 'rotate(' + st.r + 'rad)';
+}
+function peAddSticker(what){ pePush(); var c = PE.crop, st = {e: what.e || null, img: what.img || null, x: c.x + c.w / 2, y: c.y + c.h / 2, s: 0.28 * Math.min(c.w, c.h), r: 0}; PE.stickers.push(st); PE.selSticker = st; peMode('view'); }
+function peRemoveSticker(){ var st = PE.selSticker; if (!st) return; pePush(); PE.stickers = PE.stickers.filter(function(k){ return k !== st; }); PE.selSticker = null; peRender(); }
+function peStickerAt(e){   // the topmost sticker under the pointer
+  var r = PE.stage.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
+  for (var i = PE.stickers.length - 1; i >= 0; i--){ var st = PE.stickers[i], b = peStickerBox(st), dx = px - b.cx, dy = py - b.cy, c = Math.cos(-st.r), s = Math.sin(-st.r), lx = dx * c - dy * s, ly = dx * s + dy * c; if (Math.abs(lx) <= b.size / 2 && Math.abs(ly) <= b.size / 2) return st; }
+  return null;
+}
+function peStickerDown(e){
+  var st = peStickerAt(e); PE.selSticker = st; peRender(); if (!st) return;
+  e.preventDefault(); PE.stickers = PE.stickers.filter(function(k){ return k !== st; }).concat([st]);   // the touched one comes to the front
+  peStickerMoveStart(e, PE.cv);
+}
+function peStickerMoveStart(e, target){
+  var st = PE.selSticker; pePush(); try { target.setPointerCapture(e.pointerId); } catch(x){}
+  var v = PE.view, sx = e.clientX, sy = e.clientY, ox = st.x, oy = st.y;
+  var move = function(ev){ st.x = Math.max(0, Math.min(1, ox + (ev.clientX - sx) / v.w * v.src.w)); st.y = Math.max(0, Math.min(1, oy + (ev.clientY - sy) / v.h * v.src.h)); peRender(); };
+  var up = function(){ target.removeEventListener('pointermove', move); target.removeEventListener('pointerup', up); target.removeEventListener('pointercancel', up); };
+  target.addEventListener('pointermove', move); target.addEventListener('pointerup', up); target.addEventListener('pointercancel', up);
+}
+var MY_STICKERS = null;   // this account's own stickers [{id, url}], loaded once
+function peFillTray(){
+  var tray = PE.root.querySelector('.pe-tray'); tray.textContent = '';
+  var head = function(t){ tray.appendChild(el('div', 'pe-tray-h', t)); };
+  var tile = function(cls, label, content, onPick){ var b = el('button', 'pe-stk ' + cls); b.type = 'button'; b.setAttribute('aria-label', label); b.title = label; b.appendChild(content); b.onclick = onPick; tray.appendChild(b); return b; };
+  var img = function(url){ var im = document.createElement('img'); im.src = url; im.alt = ''; im.decoding = 'async'; peStickerImg(url); return im; };
+  // mine
+  head(S('pe.myStickers'));
+  var file = document.createElement('input'); file.type = 'file'; file.accept = 'image/png,image/webp,image/gif,image/jpeg,image/svg+xml'; file.hidden = true; tray.appendChild(file);
+  var add = tile('pe-stk-add', S('pe.stickerFromDevice'), svg('<path d="M12 5v14M5 12h14"/>'), function(){ file.click(); });
+  file.onchange = function(){
+    var f = file.files && file.files[0]; file.value = ''; if (!f || !/^image\//.test(f.type)) return;
+    if (f.size > 5 * 1024 * 1024){ toast(S('chat.err.imageTooBig')); return; }
+    add.classList.add('busy');
+    backend.addSticker(f).then(function(st){ add.classList.remove('busy'); MY_STICKERS = [st].concat(MY_STICKERS || []); peAddSticker({img: st.url}); toast(S('pe.stickerSaved'), true); },
+      function(err){ add.classList.remove('busy'); toast(err && err.message ? err.message : S('chat.sendFailed')); });
+  };
+  if (MY_STICKERS === null){ var wait = el('span', 'pe-tray-note', '…'); tray.appendChild(wait);
+    backend.myStickers().then(function(list){ MY_STICKERS = list; if (PE && PE.mode === 'sticker') peFillTray(); }, function(){ MY_STICKERS = []; wait.textContent = ''; }); }
+  else if (!MY_STICKERS.length) tray.appendChild(el('span', 'pe-tray-note', S('pe.myStickersEmpty')));
+  else MY_STICKERS.forEach(function(k){
+    var b = tile('pe-stk-img mine', S('pe.addSticker'), img(k.url), function(){ peAddSticker({img: k.url}); });
+    var x = el('span', 'pe-stk-x'); x.setAttribute('role', 'button'); x.setAttribute('aria-label', S('pe.deleteMySticker')); x.title = S('pe.deleteMySticker'); x.appendChild(svg('<path d="M6 6l12 12M18 6L6 18"/>'));
+    x.onclick = function(e){ e.stopPropagation(); askConfirm(S('pe.deleteMyStickerConfirm'), S('rooms.delete'), true).then(function(y){ if (y) backend.removeSticker(k.id).then(function(){ MY_STICKERS = MY_STICKERS.filter(function(z){ return z.id !== k.id; }); peFillTray(); }, function(){ toast(S('chat.sendFailed')); }); }); };
+    b.appendChild(x);
+  });
+  // team (for everyone)
+  if ((cfg.stickers || []).length){ head(S('pe.teamStickers')); cfg.stickers.forEach(function(k){ tile('pe-stk-img', k.name || S('pe.addSticker'), img(k.url), function(){ peAddSticker({img: k.url}); }); }); }
+  // emoji
+  head(S('pe.emojiStickers'));
+  PE_STICKERS.forEach(function(e){ tile('', S('pe.addSticker'), document.createTextNode(e), function(){ peAddSticker({e: e}); }); });
+}
+function peStickerEvents(sel, rz, del){
+  sel.addEventListener('pointerdown', function(e){ if (e.target !== sel) return; e.preventDefault(); peStickerMoveStart(e, sel); });
+  del.addEventListener('pointerdown', function(e){ e.stopPropagation(); });
+  del.addEventListener('click', function(e){ e.stopPropagation(); peRemoveSticker(); });
+  // the round handle: distance from the centre = size, angle = rotation (snaps to straight angles), like WhatsApp / Telegram
+  rz.addEventListener('pointerdown', function(e){
+    e.preventDefault(); e.stopPropagation(); var st = PE.selSticker; if (!st) return; pePush(); try { rz.setPointerCapture(e.pointerId); } catch(x){}
+    var r = PE.stage.getBoundingClientRect(), b = peStickerBox(st), cx = r.left + b.cx, cy = r.top + b.cy;
+    var d0 = Math.hypot(e.clientX - cx, e.clientY - cy) || 1, a0 = Math.atan2(e.clientY - cy, e.clientX - cx), s0 = st.s, r0 = st.r;
+    var move = function(ev){ var d = Math.hypot(ev.clientX - cx, ev.clientY - cy), a = Math.atan2(ev.clientY - cy, ev.clientX - cx);
+      st.s = Math.max(0.05, Math.min(1.2, s0 * d / d0)); var rr = r0 + (a - a0), snap = Math.round(rr / (Math.PI / 2)) * (Math.PI / 2); st.r = Math.abs(rr - snap) < 0.06 ? snap : rr; peRender(); };
+    var up = function(){ rz.removeEventListener('pointermove', move); rz.removeEventListener('pointerup', up); rz.removeEventListener('pointercancel', up); };
+    rz.addEventListener('pointermove', move); rz.addEventListener('pointerup', up); rz.addEventListener('pointercancel', up);
+  });
+}
+
+function peRender(){
+  if (!PE || !PE.open || !PE.base) return;
+  var v = PE.view = peView(), dpr = window.devicePixelRatio || 1, cv = PE.cv, bw = PE.base.width, bh = PE.base.height;
+  cv.style.left = v.x + 'px'; cv.style.top = v.y + 'px'; cv.style.width = v.w + 'px'; cv.style.height = v.h + 'px';
+  cv.width = Math.round(v.w * dpr); cv.height = Math.round(v.h * dpr);
+  var x = cv.getContext('2d'); x.setTransform(dpr, 0, 0, dpr, 0, 0); x.clearRect(0, 0, v.w, v.h);
+  x.drawImage(PE.base, v.src.x * bw, v.src.y * bh, v.src.w * bw, v.src.h * bh, 0, 0, v.w, v.h);
+  peStrokes(x, v.src, 0, 0, v.w, v.h); peStickersDraw(x, v.src, 0, 0, v.w, v.h);
+  peSelUI();
+  var b = PE.box; b.hidden = PE.mode !== 'crop';
+  if (!b.hidden){ var c = PE.crop; b.style.left = (v.x + c.x * v.w) + 'px'; b.style.top = (v.y + c.y * v.h) + 'px'; b.style.width = (c.w * v.w) + 'px'; b.style.height = (c.h * v.h) + 'px'; }
+  PE.cv.style.cursor = PE.mode === 'draw' ? 'crosshair' : '';
+}
+function peCropDrag(e){
+  var d = PE.drag, v = PE.view, dx = (e.clientX - d.x) / v.w, dy = (e.clientY - d.y) / v.h, c = Object.assign({}, d.c), MIN = 0.06, h = d.h;
+  if (h === 'move'){ c.x = Math.max(0, Math.min(1 - c.w, c.x + dx)); c.y = Math.max(0, Math.min(1 - c.h, c.y + dy)); PE.crop = c; peRender(); return; }
+  var L = c.x, T = c.y, R = c.x + c.w, B = c.y + c.h;
+  if (h.indexOf('w') >= 0) L = Math.max(0, Math.min(R - MIN, L + dx)); if (h.indexOf('e') >= 0) R = Math.min(1, Math.max(L + MIN, R + dx));
+  if (h.indexOf('n') >= 0) T = Math.max(0, Math.min(B - MIN, T + dy)); if (h.indexOf('s') >= 0) B = Math.min(1, Math.max(T + MIN, B + dy));
+  if (PE.aspect){   // keep the chosen shape: the height follows the width (or the width follows a pure top/bottom drag)
+    var bw = PE.base.width, bh = PE.base.height, wpx = (R - L) * bw, hpx = (B - T) * bh;
+    if (h === 'n' || h === 's'){ var nw = hpx * PE.aspect / bw; if (L + nw > 1) nw = 1 - L; R = L + nw; hpx = nw * bw / PE.aspect; if (h === 'n') T = B - hpx / bh; else B = T + hpx / bh; }
+    else { var nh = wpx / PE.aspect / bh; if (h.indexOf('n') >= 0){ T = Math.max(0, B - nh); } else { B = Math.min(1, T + nh); } var realH = (B - T) * bh, nw2 = realH * PE.aspect / bw; if (h.indexOf('w') >= 0) L = R - nw2; else R = L + nw2; }
+  }
+  PE.crop = {x: L, y: T, w: R - L, h: B - T}; peRender();
+}
+function peSend(){
+  var bw = PE.base.width, bh = PE.base.height, c = PE.crop, sw = Math.max(1, Math.round(c.w * bw)), sh = Math.max(1, Math.round(c.h * bh));
+  var out = document.createElement('canvas'); out.width = sw; out.height = sh; var x = out.getContext('2d');
+  x.drawImage(PE.base, c.x * bw, c.y * bh, sw, sh, 0, 0, sw, sh); peStrokes(x, c, 0, 0, sw, sh); peStickersDraw(x, c, 0, 0, sw, sh);
+  var caption = PE.caption.value;
+  out.toBlob(function(blob){
+    if (!blob){ toast(S('auth.err.photoType')); return; }
+    var file = new File([blob], 'photo.jpg', {type: 'image/jpeg'});
+    if (file.size > 10 * 1024 * 1024){ toast(S('chat.err.imageTooBig')); return; }
+    UI.pic = {file: file, url: URL.createObjectURL(blob), w: sw, h: sh}; $('picThumb').src = UI.pic.url; $('picName').textContent = S('chat.photo');
+    peClose(); $('msgInput').value = caption; refreshSend(); $('composer').requestSubmit();
+  }, 'image/jpeg', 0.92);
+}
 $('attachBtn').onclick = function(){ if (needsRules()) return; $('picFile').click(); };
 $('picFile').onchange = function(){ var f = this.files && this.files[0]; this.value = ''; setPic(f); };
-$('picClose').onclick = clearPic;
+tapKeepFocus($('picClose'), clearPic);
 $('msgInput').setAttribute('maxlength', String(MAXLEN));
 $('msgInput').addEventListener('input', function(){
   var t = this, h0 = t.offsetHeight; t.style.height = 'auto'; var h1 = Math.min(140, t.scrollHeight); t.style.height = h0 + 'px'; void t.offsetHeight; t.style.height = h1 + 'px';
@@ -789,8 +1630,10 @@ $('msgInput').addEventListener('input', function(){
   clearTimeout(CHAT.typingTimer); CHAT.typingTimer = setTimeout(function(){ if (CHAT.db) backend.presence({typing:false}); }, 4000);
 });
 $('msgInput').addEventListener('keydown', function(e){ if (e.key === 'Enter' && !e.shiftKey && !e.isComposing){ e.preventDefault(); $('composer').requestSubmit(); } });
+// slow mode: members only, and only in shared rooms (lounge, match rooms, groups) — never for the team or one-to-one chats
+function slowApplies(){ return !!SLOW_MS && !CHAT.canEdit && !isDmRoom(CHAT.active); }
 function startSlow(){
-  if (!SLOW_MS) return;
+  if (!slowApplies()) return;
   UI.slowUntil = Date.now() + SLOW_MS; var ring = $('slowRing'), num = $('slowNum'), ic = $('sendIc');
   num.hidden = false; ic.style.visibility = 'hidden';
   (function tick(){ var left = UI.slowUntil - Date.now();
@@ -801,7 +1644,7 @@ $('composer').addEventListener('submit', async function(e){
   e.preventDefault(); var input = $('msgInput'), text = input.value.trim().slice(0, MAXLEN);
   var pic = UI.pic;
   if ((!text && !pic) || !CHAT.db) return; if (needsRules()) return;
-  var problem = text ? checkMessage(text) : (Date.now() < UI.slowUntil ? S('rule.slow', {s: Math.ceil((UI.slowUntil - Date.now()) / 1000)}) : null);
+  var problem = text ? checkMessage(text) : (slowApplies() && Date.now() < UI.slowUntil ? S('rule.slow', {s: Math.ceil((UI.slowUntil - Date.now()) / 1000)}) : null);
   if (problem){ var c = $('composer'); c.classList.remove('shake'); void c.offsetWidth; c.classList.add('shake'); toast(problem); return; }
   var dmTo = CHAT.active === 'support' ? CHAT.uid : (String(CHAT.active).indexOf('sup:') === 0 ? CHAT.active.slice(4) : null);
   var pmTo = pmUid(CHAT.active);
@@ -813,9 +1656,10 @@ $('composer').addEventListener('submit', async function(e){
   CHAT.pending[clientId] = true;
   backend.addOptimistic({id: clientId, by: CHAT.uid, text: text, ts: Date.now(), room: dmTo ? (dmTo === CHAT.uid ? 'support' : 'sup:' + dmTo) : CHAT.active, reply: doc.reply, mod: CHAT.canEdit || undefined, image: pic ? {url: pic.url, w: pic.w, h: pic.h} : undefined}, dmTo, pmTo);
   renderConvo('mine');
-  try { await (pic ? backend.sendImage(doc, pic.file) : backend.send(doc)); delete CHAT.pending[clientId]; renderConvo('mine'); if (pic) setTimeout(function(){ URL.revokeObjectURL(pic.url); }, 60000); }
-  catch(err){ delete CHAT.pending[clientId]; backend.dropOptimistic(clientId, dmTo, pmTo); input.value = text; UI.slowUntil = 0; if (pic){ UI.pic = pic; $('picWrap').classList.add('show'); } renderConvo();
-    toast(err && err.message ? err.message : S('chat.sendFailed'));
+  var up = pic ? (UPLOADS[clientId] = {k: 0, ctl: {}, url: pic.url}) : null;
+  try { await (pic ? backend.sendImage(doc, pic.file, function(a, t){ uploadProgress(clientId, a, t); }, up.ctl) : backend.send(doc)); delete CHAT.pending[clientId]; renderConvo('mine'); }
+  catch(err){ delete CHAT.pending[clientId]; delete UPLOADS[clientId]; backend.dropOptimistic(clientId, dmTo, pmTo); input.value = text; UI.slowUntil = 0; if (pic){ UI.pic = pic; $('picWrap').classList.add('show'); } renderConvo();
+    if (!(err && err.aborted)) toast(err && err.message ? err.message : S('chat.sendFailed'));   // cancelled: the picture and text are back in the box
     refreshSend(); }
 });
 function applyComposer(){
@@ -825,6 +1669,7 @@ function applyComposer(){
   else if (!CHAT.canPost) msg = S('chat.gate.readOnly');
   else if (UI.mod.muted[CHAT.uid]) msg = S('chat.gate.muted');
   else if (!UI.accepted){ msg = S('chat.gate.rules'); showBtn = true; }
+  else if (CHAT.active === 'lounge' && cfg.chat && cfg.chat.loungeTeamOnly && !CHAT.canEdit) msg = S('chat.gate.loungeTeam');
   else if (grpOf(CHAT.active) && !grpOf(CHAT.active).canPost){ var gr = grpOf(CHAT.active), gid = gr.id;
     var go = function(fn, ok){ return function(){ fn(gid).then(function(){ if (ok) toast(ok, true); }, function(e){ toast(e.message); }); }; };
     if (gr.status === 'invited'){ msg = S('groups.gate.invited', {name: gr.name}); showBtn = true; btnLabel = S('groups.join'); btnAction = go(backend.groupJoin, S('groups.joined', {name: gr.name}));
@@ -832,6 +1677,7 @@ function applyComposer(){
     else if (gr.status === 'requested'){ msg = S('groups.gate.requested'); showBtn = true; btnLabel = S('groups.cancelRequest'); btnAction = go(backend.groupLeave); }
     else if (gr.status === 'member') msg = S(gr.owned ? 'groups.gate.channelOwned' : 'groups.gate.channel');
     else if (gr.join === 'open'){ msg = S('groups.gate.open', {name: gr.name}); showBtn = true; btnLabel = S('groups.join'); btnAction = go(backend.groupJoin, S('groups.joined', {name: gr.name})); }
+    else if (gr.join === 'invite') msg = S('groups.gate.inviteOnly', {name: gr.name});   // visible, but you can't ask: an invite or the link
     else { msg = S('groups.gate.request', {name: gr.name}); showBtn = true; btnLabel = S('groups.requestJoin'); btnAction = go(backend.groupJoin, S('groups.requested')); } }
   else if (pmUid(CHAT.active)){ var rel = PM.rels[pmUid(CHAT.active)];
     if (!rel || rel.status === 'pending-out'){ msg = S('pm.waiting', {name: nameOf(pmUid(CHAT.active))}); showBtn = !!rel; btnLabel = S('pm.cancel'); btnAction = function(){ backend.pmRespond(pmUid(CHAT.active), 'cancel'); }; }
@@ -870,12 +1716,20 @@ $('rulesAccept').onclick = function(){
 var CH = {base: '/' + cfg.locale + '/chat', site: '/' + cfg.locale, scroll: 0, title: cfg.siteName || document.title};
 // Next.js sets the page <title> after hydration: set ours now and once more right after
 function setTitle(t){ document.title = t; setTimeout(function(){ document.title = t; }, 0); setTimeout(function(){ document.title = t; }, 400); }
-function chatPathFor(id){ return id ? CH.base + '/' + encodeURIComponent(String(id).replace(/^(sup|pm|g):/, '$1-')) : CH.base; }
+/* the member's own help chat has the conversation's id in its address too: /chat/team-<member id> (the team opens the
+   same conversation as /chat/sup-<member id>); old /chat/support links still work and switch to it */
+function chatPathFor(id){
+  if (id === 'support' && CHAT.uid && /^[a-f0-9]{24}$/i.test(CHAT.uid)) return CH.base + '/team-' + CHAT.uid;
+  return id ? CH.base + '/' + encodeURIComponent(String(id).replace(/^(sup|pm|g):/, '$1-')) : CH.base;
+}
 function chatFromPath(){
   var p = location.pathname.replace(/\/+$/, '');
   if (p === CH.base) return {open:true, room:''};
   if (p.indexOf(CH.base + '/') !== 0) return {open:false, room:''};
   var seg = decodeURIComponent(p.slice(CH.base.length + 1)), m = /^(sup|pm|g)-([a-f0-9]{24})$/i.exec(seg);
+  var j = /^join-([A-Za-z0-9_-]{8,40})$/.exec(seg);
+  if (j){ try { sessionStorage.setItem('oc_join', j[1]); } catch(e){} try { history.replaceState(history.state, '', CH.base); } catch(e){} return {open:true, room:''}; }
+  if (/^team-[a-f0-9]{24}$/i.test(seg)) return {open:true, room:'support'};
   return {open:true, room: m ? m[1] + ':' + m[2] : seg};
 }
 // old #chat… links (bookmarks, earlier versions) → the page address
@@ -899,29 +1753,54 @@ function leaveChat(){
 }
 function rectOf(r){ return {x:r.left, y:r.top, w:r.width, h:r.height, rad:Math.min(r.height / 2, 28)}; }
 function isOpen(){ return $('messenger').classList.contains('open'); }
+/* the chat is open and we know nobody is signed in: offer the sign-in sheet once (they can go on as a guest) */
+function maybePromptSignIn(){
+  if (!UI.ready || CHAT.uid || !CHAT.db || !isOpen() || !backend.promptSignIn) return;
+  var join = null; try { join = sessionStorage.getItem('oc_join'); } catch(e){}
+  if (join) return;   // an invite link opens the sign-in itself
+  if (UI.prompted) return;   // once per opening of the chat (not again on every room change); reset when the chat closes
+  UI.prompted = true;
+  clearTimeout(UI.promptT); UI.promptT = setTimeout(function(){ if (isOpen() && !CHAT.uid) backend.promptSignIn(); }, 700);
+}
+/* a conversation is really on screen (not the welcome page shown when none is chosen) */
+function viewing(){ var m = $('messenger'); return m.classList.contains('open') && !m.classList.contains('no-room'); }
 function siteInert(on){ ['.nav', 'main#top', 'footer', '.to-top'].forEach(function(q){ var e = document.querySelector(q); if (e){ if (on) e.setAttribute('inert', ''); else e.removeAttribute('inert'); } }); }
 function showMessenger(){ var m = $('messenger'); m.classList.add('open'); m.setAttribute('aria-hidden', 'false'); markSeen(); renderRooms(); setPresence(); setTimeout(function(){ placeSegPill(); placeRoomPill(); }, 30); }
+/* Invite link: join the group / channel, then open it. Not signed in yet: ask to sign in (the token waits in this tab). */
+var JOINING = false;
+function tryJoinLink(){
+  var token = null; try { token = sessionStorage.getItem('oc_join'); } catch(e){}
+  if (!token || JOINING || !CHAT.db) return;
+  if (!CHAT.uid){ toast(S('rooms.joinSignIn')); backend.openSignIn(); return; }
+  JOINING = true;
+  backend.joinLink(token).then(function(r){ JOINING = false; try { sessionStorage.removeItem('oc_join'); } catch(e){} toast(S('rooms.joinedByLink', {name: r.name}), true); goChat('g:' + r.id, {replace:true}); },
+    function(err){ JOINING = false; try { sessionStorage.removeItem('oc_join'); } catch(e){} toast(err && err.message ? err.message : S('rooms.err.badLink')); });
+}
 function route(){
   var st = chatFromPath(), m = $('messenger');
   if (st.open){
     var id = st.room;
-    // staff: a fan's team thread can be opened even before it has messages
+    // staff: a member's team thread can be opened even before it has messages
     if (CHAT.canEdit && /^sup:[a-f0-9]{24}$/i.test(id) && !DM.threads[id.slice(4)]) DM.threads[id.slice(4)] = {lastTs: Date.now(), lastText: '', lastSeen: 0};
     var wasOpen = isOpen() && document.body.classList.contains('chat-open'), valid = id && rooms().some(function(r){ return r.id === id; });
     // after a refresh the private chats arrive a moment later: remember the room and come back to it
-    CHAT.wantRoom = !valid && /^(sup|pm|g):/.test(id) && !UI.ready ? id : null;
+    CHAT.wantRoom = !valid && (/^(sup|pm|g):/.test(id) || id === 'support') && !UI.ready ? id : null;   // (the help chat too: it appears once the account is known)
     if (valid && String(id).indexOf('sup:') === 0) ensureThread(id.slice(4));
     if (valid){ CHAT.active = id; m.classList.add('in-convo'); } else { if (!CHAT.wantRoom) m.classList.remove('in-convo'); CHAT.active = CHAT.active || 'lounge'; }
+    m.classList.toggle('no-room', !valid && !CHAT.wantRoom);   // nothing chosen: the welcome page (wide screens), not a room at random
+    m.classList.toggle('want-room', !!CHAT.wantRoom);   // after a refresh, until the room arrives: placeholders, not another room
+    if (valid && id === 'support' && location.pathname !== chatPathFor('support')) { try { history.replaceState(history.state, '', chatPathFor('support')); } catch(e){} }
     if (!wasOpen){
       document.documentElement.classList.add('chat-open'); document.body.classList.add('chat-open'); if (lenis) lenis.stop();
       siteInert(true); showMessenger();
+      maybePromptSignIn();
     }
     clearReply(); closeCtx(true); renderRooms(); renderHeader(); renderConvo(); setPresence(); placeRoomPill(); applyComposer();
     setTitle((valid ? roomById(id).title + ' · ' : '') + S('chat.title') + ' · ' + (cfg.siteName || ''));
     if (window.innerWidth > 820 && valid) setTimeout(function(){ if (!$('composer').hidden) $('msgInput').focus({preventScroll:true}); }, 50);
     UI.routed = true;
   } else if (isOpen()){
-    UI.routed = true;
+    UI.routed = true; UI.prompted = false; clearTimeout(UI.promptT);   // back on the site: next time the chat opens, offer sign-in again
     closeCtx(true);
     m.classList.remove('open', 'in-convo'); m.setAttribute('aria-hidden', 'true');
     document.documentElement.classList.remove('chat-open'); document.body.classList.remove('chat-open'); siteInert(false);
@@ -955,10 +1834,89 @@ document.addEventListener('keydown', function(e){
 /* ---------- Chat themes (per viewer; only the chat changes) ---------- */
 var THEMES = ['oddsclub','whatsapp','whatsapp-dark','telegram','imessage','messenger','discord','signal'].map(function(id){ return [id, S('theme.' + id + '.name'), S('theme.' + id + '.desc')]; });
 CHAT.theme = (function(){ var t = store('ps_chat_theme'); return THEMES.some(function(x){ return x[0] === t; }) ? t : 'oddsclub'; })();
-function setThemeAttr(id){ ['messenger','ctx','rulesSheet','themeSheet','authSheet','personSheet','roomSheet'].forEach(function(k){ var e = $(k); if (e) e.setAttribute('data-ct', id); }); }
+/* bubble style (shape) — chosen after the theme; the colours stay the theme's. Not for Discord (no bubbles there). */
+var BUBBLES = ['theme','classic','curl','pill','card','outline','comic','leaf'];
+CHAT.bubble = (function(){ var b = store('ps_bubble'); return BUBBLES.indexOf(b) >= 0 ? b : 'theme'; })();
+function setBubbleAttr(){ ['messenger','ctx'].forEach(function(k){ var e = $(k); if (e){ e.classList.add('bs-scope'); e.setAttribute('data-bs', CHAT.bubble); } }); }
+function applyBubble(id){
+  var run = function(){ CHAT.bubble = id; store('ps_bubble', id); setBubbleAttr();
+    document.querySelectorAll('.bcard').forEach(function(c){ c.setAttribute('aria-pressed', c.dataset.id === id ? 'true' : 'false'); }); };
+  if (!REDUCE && document.startViewTransition){ try { document.startViewTransition(run); return; } catch(e){} }
+  run();
+}
+function renderBubbleCards(){
+  var list = $('bubbleList'); if (!list) return; list.textContent = '';
+  BUBBLES.forEach(function(id, i){
+    var b = el('button', 'tcard bcard'); b.type = 'button'; b.dataset.id = id; b.setAttribute('aria-pressed', id === CHAT.bubble ? 'true' : 'false'); b.style.animationDelay = (i * 35) + 'ms';
+    // a tiny chat in the chosen theme's colours, with this shape
+    var pv = el('div', 'bprev bs-scope'); pv.setAttribute('aria-hidden', 'true'); pv.setAttribute('data-ct', CHAT.theme); pv.setAttribute('data-bs', id);
+    [['in gap', S('bubbles.sample1')], ['in tail', S('bubbles.sample2')], ['out gap tail', S('bubbles.sample3')]].forEach(function(x){ var r = el('div', 'row ' + x[0]), w = el('div', 'bwrap'); w.appendChild(el('div', 'bubble', x[1])); r.appendChild(w); pv.appendChild(r); });
+    b.appendChild(pv);
+    var nm = el('div', 'tname'), lb = el('span'); lb.appendChild(el('b', null, S('bubble.' + id))); lb.appendChild(el('small', null, S('bubble.' + id + '.desc'))); nm.appendChild(lb); var ck = el('span', 'tcheck'); ck.appendChild(svg('<path d="M5 12l5 5 9-10"/>')); nm.appendChild(ck); b.appendChild(nm);
+    b.onclick = function(){ applyBubble(id); };
+    list.appendChild(b);
+  });
+}
+function themeStep(n){
+  var box = $('themeSteps'); if (!box) return;
+  var panes = [$('tsThemes'), $('tsBubbles'), $('tsWalls')], prev = Number(box.getAttribute('data-step')) || 1;
+  if (n === 2) renderBubbleCards(); if (n === 3) renderWallCards();
+  box.setAttribute('data-step', String(n)); panes.forEach(function(p, i){ p.hidden = i !== n - 1; });
+  var cur = panes[n - 1]; cur.classList.remove('ts-in-l', 'ts-in-r'); void box.offsetWidth; cur.classList.add(n >= prev ? 'ts-in-r' : 'ts-in-l');
+  box.scrollTop = 0;
+  setTimeout(function(){ var c = cur.querySelector('[aria-pressed="true"]'); if (c) c.focus({preventScroll:true}); }, 60);
+}
+/* ---------- chat wallpaper (per device): "theme" = the theme's own background, "plain" = its colour only, or one of ours
+   (back office → Wallpapers). A wallpaper deleted in the back office falls back to the theme's. ---------- */
+var WALLS = ['theme', 'plain'].concat((cfg.wallpapers || []).map(function(w){ return w.id; }));
+function wallOf(id){ return (cfg.wallpapers || []).filter(function(w){ return w.id === id; })[0] || null; }
+CHAT.wall = (function(){ var w = store('ps_wall'); return WALLS.indexOf(w) >= 0 ? w : 'theme'; })();
+/* how dark each of our wallpapers is on this device (the slider under the list); default = the back office's value */
+var WALL_DIM = (function(){ var d = store('ps_wall_dim'); return d && typeof d === 'object' ? d : {}; })();
+function wallDim(id){ var w = wallOf(id); return WALL_DIM[id] != null ? Number(WALL_DIM[id]) : w ? (w.dim || 0) : 0; }
+function syncWallDim(){
+  var box = $('wallDim'), r = $('wallDimRange'); if (!box) return;
+  var w = wallOf(CHAT.wall); box.hidden = !w; if (!w) return;
+  r.value = String(wallDim(CHAT.wall)); $('wallDimVal').textContent = r.value + '%';
+  r.style.setProperty('--fill', (Number(r.value) / 80 * 100) + '%');
+}
+function paintWall(elm, id){
+  var w = wallOf(id); elm.classList.add('wp-scope'); elm.setAttribute('data-wp', w ? (w.mode === 'tile' ? 'tile' : 'cover') : id);
+  if (w){ elm.style.setProperty('--wp-img', 'url("' + w.url + '")'); elm.style.setProperty('--wp-dim', wallDim(id) + '%'); }
+  else { elm.style.removeProperty('--wp-img'); elm.style.removeProperty('--wp-dim'); }
+}
+function setWallAttr(){ var m = $('messenger'); if (m) paintWall(m, CHAT.wall); }
+function applyWall(id){
+  var run = function(){ CHAT.wall = id; store('ps_wall', id); setWallAttr(); syncWallDim(); document.querySelectorAll('.wcard').forEach(function(c){ c.setAttribute('aria-pressed', c.dataset.id === id ? 'true' : 'false'); }); };
+  if (!REDUCE && document.startViewTransition){ try { document.startViewTransition(run); return; } catch(e){} }
+  run();
+}
+function renderWallCards(){
+  var list = $('wallList'); if (!list) return; list.textContent = '';
+  WALLS.forEach(function(id, i){
+    var w = wallOf(id), b = el('button', 'tcard bcard wcard'); b.type = 'button'; b.dataset.id = id; b.setAttribute('aria-pressed', id === CHAT.wall ? 'true' : 'false'); b.style.animationDelay = (i * 35) + 'ms';
+    var pv = el('div', 'bprev bs-scope'); pv.setAttribute('aria-hidden', 'true'); pv.setAttribute('data-ct', CHAT.theme); pv.setAttribute('data-bs', CHAT.bubble); paintWall(pv, id);
+    [['in gap tail', S('bubbles.sample1')], ['out gap tail', S('bubbles.sample3')]].forEach(function(x){ var r = el('div', 'row ' + x[0]), ww = el('div', 'bwrap'); ww.appendChild(el('div', 'bubble', x[1])); r.appendChild(ww); pv.appendChild(r); });
+    b.appendChild(pv);
+    var nm = el('div', 'tname'), lb = el('span'); lb.appendChild(el('b', null, w ? w.name : S('wall.' + id))); lb.appendChild(el('small', null, w ? S(w.mode === 'tile' ? 'wall.pattern' : 'wall.photo') : S('wall.' + id + '.desc'))); nm.appendChild(lb);
+    var ck = el('span', 'tcheck'); ck.appendChild(svg('<path d="M5 12l5 5 9-10"/>')); nm.appendChild(ck); b.appendChild(nm);
+    b.onclick = function(){ applyWall(id); };
+    list.appendChild(b);
+  });
+  syncWallDim();
+}
+(function(){
+  var r = $('wallDimRange'); if (!r) return;
+  r.addEventListener('input', function(){   // live: the chat behind the sheet and the chosen card follow the slider
+    var id = CHAT.wall; if (!wallOf(id)) return;
+    WALL_DIM[id] = Number(r.value); store('ps_wall_dim', WALL_DIM); setWallAttr(); syncWallDim();
+    var card = document.querySelector('.wcard[data-id="' + id + '"] .bprev'); if (card) paintWall(card, id);
+  });
+})();
+function setThemeAttr(id){ ['messenger','ctx','rulesSheet','themeSheet','authSheet','personSheet','roomSheet','confirmSheet','groupSheet'].forEach(function(k){ var e = $(k); if (e) e.setAttribute('data-ct', id); }); }
 function applyTheme(id, animate){
   if (id === CHAT.theme && !animate) { setThemeAttr(id); return; }
-  var run = function(){ CHAT.theme = id; setThemeAttr(id); store('ps_chat_theme', id);
+  var run = function(){ CHAT.theme = id; setThemeAttr(id); store('ps_chat_theme', id); if ($('toBubbles')) $('toBubbles').hidden = id === 'discord';
     document.querySelectorAll('.tcard').forEach(function(c){ c.setAttribute('aria-pressed', c.dataset.id === id ? 'true' : 'false'); });
     UI.rows.forEach(function(r){ r._sig = null; }); if (isOpen()) renderConvo(); };
   if (animate && !REDUCE && document.startViewTransition){ try { document.startViewTransition(run); return; } catch(e){} }
@@ -974,18 +1932,76 @@ function applyTheme(id, animate){
     b.appendChild(pv);
     var nm = el('div', 'tname'); var lbl = el('span'); lbl.appendChild(el('b', null, t[1])); lbl.appendChild(document.createElement('br')); var d = el('small', null, t[2]); d.style.opacity = '.65'; d.style.fontWeight = '500'; lbl.appendChild(d); nm.appendChild(lbl);
     var ck = el('span', 'tcheck'); ck.appendChild(svg('<path d="M5 12l5 5 9-10"/>')); nm.appendChild(ck); b.appendChild(nm);
-    b.onclick = function(){ applyTheme(t[0], true); };
+    b.onclick = function(){ applyTheme(t[0], true); setTimeout(function(){ themeStep(t[0] === 'discord' ? 3 : 2); }, 260); };   // then the bubble style (Discord: no bubbles → the wallpaper)
     list.appendChild(b);
   });
 })();
 var themeFocus = null;
-function openThemes(){ themeFocus = document.activeElement; var w = $('themeSheet'); w.classList.add('open'); w.setAttribute('aria-hidden', 'false'); setTimeout(function(){ var c = w.querySelector('.tcard[aria-pressed="true"]'); if (c) c.focus({preventScroll:true}); }, 60); }
+/* ---------- "Are you sure?" dialog (themed, replaces window.confirm). askConfirm(message, okLabel, danger) → Promise<boolean>.
+   The message's first question becomes the title, the rest the explanation. Escape / backdrop / Cancel = no. ---------- */
+var CF = null;
+function askConfirm(msg, okLabel, danger){
+  if (CF) CF.done(false);
+  var m = /^([\s\S]*?\?)\s+([\s\S]+)$/.exec(String(msg)), w = $('confirmSheet'), ok = $('cfOk'), back = document.activeElement;
+  $('cfTitle').textContent = m ? m[1] : msg; $('cfText').textContent = m ? m[2] : ''; $('cfText').hidden = !m;
+  ok.textContent = okLabel || 'OK'; ok.classList.toggle('danger', !!danger);
+  w.classList.add('open'); w.setAttribute('aria-hidden', 'false');
+  setTimeout(function(){ (danger ? $('cfCancel') : ok).focus({preventScroll:true}); }, 60);
+  return new Promise(function(res){
+    CF = { done: function(v){ if (!CF) return; CF = null; w.classList.remove('open'); w.setAttribute('aria-hidden', 'true'); if (back && back.focus && document.contains(back)) back.focus({preventScroll:true}); res(v); } };
+  });
+}
+$('cfOk').addEventListener('click', function(){ if (CF) CF.done(true); });
+$('cfCancel').addEventListener('click', function(){ if (CF) CF.done(false); });
+$('confirmSheet').addEventListener('click', function(e){ if (e.target === this && CF) CF.done(false); });
+window.addEventListener('keydown', function(e){
+  if (!CF) return;
+  if (e.key === 'Escape'){ e.preventDefault(); e.stopImmediatePropagation(); CF.done(false); }
+  else if (e.key === 'Tab'){ var a = $('cfCancel'), b = $('cfOk'); if (document.activeElement !== a && document.activeElement !== b){ e.preventDefault(); a.focus(); } else if (e.shiftKey ? document.activeElement === a : document.activeElement === b){ e.preventDefault(); (e.shiftKey ? b : a).focus(); } }
+}, true);
+function openThemes(step){ themeFocus = document.activeElement; themeStep(step === 3 ? 3 : 1);   /* 3: straight to the wallpaper (quick button) */
+  if (!UI.wallsWarm){ UI.wallsWarm = true; (cfg.wallpapers || []).forEach(function(w){ var i = new Image(); i.decoding = 'async'; i.src = w.url; }); }   // wallpaper previews ready by step 3
+  var w = $('themeSheet'); w.classList.add('open'); w.setAttribute('aria-hidden', 'false'); setTimeout(function(){ var c = w.querySelector('.tcard[aria-pressed="true"]'); if (c) c.focus({preventScroll:true}); }, 60); }
 function closeThemes(){ var w = $('themeSheet'); w.classList.remove('open'); w.setAttribute('aria-hidden', 'true'); if (themeFocus && themeFocus.focus) themeFocus.focus({preventScroll:true}); }
-document.querySelectorAll('[data-open-themes]').forEach(function(b){ b.onclick = openThemes; });
+/* the palette button: a small menu — Theme (theme → bubbles → wallpaper) or straight to the Wallpaper */
+var LOOKMENU = null;
+function closeLookMenu(back){ var m = LOOKMENU; if (!m) return; LOOKMENU = null; m.btn.setAttribute('aria-expanded', 'false'); m.el.classList.remove('open'); setTimeout(function(){ m.el.remove(); }, 180); if (back) m.btn.focus({preventScroll:true}); }
+function openLookMenu(btn){
+  if (LOOKMENU){ var same = LOOKMENU.btn === btn; closeLookMenu(); if (same) return; }
+  var menu = el('div', 'look-menu glass'); menu.setAttribute('role', 'menu'); menu.setAttribute('data-ct', CHAT.theme);
+  [['theme', S('chat.themeAria'), '<circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 2a10 10 0 0 0 0 20c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.4A5.6 5.6 0 0 0 22 9.8C22 5.5 17.5 2 12 2z"/>', 1],
+   ['wall', S('walls.open'), '<rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/>', 3]].forEach(function(x){
+    var it = el('button', 'look-item'); it.type = 'button'; it.setAttribute('role', 'menuitem'); it.appendChild(svg(x[2])); it.appendChild(el('span', null, x[1]));
+    it.onclick = function(){ closeLookMenu(); openThemes(x[3]); };
+    menu.appendChild(it);
+  });
+  document.body.appendChild(menu);
+  var r = btn.getBoundingClientRect(), w = menu.offsetWidth, left = Math.max(8, Math.min(window.innerWidth - w - 8, r.right - w));
+  menu.style.left = left + 'px'; menu.style.top = (r.bottom + 6) + 'px'; menu.style.transformOrigin = (r.left + r.width / 2 - left) + 'px top';
+  LOOKMENU = {el: menu, btn: btn}; btn.setAttribute('aria-expanded', 'true');
+  requestAnimationFrame(function(){ menu.classList.add('open'); menu.querySelector('.look-item').focus({preventScroll:true}); });
+}
+document.querySelectorAll('[data-open-themes]').forEach(function(b){ b.setAttribute('aria-haspopup', 'menu'); b.setAttribute('aria-expanded', 'false'); b.onclick = function(e){ e.stopPropagation(); openLookMenu(b); }; });
+document.addEventListener('pointerdown', function(e){ if (LOOKMENU && !LOOKMENU.el.contains(e.target) && !LOOKMENU.btn.contains(e.target)) closeLookMenu(); }, true);
+document.addEventListener('keydown', function(e){
+  if (!LOOKMENU) return;
+  var items = Array.prototype.slice.call(LOOKMENU.el.querySelectorAll('.look-item')), i = items.indexOf(document.activeElement);
+  if (e.key === 'Escape'){ e.preventDefault(); e.stopImmediatePropagation(); closeLookMenu(true); }
+  else if (e.key === 'ArrowDown' || e.key === 'ArrowUp'){ e.preventDefault(); items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus(); }
+  else if (e.key === 'Tab') closeLookMenu();
+}, true);
+window.addEventListener('resize', function(){ closeLookMenu(); });
 $('themeDone').onclick = closeThemes;
+$('bubblesDone').onclick = closeThemes;
+$('bubblesBack').onclick = $('bubblesBack2').onclick = function(){ themeStep(1); };
+$('toBubbles').onclick = function(){ themeStep(2); };
+$('toWalls').onclick = $('bubblesNext').onclick = function(){ themeStep(3); };
+$('wallsBack').onclick = function(){ themeStep(CHAT.theme === 'discord' ? 1 : 2); };
+$('wallsDone').onclick = closeThemes;
+function syncBubbleBtn(){ $('toBubbles').hidden = CHAT.theme === 'discord'; }
 $('themeSheet').addEventListener('click', function(e){ if (e.target === this) closeThemes(); });
 document.addEventListener('keydown', function(e){ if (e.key === 'Escape' && $('themeSheet').classList.contains('open')){ e.stopImmediatePropagation(); closeThemes(); } }, true);
-applyTheme(CHAT.theme, false);
+applyTheme(CHAT.theme, false); setBubbleAttr(); syncBubbleBtn(); setWallAttr();
 
 function ensureThread(uid){ backend.watchThread(uid); }
 function touchSeen(){ if (CHAT.db && CHAT.uid) backend.touchSeen(); }
@@ -1006,18 +2022,22 @@ function updateLounge(){
 var backend = createChatBackend(cfg, {
   S: S,
   ready: function(info){
+    setTimeout(tryJoinLink, 0);
     CHAT.db = true; CHAT.user = backend; CHAT.uid = info.uid || null; UI.ready = true; CHAT.perms = info.perms || {}; CHAT.canPost = !!info.canPost; CHAT.canEdit = !!info.canEdit; LIVE.me = info.me || null;
     if (info.profiles) Object.assign(LIVE.profiles, info.profiles);
     UI.accepted = !!(info.rulesAccepted || (CHAT.uid && store('ps_rules_' + CHAT.uid)));
     applyComposer(); updateLounge(); refreshChat();
+    if (CHAT.wantRoom === 'support' && !CHAT.uid){ CHAT.wantRoom = null; route(); }   // not signed in: no help chat to come back to
+    maybePromptSignIn();
   },
-  unavailable: function(){ CHAT.db = null; UI.loaded = true; applyComposer(); updateLounge(); refreshChat(); },
+  unavailable: function(){ CHAT.db = null; UI.loaded = true; UI.unavailable = true; if (CHAT.wantRoom){ CHAT.wantRoom = null; $('messenger').classList.remove('want-room'); } applyComposer(); updateLounge(); refreshChat(); },
   profiles: function(p){ Object.assign(LIVE.profiles, p); refreshChat(); },
   messages: function(list, mode){ var firstLoad = !UI.loaded; UI.loaded = true; LIVE.messages = list; if (isOpen()) renderConvo(firstLoad ? undefined : mode); renderRooms(); renderMatches(); updateLounge(); LIVE.dirty = true; },
   myDm: function(list, mode){ DM.mine = list; refreshChat(CHAT.active === 'support' ? mode : undefined); },
   pms: function(rels){ PM.rels = rels || {}; refreshChat(); if (pmUid(CHAT.active)) applyComposer(); if (CHAT.wantRoom) return;
     // the chat I'm looking at was closed (blocked / cancelled / declined): back to the room list
     if (pmUid(CHAT.active) && !PM.rels[pmUid(CHAT.active)] && isOpen() && chatFromPath().room === CHAT.active) goChat('', {replace: true}); },
+  receipts: function(map, gmap){ RCPT = map || {}; RCPTG = gmap || {}; renderRooms(); if (isOpen() && (isDmRoom(CHAT.active) || grpId(CHAT.active))) renderConvo(); },
   groups: function(list){ GR.list = list || []; refreshChat(); if (grpId(CHAT.active)) applyComposer();
     if (grpId(CHAT.active) && !grpOf(CHAT.active) && !CHAT.wantRoom && isOpen() && chatFromPath().room === CHAT.active) goChat('', {replace: true}); },
   groupMsgs: function(id, list, mode){ GR.msgs[id] = list; refreshChat(CHAT.active === 'g:' + id ? mode : undefined); },
@@ -1041,7 +2061,10 @@ var backend = createChatBackend(cfg, {
     renderSportTabs(); renderMatches(); updateTicker(); renderRooms(); if (isOpen()) renderHeader(); LIVE.dirty = true;
     if (chatFromPath().room && UI.renderedRoom !== chatFromPath().room) route(); },
   peers: function(peers){ CHAT.peers = peers || []; updateLounge(); clearTimeout(window.__ocPeerT); window.__ocPeerT = setTimeout(function(){ renderRooms(); if (isOpen()){ renderHeader(); renderConvo(); } }, 120); },
-  toast: function(msg, ok){ toast(msg, ok); }
+  toast: function(msg, ok){ toast(msg, ok); },
+  confirm: function(msg, ok, danger){ return askConfirm(msg, ok, danger); },
+  viewPhoto: function(url, img){ var w = (img && img.naturalWidth) || 512, hh = (img && img.naturalHeight) || 512; openLightbox(url, img || null, w, hh, false); },   // a profile / room picture, full size
+  roomAvatar: function(gid){ var r = roomById('g:' + gid); return r && r.id === 'g:' + gid && r.group ? roomAvatar(r, false) : null; }
 });
 applyComposer(); updateLounge();
 backend.connect();
@@ -1166,7 +2189,7 @@ route();
         y += 214; }); tabbar(1); },
     function chatS(){ g.fillStyle = C.wall; g.fillRect(0,0,X,Y); status();
       rr(0,88,X,110,0); g.fillStyle = C.card; g.fill(); g.beginPath(); g.arc(84,143,34,0,Math.PI*2); g.fillStyle = C.green; g.fill();
-      txt(S('chat.lounge'),134,138,26,800,C.light); txt(online(null) ? S('chat.onlineCount', {n: online(null)}) : S('phone.fanChat'),134,172,20,600,C.mute);
+      txt(S('chat.lounge'),134,138,26,800,C.light); txt(online(null) ? S('chat.onlineCount', {n: online(null)}) : S('phone.communityChat'),134,172,20,600,C.mute);
       var list = LIVE.messages.filter(function(m){ return m.room === 'lounge'; }).slice(-6), y = 236, bottom = Y - 180;
       if (!list.length){ rr(X/2-200,y+40,400,80,20); g.fillStyle = 'rgba(16,48,90,.9)'; g.fill(); txt(S('chat.noMessages'), X/2, y+90, 24, 700, C.mute, 'center'); }
       var blocks = [];
@@ -1199,7 +2222,17 @@ route();
     var s = Math.min(hgt * upp / (Hh + 0.12), size.w * 0.6 * upp / W);
     return {x:0, y:(size.h / 2 - cy) * upp, rx:0.08, ry:-0.3, rz:0.06, s:s}; }
   function poseA(){ return mobile ? slotPose() : {x:0,y:-0.15,rx:0.14,ry:-0.45,rz:0.1,s:1.2}; }
-  function poseB(){ return mobile ? {x:0,y:0.4,rx:0.05,ry:0,rz:0,s:0.78} : {x:0,y:-0.35,rx:0.06,ry:0,rz:0,s:1.0}; }
+  // phones: the phone ends the hero exactly in the first feature block's slot (see flowPose)
+  function flowScale(){ var upp = 2 * camera.position.z * Math.tan(camera.fov * Math.PI / 360) / size.h; return Math.min(Math.max(160, flowSlotH * 0.8) * upp / (Hh + 0.12), size.w * 0.58 * upp / W); }
+  function poseB(){
+    if (!mobile) return {x:0,y:-0.35,rx:0.06,ry:0,rz:0,s:1.0};
+    flowMeasure();
+    var upp = 2 * camera.position.z * Math.tan(camera.fov * Math.PI / 360) / size.h, c0 = flowCallouts[0];
+    var off = c0 ? c0.getBoundingClientRect().top - feat.getBoundingClientRect().top + flowSlotH / 2 : size.h * FLOW_R;   // slot 0 centre when the features reach the top
+    return {x:0, y:(size.h / 2 - off) * upp, rx:0.05, ry:0, rz:0, s:flowScale()};
+  }
+  // phones, past the hero: the phone's place comes from the feature blocks (rides / glides down / rests on the rest line)
+  function flowPose(fi){ var upp = 2 * camera.position.z * Math.tan(camera.fov * Math.PI / 360) / size.h; return {x:0, y:(size.h / 2 - fi.y) * upp, rx:0.05, ry:Math.PI * 2, rz:0, s:flowScale()}; }   // ry = where the hero's scroll turn ends
   var P = Object.assign({}, poseA());                       // scroll pose (GSAP, scrubbed)
   var O = {iy:0, iry:0, is:1, lean:0, leanX:0, flip:0, mx:0, my:0, ey:0, erx:0, es:1, drag:0, sa:0};   // sa = scroll-driven feature spin   // intro, lean, flip, pointer, exit
   var tls = [];
@@ -1230,8 +2263,11 @@ route();
   // Features: the rotation is driven by the scroll itself. Each feature keeps the phone facing you for the first
   // part of its scroll range, then the phone turns a full 360° as you keep scrolling; the screen swaps while its back
   // faces you, so the next screen arrives exactly as the next callout appears. Scroll back and it turns back.
-  var FACE = 0.42;   // share of each feature's scroll range where the phone just faces you
-  function spinPart(f, local){ if (REDUCE || f < 0 || f >= 3) return 0; var x = Math.max(0, Math.min(1, (local - FACE) / (1 - FACE))); return x * x * (3 - 2 * x); }
+  // share of each feature's scroll range where the phone just faces you before it starts turning (short on phones,
+  // where every bit of scroll counts)
+  function FACE(){ return mobile ? 0.08 : 0.14; }
+  function spinPart(f, local){ if (REDUCE || f < 0 || f > 3) return 0;   // every feature turns once, the last one too
+     var fc = FACE(), x = Math.max(0, Math.min(1, (local - fc) / (1 - fc))); return x * x * (3 - 2 * x); }
   var FEAT_SCREENS = [1, 2, 3, 4];
   // Below the features the phone simply keeps going with the scroll, behind the content: it stays where the features
   // left it and turns one full 360° per section (Join → promo screen, Matchday → odds screen, footer → live screen),
@@ -1247,7 +2283,7 @@ route();
     TAIL.forEach(function(x){ var r = x.el.getBoundingClientRect(); at.push(Math.max(at[at.length - 1], Math.min(maxS, sy + r.top + r.height / 2 - h / 2))); scr.push(x.screen); });
     var k = 0; while (k < at.length - 1 && at[k + 1] <= sy) k++;
     var den = (at[k + 1] || at[k]) - at[k], u = k + (k < at.length - 1 && den >= 1 ? Math.min(1, (sy - at[k]) / den) : 0);
-    return {u:u, spin: REDUCE ? 0 : u * Math.PI * 2, screen: scr[Math.min(scr.length - 1, Math.round(u))]};
+    return {u:u, spin: REDUCE ? 0 : u * Math.PI * 2, screen: scr[Math.min(scr.length - 1, Math.round(u))], scr:scr};
   }
   window.onFeatureChange = function(f){
     G.to(O, {lean: (f >= 0 && !mobile) ? (f % 2 === 0 ? -0.38 : 0.38) : 0, leanX: f >= 0 ? 0.04 : 0, duration:.9, ease:'power3.out'});
@@ -1258,13 +2294,45 @@ route();
   // jump state (back-to-top / nav links) and footer fade
   var jumpUntil = 0, held = null, blendK = 0, shownPose = [0, 0, 0, 0, 0, 1], lastFrame = performance.now(), footEl = document.querySelector('footer'), lastOp = '';
   window.__phoneJump = function(ms){ jumpUntil = performance.now() + ms + 80; };
+  // Screen changes: normally they happen while the phone's back faces you (mid-turn), so you never see a cut. When the phone is
+  // facing you and the screen must change anyway (e.g. arriving at the top after "back to top"), it turns once and swaps
+  // at the half turn.
+  var turning = false, turnTo = -1, TWO_PI = Math.PI * 2;
+  function turnToScreen(i){
+    turnTo = i; if (turning) return;
+    turning = true; flipping = true;
+    var start = O.flip, target = (Math.round(start / TWO_PI) + 1) * TWO_PI, swapped = false;
+    function done(){ if (!swapped) showScreen(turnTo, true); turning = false; flipping = false; }
+    G.to(O, {flip: target, duration: 1.25, ease: 'power3.inOut', overwrite: 'auto',
+      onUpdate: function(){ if (!swapped && O.flip - start >= Math.PI){ swapped = true; showScreen(turnTo, true); } }, onComplete: done, onInterrupt: done});
+  }
+  function wantScreen(i, facingAngle){
+    if (i === shown || (turning && turnTo === i)) return;
+    if (turning){ turnTo = i; return; }
+    if (REDUCE || flipping || Math.cos(facingAngle) < 0.2) showScreen(i, true);   // back (or edge) towards you: swap unseen
+    else turnToScreen(i);
+  }
   ['wheel', 'touchstart', 'keydown'].forEach(function(ev){ window.addEventListener(ev, function(){ jumpUntil = 0; }, {passive:true}); });   // the user took over: stop holding
+  /* Steady rhythm: whatever the scroll speed, the phone turns at most one turn per SPIN_SEC and its position eases after the
+     scroll instead of snapping. A hard flick plays the same calm turns one after another (screens still change mid-turn).
+     When it is far behind (several turns owed) it may go a little faster — 35 % more per extra turn — so it catches up
+     smoothly instead of spinning on for seconds. */
+  var SPIN_SEC = 0.8, tailU = null, flowY = null;
+  // per-turn tumble [rx, rz, x] at the half turn, cycling — and the resting angle [ry, rz] of each stop on phones
+  var TUMBLE = [[0.42, 0.24, 0.30], [-0.32, -0.36, -0.34], [0.30, 0.40, 0.26], [-0.40, -0.22, -0.28], [0.36, -0.30, 0.32]];
+  var STANCE = [[-0.30, 0.07], [0.28, -0.07], [-0.24, 0.05], [0.30, -0.06], [-0.26, 0.06]];
+  function steady(cur, target, dt, unit){   // eased chase with a speed limit; unit = one turn (2π for angles, 1 for tail turns)
+    var d = target - cur, behind = Math.abs(d) / unit;
+    var step = d * (1 - Math.exp(-dt * 9)), max = unit / SPIN_SEC * (1 + 0.35 * Math.max(0, behind - 1)) * dt;
+    if (Math.abs(step) > max) step = step > 0 ? max : -max;
+    cur += step; return Math.abs(target - cur) < unit * 1e-4 ? target : cur;
+  }
   function frame(){
     if (document.body.classList.contains('chat-open')) return;
     var now = performance.now(), t = (now - t0) / 1000, jumping = !REDUCE && now < jumpUntil;
     if (S2.feature < 0){
-      if (jumping){}
-      else if (S2.pA < 0.5 && shown !== 0 && Math.abs(Math.sin(O.flip / 2)) < 0.01) showScreen(0);
+      if (jumping || held){}
+      else if (S2.pA < 0.5 && shown !== 0 && !turning && Math.abs(Math.sin(O.flip / 2)) < 0.01) wantScreen(0, O.flip + O.drag + O.sa);
       else if (S2.pA >= 0.5 && S2.pC <= 0 && shown === 0) showScreen(1);
     }
     if (LIVE.dirty && now - lastDraw > 500){ LIVE.dirty = false; lastDraw = now; showScreen(shown, true); }
@@ -1274,17 +2342,38 @@ route();
     }
     // scroll-driven feature spin (smoothed a little on top of Lenis)
     var TURN = Math.PI * 2, f = S2.feature;
-    var saTarget = f >= 0 ? (f + spinPart(f, S2.local)) * TURN : (S2.pC > 0 || S2.pB > 0.5 ? 3 * TURN : 0);
-    O.sa += (saTarget - O.sa) * 0.2; if (Math.abs(saTarget - O.sa) < 1e-4) O.sa = saTarget;
-    var Dk = tailPose(), Q = P;   // below the features: same place, scroll-linked turn (see tailPose)
-    if (jumping){}
-    else if (Dk){ if (Dk.screen !== shown) showScreen(Dk.screen, true); }
-    else if (f >= 0 && !REDUCE){ var si = FEAT_SCREENS[Math.max(0, Math.min(3, Math.round(O.sa / TURN)))]; if (si !== shown) showScreen(si, true); }
+    // phones: hand over from the hero's (smoothed) scroll pose to the feature blocks over the end of that animation, so it never jumps
+    var t1p = mobile && tls[0] ? tls[0].progress() : 0, fk = Math.max(0, Math.min(1, (t1p - 0.8) / 0.2));
+    var flow = mobile && fk > 0, fi = flow ? flowInfo() : null;
+    if (!flow) flowY = null;
+    var saTarget = flow ? (REDUCE ? 0 : (fi.k + fi.e) * TURN)   // phones: one turn per glide to the next block
+      : f >= 0 ? (f + spinPart(f, S2.local)) * TURN : (S2.pC > 0 || S2.pB > 0.5 ? 4 * TURN : 0);   // after the section: the 4 turns are done (never unwind)
+    var dt = Math.min(0.05, Math.max(0, (now - lastFrame) / 1000));
+    if (jumping || REDUCE) O.sa = saTarget;   // during back-to-top / nav jumps the phone is held still: just follow (no turns owed afterwards)
+    else O.sa = steady(O.sa, saTarget, dt, TURN);
+    var Dk = tailPose(), Q = P;
+    // below the features: the turn per section follows the same steady rhythm
+    if (Dk){ tailU = (tailU == null || jumping) ? Dk.u : steady(tailU, Dk.u, dt, 1); Dk.spin = REDUCE ? 0 : tailU * TURN; Dk.screen = Dk.scr[Math.max(0, Math.min(Dk.scr.length - 1, Math.round(tailU)))]; Dk.u = tailU; }
+    else tailU = null;
+    if (flow){ var FP = flowPose(fi), upp0 = 2 * camera.position.z * Math.tan(camera.fov * Math.PI / 360) / size.h;
+      if (flowY == null || jumping) flowY = FP.y; else { var dy = FP.y - flowY, stepY = dy * (1 - Math.exp(-dt * 10)), maxY = size.h * upp0 * 2.4 * dt; flowY += Math.abs(stepY) > maxY ? (stepY > 0 ? maxY : -maxY) : stepY; }
+      FP.y = flowY; Q = fk >= 1 ? FP : {x:P.x + (FP.x - P.x) * fk, y:P.y + (FP.y - P.y) * fk, rx:P.rx + (FP.rx - P.rx) * fk, ry:P.ry + (FP.ry - P.ry) * fk, rz:P.rz + (FP.rz - P.rz) * fk, s:P.s + (FP.s - P.s) * fk}; }   // below the features: same place, scroll-linked turn (see tailPose)
+    if (jumping || held){}
+    else if (Dk){ if (Dk.screen !== shown) wantScreen(Dk.screen, O.flip + O.drag + O.sa + Dk.spin); }
+    else if (f >= 0 && !REDUCE){ var si = FEAT_SCREENS[Math.max(0, Math.min(3, Math.round(O.sa / TURN)))]; if (si !== shown) wantScreen(si, O.flip + O.drag + O.sa); }
     var idle = REDUCE ? 0 : 1, exitK = 1 - Math.min(1, O.ey / 7);
     var lean = Dk ? O.lean * Math.max(0, 1 - Dk.u) : O.lean, dSpin = Dk ? Dk.spin : 0;
     var spinK = Math.max(Math.sin(O.sa % TURN / 2), Math.sin(dSpin / 2));   // 0 when facing, 1 at the half turn
-    var live = [Q.x, Q.y + O.iy + O.ey + Math.sin(t * 1.3) * 0.06 * idle,
-      Q.rx + O.leanX + O.erx - O.my * 0.12 * exitK - spinK * 0.12, Q.ry + O.iry + lean + O.flip + O.drag + O.sa + dSpin + O.mx * 0.22 * exitK, Q.rz + Math.sin(t * 0.9) * 0.02 * idle,
+    // Scroll turns are not a flat spin: mid-turn the phone also tips (rx), leans (rz) and drifts sideways (x), with a
+    // different mix every turn, like the free movement on the first screen. 0 when facing you, full at the half turn.
+    var turnsNow = (O.sa + dSpin) / TURN, ti = Math.floor(turnsNow + 1e-6), fr = turnsNow - ti, arc = REDUCE ? 0 : Math.sin(Math.max(0, Math.min(1, fr)) * Math.PI);
+    var tb = TUMBLE[((ti % TUMBLE.length) + TUMBLE.length) % TUMBLE.length], swayX = mobile ? 0.45 : 1;
+    // phones (past the hero): each stop has its own resting angle, alternating sides, instead of standing flat
+    var stRy = 0, stRz = 0;
+    if (flow && !REDUCE){ var sa0 = STANCE[((ti % STANCE.length) + STANCE.length) % STANCE.length], sa1 = STANCE[(((ti + 1) % STANCE.length) + STANCE.length) % STANCE.length], sm = fr * fr * (3 - 2 * fr);
+      stRy = (sa0[0] + (sa1[0] - sa0[0]) * sm) * fk; stRz = (sa0[1] + (sa1[1] - sa0[1]) * sm) * fk; }
+    var live = [Q.x + tb[2] * arc * swayX, Q.y + O.iy + O.ey + Math.sin(t * 1.3) * 0.06 * idle,
+      Q.rx + O.leanX + O.erx - O.my * 0.12 * exitK - spinK * 0.12 + tb[0] * arc, Q.ry + O.iry + lean + stRy + O.flip + O.drag + O.sa + dSpin + O.mx * 0.22 * exitK, Q.rz + stRz + tb[1] * arc + Math.sin(t * 0.9) * 0.02 * idle,
       Q.s * O.is * O.es * (1 + Math.abs(spinK) * 0.06)];
     // back-to-top / nav jumps: hold the phone still while the page flies, then glide (shortest turn) into the live pose
     var out = live;
@@ -1329,7 +2418,7 @@ route();
     function release(dx){
       zone.classList.remove('grabbing');
       if (Math.abs(dx) > TH){ var dir = O.drag < 0 ? -1 : 1; G.killTweensOf(O, 'flip'); var base = O.flip; O.flip = base + O.drag; O.drag = 0;
-        window.__flipDir = dir; window.__flipFrom = base; setBrand(step(dx < 0 ? 1 : -1)); }
+        window.__flipDir = dir; window.__flipFrom = base; setBrand(step(dx < 0 ? 1 : -1), {from: dx < 0 ? 1 : -1}); }
       else { var turn = Math.PI * 2, total = O.flip + O.drag, rest = Math.round(total / turn) * turn; O.flip = total; O.drag = 0;
         G.to(O, {flip: rest, duration:1.2, ease:'elastic.out(1, .45)'}); }
     }

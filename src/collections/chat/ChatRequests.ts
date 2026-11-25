@@ -1,9 +1,10 @@
+import { encryptedField } from '../../chat/crypto'
 import type { CollectionConfig } from 'payload'
 import { hasRole } from '../../access'
 import { onRequestChange, onRequestDelete } from '../../chat/hooks'
 
 /**
- * Fan-to-fan private chats need consent: `from` asks, `to` accepts (or declines / blocks). One document per pair
+ * Member-to-member private chats need consent: `from` asks, `to` accepts (or declines / blocks). One document per pair
  * (pairKey = the two member ids sorted), reused when a request is sent again. Messages of an accepted pair live in
  * chat-messages with room 'pm:<pairKey>' and are only ever sent to those two members. Created by the chat API only.
  */
@@ -32,7 +33,8 @@ export const ChatRequests: CollectionConfig = {
       ],
     },
     { name: 'blockedBy', type: 'relationship', relationTo: 'members' },
-    { name: 'note', type: 'text', maxLength: 140, admin: { description: 'Short message sent with the request' } },
+    // encrypted with the private chat's key (pm:<pairKey>); 140 characters are checked on the plain text before saving
+    { name: 'note', type: 'text', maxLength: 1000, hooks: encryptedField((d) => (d.pairKey ? 'pm:' + d.pairKey : null)) as never, admin: { description: 'Short message sent with the request' } },
     { name: 'respondedAt', type: 'date' },
   ],
 }

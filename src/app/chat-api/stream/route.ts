@@ -2,6 +2,7 @@ import { getPayload } from 'payload'
 import config from '@payload-config'
 import { addClient, removeClient, type ChatEvent } from '@/chat/hub'
 import { context, snapshot } from '@/chat/service'
+import { scheduleMediaCleanup } from '@/chat/cleanup'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -13,6 +14,7 @@ export const runtime = 'nodejs'
  */
 export async function GET(req: Request) {
   const payload = await getPayload({ config })
+  scheduleMediaCleanup(payload)   // once per server process: deletes old chat media if Chat settings ask for it
   const locale = new URL(req.url).searchParams.get('locale') || 'en'
   const ctx = await context(payload, req.headers, locale)
   const id = crypto.randomUUID()

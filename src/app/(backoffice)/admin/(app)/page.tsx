@@ -53,7 +53,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
       </div>
       {resets.totalDocs > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-warning/40 bg-warning/10 px-4 py-3 text-sm">
-          <span><b>{resets.totalDocs}</b> {resets.totalDocs === 1 ? 'fan is' : 'fans are'} waiting for a password reset.</span>
+          <span><b>{resets.totalDocs}</b> {resets.totalDocs === 1 ? 'member is' : 'members are'} waiting for a password reset.</span>
           <Button asChild size="sm" variant="outline"><Link href="/admin/resets">Review requests<ArrowRight /></Link></Button>
         </div>
       )}

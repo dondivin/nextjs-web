@@ -33,14 +33,21 @@ Payload 3 ──► MongoDB (all content, translations, chat)
 | `media` | public uploads (Cloudflare R2): avatars, logos | alt |
 | `languages` | site languages | code (en, fr…), name, nativeName, dir (ltr/rtl), enabled, isDefault, order |
 | `translations` | static UI strings | key (unique, e.g. `hero.headline.1`), namespace, context (help for translators), values: [{locale, value}] |
-| `partners` | betting brands + theme | name, slug (used in `#b-slug`), order, active, logo, promoCode, signupUrl, termsUrl, colors{night,navy,navy2,panel,blue,sky,cta,ink,odds,oddBg,tint,deep,mute,nav}, texts: [{locale, bonus, payments}] |
+| `partners` | betting brands + theme | name, slug (used in `#b-slug`), order, active, logo, heroImage (first-screen picture; empty = no picture), promoCode, signupUrl, termsUrl, colors{night,navy,navy2,panel,blue,sky,cta,ink,odds,oddBg,tint,deep,mute,nav}, texts: [{locale, bonus, payments}] |
 | `matches` | board + chat rooms | sport, league, home, away, status (upcoming/live/ft), minute, scoreHome, scoreAway, oddsHome, oddsDraw, oddsAway, startsAt, order, active |
-| `members` | fan chat accounts (auth: email + password) | displayName (unique, via nameKey), avatar (media) / avatarGradient, color, role, status (active / muted / banned), mutedUntil, rulesAcceptedAt, lastSeenAt |
+| `members` | fan chat accounts (auth: email + password) | displayName (unique, via nameKey), avatar (media) / avatarGradient, color, memberRole (→ member-roles), status (active / muted / banned), mutedUntil, rulesAcceptedAt, lastSeenAt |
 | `chat-messages` | messages | room ('lounge' \| match id \| 'dm:<memberId>'), author (member) or staffAuthor (user), text, image (chat-images), reply{id,by,text}, reactions (json), isMod, deleted |
-| `chat-images` | pictures sent in the chat (never public: the file URL checks the same rule as the room) | room |
+| `chat-images` | pictures sent in the chat (never public: the file URL checks the same rule as the room) | room, thumb (tiny blurred preview data URL, sent inside the message) |
 | `chat-requests` | fan → fan private chat consent (one per pair) | pairKey, from, to, status (pending / accepted / declined / blocked), blockedBy, note; messages of an accepted pair: chat-messages room `pm:<idA>_<idB>`, sent only to those two |
-| `chat-rooms` | groups & channels made by the team | name, description, rules, kind (group / channel), join (open / request / invite), autoAdd, gradient, active, order; messages: room `g:<id>` |
-| `chat-room-members` | memberships | key (`<room>_<member>`), room, member, status (member / requested / invited) |
+| `chat-rooms` | groups & channels (made by the team, or from the chat by a member whose role allows it) | name, description, rules, kind (group / channel), join (open / request / invite), autoAdd, gradient, active, order, createdBy (user) / owner (member), gradient (room colours, from ROOM_COLORS), photo (media, 512 px square), visibility (public / members / hidden) + preview (non-members read before joining; both empty on older rooms → derived from join: invite → hidden, open → preview), mediaView / mediaSave, inviteToken (invite link `/<lang>/chat/join-<token>`; joining by link works even when join = invite); messages: room `g:<id>` |
+| `chat-room-members` | memberships | key (`<room>_<member>`), room, member, status (member / requested / invited), admin (co-admin: manages the room, posts in a channel) |
+| `member-roles` | what chat members may do (custom roles; one default for new accounts) | name, description, color, isDefault, order, createGroups, createChannels, maxRooms (active rooms owned), sendPictures, privateChats, showBadge |
+| `chat-voice` | voice messages (WebM/Opus or MP4/AAC from the browser, same privacy as chat pictures) | room, duration, peaks (40-bar waveform) |
+| `chat-keys` | one encryption key per conversation, **stored locked** with `CHAT_MASTER_KEY` (no API / admin access) | room (stored name: lounge, match id, g:…, pm:…, dm:…), wrapped, kv (master key fingerprint) |
+| `chat-receipts` | delivered / read positions (one-to-one chats, groups & channels) | key `<room>|<reader>`, room, reader (member id or 'team'), delivered, read (message timestamps) |
+| `stickers` | team stickers for the chat's photo editor, for everyone (back office → Stickers) | name, image (media, trimmed WebP ≤ 512 px), active, order |
+| `wallpapers` | chat wallpapers people can pick (theme sheet → Wallpaper; back office → Wallpapers) | name, image (media, WebP: photo ≤ 2000 px / ≤ 450 KB, pattern ≤ 600 px), mode (cover / tile), dim (0–70 %), active, order |
+| `member-stickers` | personal stickers: a picture someone saved from the photo editor; only they (and the team) can load it | owner (member / team account id), file (WebP ≤ 512 px) |
 | `chat-reports` | reports | message, reporter, room, text snapshot, reason, status |
 | `password-resets` | "forgot password" requests approved in the back office (no email service) | kind (member / staff), email, member / user, note, status, tokenHash, expiresAt |
 
@@ -121,3 +128,27 @@ src/
   scripts/                             server commands (reset-password)
 docs/  design/prototype/
 ```
+
+
+## Message encryption (at rest)
+
+Operations guide (setup, encrypt, decrypt, key rotation, recovery): `docs/ENCRYPTION.md`.
+
+Envelope encryption, `src/chat/crypto.ts`:
+- `CHAT_MASTER_KEY` (server environment only, 32 bytes base64) locks one random 256-bit key per conversation (`chat-keys`,
+  created on its first message; only the locked form is stored; kept unlocked in server memory).
+- Each conversation's texts are encrypted with its own key: `chat-messages.text`, `chat-messages.reply.text`,
+  `chat-reports.messageText` (room of the message), `chat-requests.note` (the private chat `pm:<pairKey>`).
+- AES-256-GCM, random IV per value, the conversation bound as additional data (`msg:<room>`, `chatkey:<room>` for the
+  locked keys). Stored text: `enc:v2:<key fingerprint>:<iv>.<tag>.<ciphertext>`; anything else is read as old plain text.
+- Done by Payload field hooks (`encryptedField`): encrypt in `beforeChange`, decrypt in `afterRead` — so every Payload read
+  (chat, live delivery, history, moderation, back office, /cms) sees plain text and nothing else changed. Payload validates
+  *after* `beforeChange` hooks, so the stored `maxLength`s are larger; the real limits (chat settings, 140 for request
+  notes) are checked on the plain text in the chat service. Code writing straight to MongoDB must call `encryptText`
+  (see `seed-chat-load.ts`). Nothing queries message text, so nothing else needed changing.
+- Shredding: deleting a room (chat or back office) or an account with its messages deletes the conversation key too
+  (`shredRoom`). A text whose key is missing reads as "🔒 This message can’t be read…".
+- What it protects: a leaked database or backup (texts and keys are unreadable without the master key). What it does not:
+  the server and the team read messages (moderation), and someone with both the database and the server's environment
+  could read them — only end-to-end encryption would change that. Pictures / voice files (R2) are not covered.
+- Operations: `pnpm chat:crypto` (status · `--encrypt [--dry-run]` · `--decrypt` · `--rotate` with `CHAT_MASTER_KEY_OLD`).

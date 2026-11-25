@@ -1,12 +1,18 @@
 'use client'
 import { Anton } from 'next/font/google'
+import { Play } from 'lucide-react'
 import type { ColorKey } from '@/backoffice/lib/partner-schema'
+import { HERO_MOTION_DEFAULT, type HeroMotionSettings } from '@/lib/hero-motion'
+import { useHeroSwitch } from '@/backoffice/lib/use-hero-switch'
+import { Persons } from './hero-motion-fields'
 
 const anton = Anton({ weight: '400', subsets: ['latin'] })
 
 /** A miniature of the public site in the partner's colours: hero, 3D phone screen, odds board, footer. */
-export function PartnerPreview({ c, name, promo, bonus }: { c: Record<ColorKey, string>; name: string; promo: string; bonus: string }) {
+export function PartnerPreview({ c, name, promo, bonus, heroUrl = null, motion = HERO_MOTION_DEFAULT }: { c: Record<ColorKey, string>; name: string; promo: string; bonus: string; heroUrl?: string | null; motion?: HeroMotionSettings }) {
   const word = (name || 'Partner').toUpperCase()
+  // the first-screen person, playing this partner's switch animation (replays when the animation settings change)
+  const hs = useHeroSwitch(motion, heroUrl)
   return (
     <div className="overflow-hidden rounded-xl border shadow-sm" style={{ background: c.night, color: '#F2F7FF' }} aria-label="Preview of the site in this partner’s colours">
       {/* nav */}
@@ -15,21 +21,23 @@ export function PartnerPreview({ c, name, promo, bonus }: { c: Record<ColorKey, 
         <span className="rounded-full px-2.5 py-1 text-[10px] font-bold" style={{ background: c.cta, color: c.ink }}>Open chat</span>
       </div>
       {/* hero */}
-      <div className="relative px-4 pb-4 pt-3" style={{ background: `radial-gradient(120% 80% at 50% 0%, ${c.navy}, ${c.night})` }}>
-        <div className="mx-auto mb-3 flex w-fit gap-0.5 rounded-full p-0.5 text-[9px] font-bold" style={{ background: c.nav }}>
+      <div ref={hs.stage} className="relative overflow-hidden px-4 pb-4 pt-3" style={{ background: `radial-gradient(120% 80% at 50% 0%, ${c.navy}, ${c.night})` }}>
+        <div className="absolute inset-0 z-[2]"><Persons oldEl={hs.oldEl} newEl={hs.newEl} heroUrl={heroUrl} small /></div>
+        <button type="button" onClick={() => hs.play(hs.from === 1 ? -1 : 1)} className="absolute right-2 top-2 z-[5] grid size-6 place-items-center rounded-full bg-black/45 text-white hover:bg-black/60" aria-label="Replay the partner switch" title="Replay the partner switch"><Play className="size-3" /></button>
+        <div className="relative z-[3] mx-auto mb-3 flex w-fit gap-0.5 rounded-full p-0.5 text-[9px] font-bold" style={{ background: c.nav }}>
           <span className="rounded-full px-2 py-1" style={{ background: c.cta, color: c.ink }}>{name || 'Partner'}</span>
           <span className="px-2 py-1 opacity-80">Other</span>
         </div>
         <div className="grid grid-cols-[1fr_auto] items-center gap-3">
           <div>
-            <p className={anton.className + ' text-[26px] leading-[.95]'}>EVERY SPORT.<br /><span style={{ color: c.cta }}>ONE CODE.</span></p>
-            <div className="mt-3 flex flex-wrap items-center gap-1.5">
+            <p className={anton.className + ' relative z-[1] text-[26px] leading-[.95]'}>EVERY SPORT.<br /><span style={{ color: c.cta }}>ONE CODE.</span></p>
+            <div className="relative z-[4] mt-3 flex flex-wrap items-center gap-1.5">
               <span className="rounded-full px-2.5 py-1.5 text-[9px] font-bold uppercase" style={{ background: c.cta, color: c.ink }}>Claim the welcome bonus</span>
               <span className="rounded-full border border-dashed px-2.5 py-1 font-mono text-[9px] font-bold" style={{ borderColor: c.cta, color: c.cta }}>{promo || 'PROMO CODE'}</span>
             </div>
           </div>
           {/* phone */}
-          <div className="w-[92px] rounded-[16px] p-[3px]" style={{ background: '#8a96a8' }}>
+          <div className="relative z-[3] w-[92px] rounded-[16px] p-[3px]" style={{ background: '#8a96a8' }}>
             <div className="flex h-[176px] flex-col gap-1.5 overflow-hidden rounded-[13px] px-2 pb-2 pt-3" style={{ background: c.night }}>
               <p className={anton.className + ' truncate text-[17px] leading-none'}>{word}</p>
               <span className="h-[3px] w-5 rounded" style={{ background: c.cta }} />

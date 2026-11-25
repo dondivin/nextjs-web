@@ -1,8 +1,9 @@
 import type { CollectionAfterChangeHook, CollectionAfterDeleteHook } from 'payload'
-import { broadcast, dropUid, hub, toStaff, toUid } from './hub'
+import { broadcast, dropUid, hub, toStaff, toUid, type Client } from './hub'
 import { pmMembers, relView } from './pm'
-import { groupIdOf, memberUids } from './groups'
-import { activeMatches, imagesFor, mutedMap, myReports, profilesFor, reportCounts, toWire } from './data'
+import { groupIdOf, memberUids, roomVisibility } from './groups'
+import { lockWire, mediaPolicy, type MediaPolicy } from './media-policy'
+import { activeMatches, clearChatCache, imagesFor, type WireMsg, mutedMap, myReports, profilesFor, reportCounts, toWire } from './data'
 
 /*
  * Payload hooks → live chat. Whatever changes a message, member, report or match (the chat API, the custom back office,
@@ -25,6 +26,17 @@ export const onStaffChange: CollectionAfterChangeHook = async ({ doc, previousDo
   return doc
 }
 
+/** Broadcast a message so that each client receives the version it may see (lockWire), grouped to send each variant once. */
+function sendEach(base: Record<string, unknown>, m: WireMsg, policy: MediaPolicy, to: (c: Client) => boolean, groupsOf: (c: Client) => Set<string>) {
+  const variants = new Map<string, WireMsg>()
+  for (const c of hub.clients.values()) {
+    if (!to(c)) continue
+    const w = lockWire(m, c.viewer, policy, groupsOf(c)), key = JSON.stringify([w.locked, w.nosave, !!w.image, !!w.voice])
+    if (!variants.has(key)) variants.set(key, w)
+    try { c.send({ ...base, type: 'msg', m: variants.get(key) }) } catch { /* closed */ }
+  }
+}
+
 export const onMessageChange: CollectionAfterChangeHook = async ({ doc, req, operation }) => {
   if (nobodyListening()) return doc
   try {
@@ -35,8 +47,12 @@ export const onMessageChange: CollectionAfterChangeHook = async ({ doc, req, ope
       if (!room) return doc
       const profiles = operation === 'create' ? await profilesFor(req.payload, [m.by, m.reply?.by], req) : undefined
       // open rooms are readable by everyone; the others only by their members and the team
-      const allowed = room.join === 'open' ? null : new Set(await memberUids(req.payload, gid, req))
-      broadcast({ type: 'msg', m, profiles }, allowed ? (c) => toStaff(c) || (!!c.viewer.uid && allowed.has(c.viewer.uid)) : undefined)
+      const members = new Set(await memberUids(req.payload, gid, req)), { vis, preview } = roomVisibility(room)
+      // non-members get it live only where they may read it: "read before joining" on, and the room visible to them
+      const guestReads = (c: { viewer: { uid?: string | null } }) => preview && (vis === 'public' || (vis === 'members' && !!c.viewer.uid))
+      const policy = await mediaPolicy(req.payload)
+      // every client gets the message as they may see it (media locked / no saving per the room's rule)
+      sendEach({ type: 'msg', profiles }, m, policy, (c) => toStaff(c) || (!!c.viewer.uid && members.has(c.viewer.uid)) || guestReads(c), (c) => (!!c.viewer.uid && members.has(c.viewer.uid) ? new Set([gid]) : new Set()))
       return doc
     }
     const pair = pmMembers(m.room)
@@ -46,8 +62,9 @@ export const onMessageChange: CollectionAfterChangeHook = async ({ doc, req, ope
     }
     const dmMember = m.room.startsWith('dm:') ? m.room.slice(3) : null
     const profiles = operation === 'create' ? await profilesFor(req.payload, [m.by, m.reply?.by], req) : undefined
-    // direct chats only go to that member and to staff; room messages go to everyone
-    broadcast({ type: 'msg', m, profiles }, dmMember ? (c) => toStaff(c) || c.viewer.uid === dmMember : undefined)
+    // direct chats only go to that member and to staff; room messages go to everyone (media per the lounge's rule)
+    if (dmMember) broadcast({ type: 'msg', m, profiles }, (c) => toStaff(c) || c.viewer.uid === dmMember)
+    else sendEach({ type: 'msg', profiles }, m, await mediaPolicy(req.payload), () => true, () => new Set())
     if (dmMember && operation === 'create') {
       const member = await req.payload.findByID({ collection: 'members', id: dmMember, depth: 0, overrideAccess: true, disableErrors: true, req })
       broadcast(
@@ -104,7 +121,7 @@ export const onMatchesChange: CollectionAfterChangeHook & CollectionAfterDeleteH
   return doc
 }
 
-/** A chat request changed → each of the two fans gets their own view of it (declined / blocked stay invisible to the other side). */
+/** A chat request changed → each of the two members gets their own view of it (declined / blocked stay invisible to the other side). */
 export const onRequestChange: CollectionAfterChangeHook = async ({ doc, req }) => {
   if (nobodyListening()) return doc
   try {
@@ -120,7 +137,7 @@ export const onRequestChange: CollectionAfterChangeHook = async ({ doc, req }) =
   return doc
 }
 
-/** A request was deleted (cancelled / unblocked) → both fans: no relation any more. */
+/** A request was deleted (cancelled / unblocked) → both members: no relation any more. */
 export const onRequestDelete: CollectionAfterDeleteHook = async ({ doc }) => {
   if (nobodyListening()) return doc
   const from = typeof doc.from === 'object' ? String(doc.from.id) : String(doc.from)
@@ -137,6 +154,7 @@ function announceGroups() {
   groupsTimer = setTimeout(() => { groupsTimer = null; broadcast({ type: 'groups' }) }, 200)
 }
 export const onRoomChange: CollectionAfterChangeHook & CollectionAfterDeleteHook = async ({ doc }) => {
+  clearChatCache('media')   // a room's picture / voice rule may have changed
   if (!nobodyListening()) announceGroups()
   return doc
 }

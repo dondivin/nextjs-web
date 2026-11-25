@@ -5,8 +5,10 @@ import { getDictionary, getLanguages } from '../i18n/data'
 import type { Member, User } from '../payload-types'
 import { isGradient, randomGradient } from './gradient'
 import { findPair, pmMembers, pmRoom, relationsOf, relView, pairKey } from './pm'
-import { groupIdOf, groupRoom, roomAccess, roomsFor, setMembership, setRoomAdmin } from './groups'
-import { AvatarError, dropMedia, prepareChatImage, storeAvatar } from './avatar'
+import { joinedGroups, lockWire, mediaPolicy, roomMedia } from './media-policy'
+import { groupIdOf, groupRoom, memberUids, participantUids, roomAccess, roomsFor, setMembership, setRoomAdmin, teamCreatorOf } from './groups'
+import { AvatarError, dropMedia, prepareChatImage, prepareSticker, storeAvatar } from './avatar'
+import { shredRoom } from './crypto'
 import { broadcast, hub, peersList, setPresence, type Viewer } from './hub'
 import {
   agentInfo, cached, chatConfig, imagesFor, isObjectId, mutedMap, permsOf, STAFF_PERMS, type Perms, myReports, profilesFor, reportCounts, threadsFor, toWire, type ChatConfig,
@@ -53,21 +55,27 @@ function isMuted(m: Member | null) {
 }
 
 /* ---------- first event of every stream: everything the chat needs to draw ---------- */
+/** Messages per page: what a conversation gets when the chat connects, and each "older" page (scrolling up). */
+export const PAGE = 40
+/** The newest PAGE messages of one stored room (optionally before a time), newest last. */
+async function latest(payload: Payload, room: string, before?: number) {
+  const where = { and: [{ room: { equals: room } }, { deleted: { not_equals: true } }, ...(before ? [{ createdAt: { less_than: new Date(before).toISOString() } }] : [])] }
+  const res = await payload.find({ collection: 'chat-messages', where: where as never, sort: '-createdAt', limit: PAGE + 1, depth: 0, overrideAccess: true })
+  return { docs: res.docs.slice(0, PAGE).reverse(), more: res.docs.length > PAGE }
+}
+
 export async function snapshot(ctx: Ctx, connId: string) {
   const { payload, viewer, member, staff } = ctx
-  const roomMsgs = await payload.find({
-    collection: 'chat-messages',
-    where: { and: [{ deleted: { not_equals: true } }, { room: { not_like: 'dm:' } }, { room: { not_like: 'pm:' } }, { room: { not_like: 'g:' } }] },
-    sort: '-createdAt',
-    limit: 400,
-    depth: 0,
-    overrideAccess: true,
-  })
-  const roomImgs = await imagesFor(payload, roomMsgs.docs)
-  const messages = roomMsgs.docs.map((d) => toWire(d, roomImgs)).reverse()
+  // the lounge and every match room: each its own latest page (a busy lounge can't push a match room's history out)
+  const matchIds = (await payload.find({ collection: 'matches', where: { active: { equals: true } }, pagination: false, depth: 0, overrideAccess: true, select: {} })).docs.map((d) => String(d.id))
+  const pages = await Promise.all(['lounge', ...matchIds].map((r) => latest(payload, r)))
+  const roomDocs = pages.flatMap((pg) => pg.docs).sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))
+  const roomImgs = await imagesFor(payload, roomDocs)
+  const policy = await mediaPolicy(payload), myGroups = await joinedGroups(payload, viewer.kind === 'member' ? viewer.uid : null)
+  const messages = roomDocs.map((d) => lockWire(toWire(d, roomImgs), viewer, policy, myGroups))
   let myDm: ReturnType<typeof toWire>[] = []
   if (member) {
-    const dm = await payload.find({ collection: 'chat-messages', where: { and: [{ room: { equals: 'dm:' + member.id } }, { deleted: { not_equals: true } }] }, sort: '-createdAt', limit: 300, depth: 0, overrideAccess: true })
+    const dm = await payload.find({ collection: 'chat-messages', where: { and: [{ room: { equals: 'dm:' + member.id } }, { deleted: { not_equals: true } }] }, sort: '-createdAt', limit: PAGE, depth: 0, overrideAccess: true })
     const dmImgs = await imagesFor(payload, dm.docs)
     myDm = dm.docs.map((d) => toWire(d, dmImgs)).reverse()
   }
@@ -78,17 +86,19 @@ export async function snapshot(ctx: Ctx, connId: string) {
     staff ? reportCounts(payload) : Promise.resolve(undefined),
     member ? myReports(payload, String(member.id)) : Promise.resolve([]),
   ])
-  // fan-to-fan private chats: requests, accepted chats (+ their latest messages), people they blocked
+  // member-to-member private chats: requests, accepted chats (+ their latest messages), people they blocked
   let pms: Awaited<ReturnType<typeof relationsOf>> = []
   const pmMsgs: Record<string, ReturnType<typeof toWire>[]> = {}
   if (member) {
     pms = await relationsOf(payload, String(member.id))
     const open = pms.filter((r) => r.status === 'accepted').slice(0, 40)
     await Promise.all(open.map(async (r) => {
-      const res = await payload.find({ collection: 'chat-messages', where: { and: [{ room: { equals: pmRoom(String(member.id), r.uid) } }, { deleted: { not_equals: true } }] }, sort: '-createdAt', limit: 60, depth: 0, overrideAccess: true })
-      pmMsgs[r.uid] = res.docs.map((d) => toWire(d)).reverse()
+      const res = await payload.find({ collection: 'chat-messages', where: { and: [{ room: { equals: pmRoom(String(member.id), r.uid) } }, { deleted: { not_equals: true } }] }, sort: '-createdAt', limit: PAGE, depth: 0, overrideAccess: true })
+      const media = await imagesFor(payload, res.docs)
+      pmMsgs[r.uid] = res.docs.map((d) => toWire(d, media)).reverse()
     }))
   }
+  const receipts = await receiptsFor(ctx)
   const { groups, gMsgs } = await groupsWithMessages(ctx, [])
   const ids = [...messages, ...myDm, ...Object.values(pmMsgs).flat(), ...Object.values(gMsgs).flat()].flatMap((m) => [m.by, m.reply?.by])
   ids.push(...pms.map((r) => r.uid))
@@ -118,6 +128,7 @@ export async function snapshot(ctx: Ctx, connId: string) {
     muted,
     reports,
     myReports: mine,
+    receipts,
     profiles,
     peers,
   }
@@ -163,7 +174,7 @@ function needStaff(ctx: Ctx) {
 /** Can this viewer see that message? (direct chats: only the member and staff) */
 function canSee(ctx: Ctx, room: string) {
   const pair = pmMembers(room)
-  if (pair) return !!ctx.viewer.uid && pair.includes(ctx.viewer.uid) // private chats: only the two fans
+  if (pair) return !!ctx.viewer.uid && pair.includes(ctx.viewer.uid) // private chats: only the two members
   if (room.startsWith('pm:')) return false
   if (!room.startsWith('dm:')) return true
   return ctx.viewer.kind === 'staff' || room.slice(3) === ctx.viewer.uid
@@ -195,7 +206,7 @@ async function prepareSend(ctx: Ctx, b: Body, text: string) {
   const dmTo = b.dmTo ? str(b.dmTo, 40) : null
   const pmTo = b.pmTo ? str(b.pmTo, 40) : null
   if (pmTo) {
-    // fan → fan: only inside an accepted private chat
+    // member → member: only inside an accepted private chat
     if (ctx.viewer.kind !== 'member' || !isObjectId(pmTo)) throw new ChatError(ctx.t('chat.err.notAllowed'), 403)
     const pair = await findPair(ctx.payload, ctx.viewer.uid as string, pmTo)
     if (!pair || pair.status !== 'accepted') throw new ChatError(ctx.t('pm.err.notAccepted'), 403)
@@ -216,6 +227,7 @@ async function prepareSend(ctx: Ctx, b: Body, text: string) {
     room = 'dm:' + dmTo
   } else {
     room = str(b.room, 40) || 'lounge'
+    if (room === 'lounge' && cfg.loungeTeamOnly && ctx.viewer.kind !== 'staff') throw new ChatError(ctx.t('chat.err.loungeTeam'), 403)
     if (room !== 'lounge') {
       if (!isObjectId(room)) throw new ChatError(ctx.t('chat.err.notAllowed'))
       const match = await ctx.payload.findByID({ collection: 'matches', id: room, depth: 0, overrideAccess: true, disableErrors: true })
@@ -225,23 +237,28 @@ async function prepareSend(ctx: Ctx, b: Body, text: string) {
 
   // slow mode (members only)
   const uid = ctx.viewer.uid as string
-  if (ctx.viewer.kind === 'member' && cfg.slowMs) {
+  if (ctx.viewer.kind === 'member' && cfg.slowMs && !room.startsWith('dm:') && !room.startsWith('pm:')) {   // shared rooms only
     const wait = (hub.lastPost.get(uid) || 0) + cfg.slowMs - Date.now()
     if (wait > 0) throw new ChatError(ctx.t('rule.slow', { s: Math.ceil(wait / 1000) }), 429)
   }
 
   // reply: always quote the stored message, never what the browser claims
-  let reply: { id: string; author?: string; by: string | null; text: string } | undefined
+  let reply: { msgId: string; author?: string; by: string | null; text: string; kind?: 'photo' | 'voice'; thumb?: string; dur?: number } | undefined
   const r = (typeof b.reply === 'string' ? JSON.parse(b.reply || 'null') : b.reply) as Body | null
   if (r && r.id) {
     const q = await loadMessage(ctx, r.id)
     const w = toWire(q)
-    reply = { id: w.id, by: w.by, text: (w.text || (q.image ? ctx.t('chat.photo') : '')).slice(0, 140), ...(q.author ? { author: String(q.author) } : {}) }
+    reply = { msgId: w.id, by: w.by, text: (w.text || '').slice(0, 140), ...(q.author ? { author: String(q.author) } : {}) }
+    // replying to a picture / voice message: remember what it was, so the quote can show a thumbnail or the length
+    const imgId = q.image && typeof q.image === 'object' ? String((q.image as { id: string }).id) : q.image ? String(q.image) : null
+    const voiceId = q.voice && typeof q.voice === 'object' ? String((q.voice as { id: string }).id) : q.voice ? String(q.voice) : null
+    if (imgId) { const im = await ctx.payload.findByID({ collection: 'chat-images', id: imgId, depth: 0, overrideAccess: true, disableErrors: true }); reply.kind = 'photo'; if (im?.thumb) reply.thumb = im.thumb }
+    else if (voiceId) { const v = await ctx.payload.findByID({ collection: 'chat-voice', id: voiceId, depth: 0, overrideAccess: true, disableErrors: true }); reply.kind = 'voice'; if (v?.duration) reply.dur = Number(v.duration) }
   }
   return { room, reply, uid }
 }
 
-async function createMessage(ctx: Ctx, b: Body, p: Awaited<ReturnType<typeof prepareSend>>, text: string, image?: string) {
+async function createMessage(ctx: Ctx, b: Body, p: Awaited<ReturnType<typeof prepareSend>>, text: string, image?: string, voice?: string) {
   hub.lastPost.set(p.uid, Date.now())
   const doc = await ctx.payload.create({
     collection: 'chat-messages',
@@ -250,6 +267,7 @@ async function createMessage(ctx: Ctx, b: Body, p: Awaited<ReturnType<typeof pre
       room: p.room,
       text,
       image,
+      voice,
       isMod: ctx.viewer.kind === 'staff',
       clientId: str(b.clientId, 40) || undefined,
       ...(ctx.viewer.kind === 'staff' ? { staffAuthor: p.uid } : { author: p.uid }),
@@ -269,18 +287,19 @@ export async function send(ctx: Ctx, b: Body) {
 
 /**
  * A picture (+ optional caption), multipart: file, room | dmTo, text, clientId, reply (JSON).
- * Fans: only in their own direct chat with the team. Staff: everywhere.
+ * Members: only in their own direct chat with the team. Staff: everywhere.
  */
 export async function sendImage(ctx: Ctx, form: FormData) {
   const b: Body = Object.fromEntries([...form.entries()].filter(([, v]) => typeof v === 'string'))
   const text = str(b.text, 5000).trim()
   const p = await prepareSend(ctx, b, text)
   if (ctx.viewer.kind !== 'staff' && p.room !== 'dm:' + ctx.viewer.uid && !(ctx.perms.sendPictures && !p.room.startsWith('pm:'))) throw new ChatError(ctx.t('chat.err.imagesDmOnly'), 403)
+  if (roomMedia(await mediaPolicy(ctx.payload), p.room)?.view === 'none') throw new ChatError(ctx.t('chat.err.mediaOff'), 403)   // text-only room
   const file = form.get('file')
-  let data: Buffer
+  let data: Buffer, thumb = ''
   try {
     if (!(file instanceof File)) throw new AvatarError('missing')
-    ;({ data } = await prepareChatImage(file)) // Payload reads width / height from the file
+    ;({ data, thumb } = await prepareChatImage(file)) // Payload reads width / height from the file
   } catch (e) {
     if (e instanceof AvatarError) throw new ChatError(ctx.t(e.message === 'tooBig' ? 'chat.err.imageTooBig' : 'auth.err.photoType'))
     throw e
@@ -288,10 +307,43 @@ export async function sendImage(ctx: Ctx, form: FormData) {
   const img = await ctx.payload.create({
     collection: 'chat-images',
     overrideAccess: true,
-    data: { room: p.room },
+    data: { room: p.room, thumb },
     file: { data, mimetype: 'image/webp', name: `chat-${randomBytes(12).toString('hex')}.webp`, size: data.length },
   })
   return createMessage(ctx, b, p, text, String(img.id))
+}
+
+const VOICE_TYPES: Record<string, string> = { 'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mp4': 'm4a', 'audio/x-m4a': 'm4a', 'audio/aac': 'aac', 'audio/mpeg': 'mp3' }
+export const VOICE_MAX_BYTES = 4 * 1024 * 1024
+/**
+ * A voice message (multipart: file + duration + peaks, plus the usual room / dmTo / pmTo / reply / clientId).
+ * Allowed: the team; a member in their chat with the team or in a private chat; in shared rooms members need the role right
+ * "Send pictures & voice messages" — the same rule as pictures.
+ */
+export async function sendVoice(ctx: Ctx, form: FormData) {
+  const b: Body = Object.fromEntries([...form.entries()].filter(([, v]) => typeof v === 'string'))
+  const p = await prepareSend(ctx, b, '')
+  const shared = !p.room.startsWith('dm:') && !p.room.startsWith('pm:')
+  if (ctx.viewer.kind !== 'staff' && shared && !ctx.perms.sendPictures) throw new ChatError(ctx.t('chat.err.voiceNotHere'), 403)
+  if (roomMedia(await mediaPolicy(ctx.payload), p.room)?.view === 'none') throw new ChatError(ctx.t('chat.err.mediaOff'), 403)   // text-only room
+  const file = form.get('file')
+  const type = file instanceof File ? String(file.type || '').split(';')[0].trim().toLowerCase() : ''
+  if (!(file instanceof File) || !file.size || !VOICE_TYPES[type]) throw new ChatError(ctx.t('chat.err.voiceType'))
+  if (file.size > VOICE_MAX_BYTES) throw new ChatError(ctx.t('chat.err.voiceTooLong'))
+  const cfg = await ctx.payload.findGlobal({ slug: 'chat-settings', depth: 0 })
+  const max = Number(cfg.voiceMaxSeconds) || 120
+  const dur = Math.max(0, Math.min(600, Number(b.duration) || 0))
+  if (dur < 0.5) throw new ChatError(ctx.t('chat.err.voiceShort'))
+  if (dur > max + 3) throw new ChatError(ctx.t('chat.err.voiceTooLong'))
+  let peaks: number[] = []
+  try { const a = JSON.parse(String(b.peaks || '[]')); if (Array.isArray(a)) peaks = a.slice(0, 64).map((x) => Math.max(0, Math.min(100, Math.round(Number(x) || 0)))) } catch { /* no waveform */ }
+  const data = Buffer.from(await file.arrayBuffer())
+  const voice = await ctx.payload.create({
+    collection: 'chat-voice', overrideAccess: true,
+    data: { room: p.room, duration: Math.round(dur * 10) / 10, peaks },
+    file: { data, mimetype: type, name: `voice-${randomBytes(12).toString('hex')}.${VOICE_TYPES[type]}`, size: data.length },
+  })
+  return createMessage(ctx, b, p, '', undefined, String(voice.id))
 }
 
 export async function react(ctx: Ctx, b: Body) {
@@ -301,6 +353,8 @@ export async function react(ctx: Ctx, b: Body) {
   const doc = await loadMessage(ctx, b.id)
   const uid = ctx.viewer.uid as string
   const rx = (doc.reactions && typeof doc.reactions === 'object' ? { ...(doc.reactions as Record<string, Record<string, boolean>>) } : {}) as Record<string, Record<string, boolean>>
+  // one reaction per person per message (like WhatsApp): a new one replaces the previous one
+  if (b.on) for (const k of Object.keys(rx)) if (k !== key && rx[k] && rx[k][uid]) { const o = { ...rx[k] }; delete o[uid]; rx[k] = o }
   const set = { ...(rx[key] || {}) }
   if (b.on) set[uid] = true
   else delete set[uid]
@@ -372,10 +426,36 @@ export async function thread(ctx: Ctx, b: Body) {
   needStaff(ctx)
   const uid = str(b.uid, 40)
   if (!isObjectId(uid)) throw new ChatError(ctx.t('chat.err.notAllowed'))
-  const res = await ctx.payload.find({ collection: 'chat-messages', where: { and: [{ room: { equals: 'dm:' + uid } }, { deleted: { not_equals: true } }] }, sort: '-createdAt', limit: 300, depth: 0, overrideAccess: true })
+  const res = await ctx.payload.find({ collection: 'chat-messages', where: { and: [{ room: { equals: 'dm:' + uid } }, { deleted: { not_equals: true } }] }, sort: '-createdAt', limit: PAGE, depth: 0, overrideAccess: true })
   const imgs = await imagesFor(ctx.payload, res.docs)
   const list = res.docs.map((d) => toWire(d, imgs)).reverse()
   return { list, profiles: await profilesFor(ctx.payload, [uid, ...list.map((m) => m.by)]) }
+}
+
+/**
+ * Older messages of one conversation (scrolling up): the PAGE messages before `before` (ms), newest last, + whether there
+ * are more. Same rights as reading it live: a group only if the viewer may read it, a private chat only between its two
+ * members, the help chat only for its member / the team; media locked per the room's rule like everywhere else.
+ */
+export async function history(ctx: Ctx, b: Body) {
+  const room = str(b.room, 60), before = Math.floor(Number(b.before) || 0), uid = ctx.viewer.uid
+  if (!before) throw new ChatError(ctx.t('chat.err.notAllowed'))
+  let stored: string | null = null, lock = false
+  const gid = groupIdOf(room)
+  if (room === 'support') { if (ctx.viewer.kind === 'member' && uid) stored = 'dm:' + uid }
+  else if (room.startsWith('sup:')) { if (ctx.viewer.kind === 'staff' && isObjectId(room.slice(4))) stored = 'dm:' + room.slice(4) }
+  else if (room.startsWith('pm:')) {
+    const other = room.slice(3)
+    if (ctx.viewer.kind === 'member' && uid && isObjectId(other)) { const pair = await findPair(ctx.payload, uid, other); if (pair && pair.status === 'accepted') stored = pmRoom(uid, other) }
+  }
+  else if (gid) { const acc = await roomAccess(ctx.payload, ctx.viewer, gid); if (acc && acc.canRead) { stored = room; lock = true } }
+  else if (room === 'lounge' || /^[a-f0-9]{24}$/i.test(room)) { stored = room; lock = true }   // the lounge, a match room
+  if (!stored) throw new ChatError(ctx.t('chat.err.notAllowed'), 403)
+  const { docs, more } = await latest(ctx.payload, stored, before)
+  const imgs = await imagesFor(ctx.payload, docs)
+  let list = docs.map((d) => toWire(d, imgs))
+  if (lock) { const policy = await mediaPolicy(ctx.payload), mine = await joinedGroups(ctx.payload, ctx.viewer.kind === 'member' ? uid || null : null); list = list.map((w) => lockWire(w, ctx.viewer, policy, mine)) }
+  return { list, more, profiles: await profilesFor(ctx.payload, list.flatMap((m) => [m.by, m.reply?.by])) }
 }
 
 export async function profiles(ctx: Ctx, b: Body) {
@@ -383,21 +463,21 @@ export async function profiles(ctx: Ctx, b: Body) {
   return { profiles: await profilesFor(ctx.payload, ids as string[]) }
 }
 
-/* ---------- accounts (fans) ---------- */
+/* ---------- accounts (members) ---------- */
 const COLORS = ['#E5484D', '#F76B15', '#FFB224', '#46A758', '#12A594', '#0090FF', '#3E63DD', '#8E4EC6', '#D6409F', '#AD7F58']
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/
 
 const NAME_RE = /^[\p{L}\p{N}][\p{L}\p{N} _.'-]{0,22}[\p{L}\p{N}]$/u
 
-/** Username rules: 2–24 letters/numbers (spaces, _ . ' - inside), allowed words, not used by another fan or by the team. */
+/** Username rules: 2–24 letters/numbers (spaces, _ . ' - inside), allowed words, not used by another member or by the team. */
 async function checkName(ctx: Ctx, raw: unknown, exceptMember?: string) {
   const name = str(raw, 100).trim().replace(/\s+/g, ' ')
   if (!NAME_RE.test(name)) throw new ChatError(ctx.t('auth.err.username'))
   const cfg = await chatConfig(ctx.payload)
   if (checkText({ ...ctx, viewer: { kind: 'member', uid: null } }, cfg, name)) throw new ChatError(ctx.t('auth.err.nameNotAllowed'))
   const key = name.toLowerCase()
-  const fan = await ctx.payload.find({ collection: 'members', where: { nameKey: { equals: key } }, limit: 1, depth: 0, overrideAccess: true, select: {} })
-  if (fan.docs.length && String(fan.docs[0].id) !== exceptMember) throw new ChatError(ctx.t('auth.err.nameTaken'), 409)
+  const taken = await ctx.payload.find({ collection: 'members', where: { nameKey: { equals: key } }, limit: 1, depth: 0, overrideAccess: true, select: {} })
+  if (taken.docs.length && String(taken.docs[0].id) !== exceptMember) throw new ChatError(ctx.t('auth.err.nameTaken'), 409)
   // nobody may look like the partner team
   const staff = await ctx.payload.find({ collection: 'users', pagination: false, depth: 0, overrideAccess: true, select: { name: true } })
   const reserved = [cfg.agentName, ...staff.docs.map((u) => u.name)].filter(Boolean).map((n) => String(n).trim().toLowerCase())
@@ -424,7 +504,7 @@ export async function signUp(ctx: Ctx, b: Body) {
   return logIn(ctx, { email, password })
 }
 
-/** A fan edits their own name / gradient (the photo goes through uploadAvatar). */
+/** A member edits their own name / gradient (the photo goes through uploadAvatar). */
 export async function updateProfile(ctx: Ctx, b: Body) {
   if (!ctx.member) throw new ChatError(ctx.t('chat.signInToJoin'), 401)
   const data: Partial<Member> = {}
@@ -478,7 +558,7 @@ export async function logIn(ctx: Ctx, b: Body) {
 
 /* ---------- forgot password (approved by the team in the back office, no email needed) ---------- */
 const RESET_TTL = 7 * 86400e3 // a request can wait 7 days for the team
-const APPROVED_TTL = 2 * 86400e3 // after approval the fan has 48 h to pick a new password
+const APPROVED_TTL = 2 * 86400e3 // after approval the member has 48 h to pick a new password
 const sha = (t: string) => createHash('sha256').update(t).digest('hex')
 
 export async function forgot(ctx: Ctx, b: Body) {
@@ -516,7 +596,7 @@ async function loadReset(ctx: Ctx, b: Body) {
   return { doc, status }
 }
 
-/** The fan's browser asks how its request is going: pending | approved | denied | done | expired. */
+/** The member's browser asks how its request is going: pending | approved | denied | done | expired. */
 export async function resetStatus(ctx: Ctx, b: Body) {
   const { doc, status } = await loadReset(ctx, b)
   return { status, email: doc.email }
@@ -537,12 +617,12 @@ export async function resetPassword(ctx: Ctx, b: Body) {
   return logIn(ctx, { email: m.email, password })
 }
 
-/* ---------- people: search, chat requests (fan → fan, consent first) ---------- */
-const PM_PENDING_MAX = 10 // open requests a fan may have waiting at once
-const PM_DAY_MAX = 20 // requests a fan may send per 24 h
+/* ---------- people: search, chat requests (member → member, consent first) ---------- */
+const PM_PENDING_MAX = 10 // open requests a member may have waiting at once
+const PM_DAY_MAX = 20 // requests a member may send per 24 h
 const PM_RETRY_MS = 7 * 86400e3 // after a decline, wait a week before asking the same person again
 
-/** Find fans by username (signed-in viewers only). */
+/** Find members by username (signed-in viewers only). */
 export async function people(ctx: Ctx, b: Body) {
   if (!ctx.viewer.uid) throw new ChatError(ctx.t('chat.signInToJoin'), 401)
   const q = str(b.q, 40).trim().toLowerCase()
@@ -623,11 +703,12 @@ export { relView }
 /** Rooms this viewer sees + recent messages of the ones they can read (skipping rooms the browser already has). */
 async function groupsWithMessages(ctx: Ctx, have: string[]) {
   const groups = await roomsFor(ctx.payload, ctx.viewer)
+  const policy = await mediaPolicy(ctx.payload), mine = new Set(groups.filter((g) => g.status === 'member').map((g) => g.id))
   const gMsgs: Record<string, ReturnType<typeof toWire>[]> = {}
   await Promise.all(groups.filter((g) => g.canRead && !have.includes(g.id)).slice(0, 30).map(async (g) => {
-    const res = await ctx.payload.find({ collection: 'chat-messages', where: { and: [{ room: { equals: groupRoom(g.id) } }, { deleted: { not_equals: true } }] }, sort: '-createdAt', limit: 80, depth: 0, overrideAccess: true })
+    const res = await ctx.payload.find({ collection: 'chat-messages', where: { and: [{ room: { equals: groupRoom(g.id) } }, { deleted: { not_equals: true } }] }, sort: '-createdAt', limit: PAGE, depth: 0, overrideAccess: true })
     const imgs = await imagesFor(ctx.payload, res.docs)
-    gMsgs[g.id] = res.docs.map((d) => toWire(d, imgs)).reverse()
+    gMsgs[g.id] = res.docs.map((d) => lockWire(toWire(d, imgs), ctx.viewer, policy, mine)).reverse()
   }))
   return { groups, gMsgs }
 }
@@ -683,7 +764,9 @@ async function roomFields(ctx: Ctx, b: Body, kindAllowed: (k: string) => boolean
   const kind = b.kind === 'channel' ? 'channel' : 'group'
   if (!kindAllowed(kind)) throw new ChatError(ctx.t('rooms.err.kind'), 403)
   const join = JOINS.includes(String(b.join)) ? String(b.join) : 'open'
-  return { name, description: str(b.description, 300).trim(), rules: str(b.rules, 1000).trim(), kind: kind as 'group' | 'channel', join: join as 'open' | 'request' | 'invite' }
+  const visibility = b.visibility === 'members' || b.visibility === 'hidden' ? b.visibility : 'public'
+  const gradient = isGradient(b.gradient) ? { gradient: b.gradient } : {}
+  return { name, description: str(b.description, 300).trim(), rules: str(b.rules, 1000).trim(), kind: kind as 'group' | 'channel', join: join as 'open' | 'request' | 'invite', visibility: visibility as 'public' | 'members' | 'hidden', preview: b.preview === true || b.preview === 'true', ...gradient }
 }
 
 export async function roomCreate(ctx: Ctx, b: Body) {
@@ -694,7 +777,7 @@ export async function roomCreate(ctx: Ctx, b: Body) {
   let owner: string | undefined
   if (ctx.viewer.kind === 'member') {
     owner = ctx.viewer.uid as string
-    const owned = await ctx.payload.count({ collection: 'chat-rooms', where: { owner: { equals: owner } }, overrideAccess: true })
+    const owned = await ctx.payload.count({ collection: 'chat-rooms', where: { and: [{ owner: { equals: owner } }, { active: { equals: true } }] }, overrideAccess: true })
     if (owned.totalDocs >= p.maxRooms) throw new ChatError(ctx.t('rooms.err.max', { n: p.maxRooms }), 429)
   }
   const room = await ctx.payload.create({
@@ -721,6 +804,7 @@ export async function roomRemove(ctx: Ctx, b: Body) {
   if (b.mode === 'delete') {
     await ctx.payload.delete({ collection: 'chat-room-members', where: { room: { equals: id } }, overrideAccess: true })
     await ctx.payload.delete({ collection: 'chat-messages', where: { room: { equals: groupRoom(id) } }, overrideAccess: true })
+    await shredRoom(ctx.payload, groupRoom(id))   // its conversation key goes too: nothing of it can ever be read again
     await ctx.payload.delete({ collection: 'chat-rooms', id, overrideAccess: true })
   } else await ctx.payload.update({ collection: 'chat-rooms', id, data: { active: false }, overrideAccess: true })
   return {}
@@ -731,8 +815,61 @@ export async function roomMembers(ctx: Ctx, b: Body) {
   const acc = await adminOf(ctx, b.id)
   const res = await ctx.payload.find({ collection: 'chat-room-members', where: { room: { equals: acc.room.id } }, sort: '-updatedAt', pagination: false, depth: 0, overrideAccess: true })
   const owner = acc.room.owner ? String(typeof acc.room.owner === 'object' ? acc.room.owner.id : acc.room.owner) : null
-  const list = res.docs.map((d) => ({ uid: String(d.member), status: d.status, admin: !!d.admin, owner: String(d.member) === owner }))
-  return { list, owner, profiles: await profilesFor(ctx.payload, list.map((x) => x.uid)) }
+  const list: { uid: string; status: string; admin: boolean; owner: boolean; team?: boolean }[] = res.docs.map((d) => ({ uid: String(d.member), status: d.status, admin: !!d.admin, owner: String(d.member) === owner }))
+  // a room made by the team: its creator (a back-office account) is shown as the owner, first in the list
+  const creator = teamCreatorOf(acc.room)
+  const profiles = await profilesFor(ctx.payload, [...list.map((x) => x.uid), ...(creator ? [creator] : [])])
+  if (creator && profiles[creator]) list.unshift({ uid: creator, status: 'member', admin: true, owner: true, team: true })
+  return { list, owner: owner || creator, profiles }
+}
+
+/**
+ * Group info for anyone who may see the room (members, people invited, and — for open / ask-to-join rooms — anyone):
+ * name, description, rules, how to join, and the members with their role. Pending requests / invites stay admin-only.
+ */
+export async function roomInfo(ctx: Ctx, b: Body) {
+  const acc = await roomAccess(ctx.payload, ctx.viewer, str(b.id, 40))
+  if (!acc) throw new ChatError(ctx.t('chat.err.notAllowed'), 404)
+  const r = acc.room, id = String(r.id)
+  const owner = r.owner ? String(typeof r.owner === 'object' ? r.owner.id : r.owner) : null, creator = teamCreatorOf(r)
+  const res = await ctx.payload.find({ collection: 'chat-room-members', where: { and: [{ room: { equals: id } }, { status: { equals: 'member' } }] }, sort: 'createdAt', pagination: false, depth: 0, overrideAccess: true })
+  type Row = { uid: string; role: 'owner' | 'admin' | 'member'; team?: boolean }
+  const list: Row[] = res.docs.map((d) => { const uid = String(d.member); return { uid, role: uid === owner ? 'owner' : d.admin ? 'admin' : 'member' } })
+  const profiles = await profilesFor(ctx.payload, [...list.map((x) => x.uid), ...(creator ? [creator] : [])])
+  if (creator && profiles[creator]) list.unshift({ uid: creator, role: 'owner', team: true })
+  const rank = { owner: 0, admin: 1, member: 2 }
+  list.sort((a, c) => rank[a.role] - rank[c.role])
+  return {
+    id, name: r.name, description: r.description || '', rules: r.rules || '', kind: r.kind || 'group', join: r.join || 'open',
+    createdAt: r.createdAt, members: list.filter((x) => profiles[x.uid]), profiles,
+  }
+}
+
+/** The room's picture (owner / admins / the team): a photo (multipart "file", square-cropped), or "remove" = back to its colours. */
+export async function roomPhoto(ctx: Ctx, form: FormData) {
+  const acc = await adminOf(ctx, String(form.get('id') || ''))
+  const id = String(acc.room.id), old = acc.room.photo
+  if (form.get('remove')) {
+    await ctx.payload.update({ collection: 'chat-rooms', id, data: { photo: null }, overrideAccess: true })
+    if (old) await dropMedia(ctx.payload, old)
+    return { photo: null }
+  }
+  const file = form.get('file')
+  let mid
+  try { mid = await storeAvatar(ctx.payload, file instanceof File ? file : (null as unknown as File), 'room-' + id) }
+  catch (e) { if (e instanceof AvatarError) throw new ChatError(ctx.t(e.message === 'tooBig' ? 'auth.err.photoTooBig' : 'auth.err.photoType')); throw e }
+  await ctx.payload.update({ collection: 'chat-rooms', id, data: { photo: mid }, overrideAccess: true })
+  if (old) await dropMedia(ctx.payload, old)
+  const m = await ctx.payload.findByID({ collection: 'media', id: mid, depth: 0, overrideAccess: true })
+  return { photo: m.url || null }
+}
+
+/** The room's colours (shown when it has no photo). */
+export async function roomColor(ctx: Ctx, b: Body) {
+  const acc = await adminOf(ctx, b.id)
+  if (!isGradient(b.gradient)) throw new ChatError(ctx.t('chat.err.notAllowed'))
+  await ctx.payload.update({ collection: 'chat-rooms', id: acc.room.id, data: { gradient: b.gradient }, overrideAccess: true })
+  return {}
 }
 
 /** invite · accept · decline · remove · admin · unadmin (admin rights: owner / the team only). */
@@ -752,4 +889,142 @@ export async function roomMember(ctx: Ctx, b: Body) {
   else if (action === 'admin' || action === 'unadmin') { if (!(await setRoomAdmin(ctx.payload, id, uid, action === 'admin'))) throw new ChatError(ctx.t('rooms.err.notMember')) }
   else throw new ChatError(ctx.t('chat.err.notAllowed'))
   return {}
+}
+
+/* ---------- delivery / read receipts (one-to-one chats only) ---------- */
+type Receipt = { room: string; reader: string; delivered: number; read: number }
+const asReceipt = (d: { room: string; reader: string; delivered?: number | null; read?: number | null }): Receipt => ({ room: d.room, reader: d.reader, delivered: d.delivered || 0, read: d.read || 0 })
+
+/** The stored room and the reader name for a browser room id, or null when it is not a one-to-one chat of this viewer. */
+async function receiptTarget(ctx: Ctx, room: string): Promise<{ room: string; reader: string; other: string[]; group?: string } | null> {
+  const uid = ctx.viewer.uid
+  if (!uid) return null
+  // groups & channels: only their members leave receipts (not visitors of an open group, not the team)
+  const gid = groupIdOf(room)
+  if (gid) {
+    const acc = await roomAccess(ctx.payload, ctx.viewer, gid)
+    if (!acc) return null
+    // members; and the team account that made a team room (it is part of it). Other team accounts don't count.
+    const inIt = ctx.viewer.kind === 'member' ? acc.status === 'member' : teamCreatorOf(acc.room) === uid
+    return inIt ? { room, reader: uid, other: [], group: gid } : null
+  }
+  if (ctx.viewer.kind === 'member') {
+    if (room === 'support') return { room: 'dm:' + uid, reader: uid, other: ['team'] }
+    if (room.startsWith('pm:') && isObjectId(room.slice(3)) && room.slice(3) !== uid) return { room: pmRoom(uid, room.slice(3)), reader: uid, other: [room.slice(3)] }
+    return null
+  }
+  if (ctx.viewer.kind === 'staff' && room.startsWith('sup:') && isObjectId(room.slice(4))) return { room: 'dm:' + room.slice(4), reader: 'team', other: [room.slice(4)] }
+  return null
+}
+
+/** What the OTHER side has received / seen in this viewer's one-to-one chats (for the ticks on their own messages). */
+async function receiptsFor(ctx: Ctx): Promise<Receipt[]> {
+  const uid = ctx.viewer.uid
+  if (!uid) return []
+  const where = ctx.viewer.kind === 'staff'
+    ? { and: [{ room: { like: 'dm:' } }, { reader: { not_equals: 'team' } }] }
+    : { or: [{ and: [{ room: { equals: 'dm:' + uid } }, { reader: { equals: 'team' } }] }, { and: [{ room: { like: uid } }, { room: { like: 'pm:' } }, { reader: { not_equals: uid } }] }] }
+  const res = await ctx.payload.find({ collection: 'chat-receipts', where: where as never, sort: '-updatedAt', limit: 500, depth: 0, overrideAccess: true })
+  const out = res.docs.map(asReceipt)
+  // groups & channels this viewer belongs to (the team: all of them): the current members' positions
+  const rooms = await ctx.payload.find({ collection: 'chat-rooms', where: { active: { equals: true } }, pagination: false, depth: 0, overrideAccess: true, select: { name: true } })
+  for (const r of rooms.docs) {
+    const gid = String(r.id), members = await participantUids(ctx.payload, gid)
+    if (ctx.viewer.kind !== 'staff' && !members.includes(uid)) continue
+    const g = await ctx.payload.find({ collection: 'chat-receipts', where: { and: [{ room: { equals: groupRoom(gid) } }, { reader: { in: members.filter((m) => m !== uid) } }] }, pagination: false, depth: 0, overrideAccess: true })
+    out.push(...g.docs.map(asReceipt))
+  }
+  return out
+}
+
+/**
+ * The viewer's device RECEIVED (kind 'delivered') or SAW (kind 'read') a one-to-one chat up to message time `ts`.
+ * Batched: { items: [{ room, kind, ts }] }. Positions only move forward; read implies delivered. The other side is told live.
+ */
+export async function receipt(ctx: Ctx, b: Body) {
+  const items = Array.isArray(b.items) ? (b.items as Body[]).slice(0, 50) : [b]
+  const now = Date.now() + 5000
+  for (const it of items) {
+    const kind = it.kind === 'read' ? 'read' : 'delivered', ts = Math.min(now, Math.floor(Number(it.ts) || 0))
+    const t = await receiptTarget(ctx, str(it.room, 40))
+    if (!t || ts <= 0) continue
+    if (t.room.startsWith('pm:')) { const pair = await findPair(ctx.payload, ctx.viewer.uid as string, t.other[0]); if (!pair || pair.status !== 'accepted') continue }
+    const key = t.room + '|' + t.reader
+    const found = await ctx.payload.find({ collection: 'chat-receipts', where: { key: { equals: key } }, limit: 1, depth: 0, overrideAccess: true })
+    const cur = found.docs[0]
+    const delivered = Math.max(cur?.delivered || 0, ts), read = kind === 'read' ? Math.max(cur?.read || 0, ts) : cur?.read || 0
+    if (cur && delivered === (cur.delivered || 0) && read === (cur.read || 0)) continue
+    const doc = cur
+      ? await ctx.payload.update({ collection: 'chat-receipts', id: cur.id, data: { delivered, read }, overrideAccess: true })
+      : await ctx.payload.create({ collection: 'chat-receipts', data: { key, room: t.room, reader: t.reader, delivered, read }, overrideAccess: true })
+    const ev = { type: 'receipt' as const, receipt: asReceipt(doc as never) }
+    // tell the other side (the two members of a private chat; the member + the team for a direct chat; a group's members + the team)
+    if (t.group) { const ms = new Set(await participantUids(ctx.payload, t.group)); broadcast(ev as never, (c) => c.viewer.kind === 'staff' || (!!c.viewer.uid && ms.has(c.viewer.uid))) }
+    else if (t.room.startsWith('pm:')) broadcast(ev as never, (c) => c.viewer.uid === t.other[0])
+    else if (t.reader === 'team') broadcast(ev as never, (c) => c.viewer.uid === t.other[0])
+    else broadcast(ev as never, (c) => c.viewer.kind === 'staff')
+  }
+  return {}
+}
+
+/* ---------- personal stickers (only their owner sees them; stickers for everyone: back office → Stickers) ---------- */
+const MAX_OWN_STICKERS = 60
+const needUid = (ctx: Ctx) => { if (!ctx.viewer.uid) throw new ChatError(ctx.t('chat.signInToJoin'), 401); return ctx.viewer.uid }
+export async function myStickers(ctx: Ctx) {
+  const uid = needUid(ctx)
+  const res = await ctx.payload.find({ collection: 'member-stickers', where: { owner: { equals: uid } }, sort: '-createdAt', limit: MAX_OWN_STICKERS, depth: 0, overrideAccess: true })
+  return { stickers: res.docs.filter((d) => d.url).map((d) => ({ id: String(d.id), url: d.url as string })) }
+}
+export async function addSticker(ctx: Ctx, form: FormData) {
+  const uid = needUid(ctx)
+  const n = await ctx.payload.count({ collection: 'member-stickers', where: { owner: { equals: uid } }, overrideAccess: true })
+  if (n.totalDocs >= MAX_OWN_STICKERS) throw new ChatError(ctx.t('pe.err.tooManyStickers', { n: MAX_OWN_STICKERS }), 429)
+  const file = form.get('file')
+  let data: Buffer
+  try {
+    if (!(file instanceof File)) throw new AvatarError('missing')
+    ;({ data } = await prepareSticker(file))
+  } catch (e) {
+    if (e instanceof AvatarError) throw new ChatError(ctx.t(e.message === 'tooBig' ? 'chat.err.imageTooBig' : 'auth.err.photoType'))
+    throw e
+  }
+  const doc = await ctx.payload.create({ collection: 'member-stickers', overrideAccess: true, data: { owner: uid }, file: { data, mimetype: 'image/webp', name: `my-sticker-${randomBytes(10).toString('hex')}.webp`, size: data.length } })
+  return { sticker: { id: String(doc.id), url: doc.url as string } }
+}
+export async function removeSticker(ctx: Ctx, b: Body) {
+  const uid = needUid(ctx), id = str(b.id, 40)
+  if (!isObjectId(id)) throw new ChatError(ctx.t('chat.err.notAllowed'))
+  const d = await ctx.payload.findByID({ collection: 'member-stickers', id, depth: 0, overrideAccess: true, disableErrors: true })
+  if (!d || d.owner !== uid) throw new ChatError(ctx.t('chat.err.notAllowed'), 403)
+  await ctx.payload.delete({ collection: 'member-stickers', id, overrideAccess: true })
+  return {}
+}
+
+/* ---------- invite links for groups & channels: /<locale>/chat/join-<token> ---------- */
+const newInviteToken = () => randomBytes(9).toString('base64url')
+/** Owners / co-admins / the team: the room's invite link token (action peek · get (creates) · reset = new link, old one stops · off = no link). */
+export async function roomInvite(ctx: Ctx, b: Body) {
+  const acc = await adminOf(ctx, b.id)
+  const action = str(b.action, 8) || 'get'
+  let token = (acc.room as { inviteToken?: string | null }).inviteToken || null
+  if (action === 'peek') return { token }   // just look (the members tab), never create
+  if (action === 'off') token = null
+  else if (action === 'reset' || !token) token = newInviteToken()
+  if (token !== ((acc.room as { inviteToken?: string | null }).inviteToken || null)) await ctx.payload.update({ collection: 'chat-rooms', id: acc.room.id, data: { inviteToken: token }, overrideAccess: true })
+  return { token }
+}
+/** Join a group / channel with its invite link (signed-in members). */
+export async function roomJoinLink(ctx: Ctx, b: Body) {
+  if (ctx.viewer.kind === 'staff') { /* the team reads every room already */ }
+  else if (ctx.viewer.kind !== 'member') throw new ChatError(ctx.t('chat.signInToJoin'), 401)
+  const token = str(b.token, 40)
+  if (!/^[A-Za-z0-9_-]{8,40}$/.test(token)) throw new ChatError(ctx.t('rooms.err.badLink'), 404)
+  const found = await ctx.payload.find({ collection: 'chat-rooms', where: { and: [{ inviteToken: { equals: token } }, { active: { equals: true } }] }, limit: 1, depth: 0, overrideAccess: true })
+  const room = found.docs[0]
+  if (!room) throw new ChatError(ctx.t('rooms.err.badLink'), 404)
+  if (ctx.viewer.kind === 'member') {
+    if (ctx.member?.status === 'banned') throw new ChatError(ctx.t('chat.gate.readOnly'), 403)
+    await setMembership(ctx.payload, String(room.id), ctx.viewer.uid as string, 'member')
+  }
+  return { id: String(room.id), name: room.name }
 }

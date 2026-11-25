@@ -5,7 +5,7 @@ import { Controller, useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { toast } from 'sonner'
 import { formatDistanceToNowStrict } from 'date-fns'
-import { ArrowDown, ArrowUp, Check, Loader2, Plus, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, Eraser, ImageIcon, Loader2, Mic, Plus, Trash2 } from 'lucide-react'
 import { PageHeader } from '@/backoffice/components/page-header'
 import {
   Card,
@@ -28,7 +28,7 @@ import {
 import { LocalizedInput, type Lang } from '@/backoffice/components/localized-input'
 import { RULE_ICONS } from '@/lib/options'
 import { chatSchema, type ChatForm } from '@/backoffice/lib/forms'
-import { saveChatSettings } from '@/backoffice/actions/content'
+import { runMediaCleanupNow, saveChatSettings } from '@/backoffice/actions/content'
 
 // the same stroke icons the chat draws in the house rules sheet
 const ICON_PATHS: Record<string, React.ReactNode> = {
@@ -86,14 +86,19 @@ const RuleIcon = ({ name }: { name: string }) => (
   </svg>
 )
 
+type Usage = { count: number; bytes: number; oldest: string | null }
+const mb = (b: number) => (b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB')
+
 export function ChatSettingsView({
   initial,
   languages,
   updatedAt,
+  usage,
 }: {
   initial: ChatForm
   languages: Lang[]
   updatedAt: string | null
+  usage?: { pictures: Usage; voices: Usage }
 }) {
   const router = useRouter()
   const [pending, start] = useTransition()
@@ -103,6 +108,8 @@ export function ChatSettingsView({
   })
   const rules = useFieldArray({ control, name: 'rules' })
   const words = useWatch({ control, name: 'bannedWords' }) || ''
+  const days = useWatch({ control, name: 'mediaRetentionDays' })
+  const [cleaning, startClean] = useTransition()
   const wordCount = new Set(
     words
       .split(/[\n,]+/)
@@ -150,7 +157,7 @@ export function ChatSettingsView({
             <CardHeader>
               <CardTitle>House rules</CardTitle>
               <CardDescription>
-                Shown in the rules sheet; fans accept them before posting. A dot marks a missing
+                Shown in the rules sheet; members accept them before posting. A dot marks a missing
                 translation.
               </CardDescription>
             </CardHeader>
@@ -261,7 +268,7 @@ export function ChatSettingsView({
             <CardHeader>
               <CardTitle>Limits</CardTitle>
               <CardDescription>
-                Apply to fans. The partner team is never slowed down.
+                Apply to members. The partner team is never slowed down.
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
@@ -295,6 +302,38 @@ export function ChatSettingsView({
                 />
                 {e.maxLength && <p className="text-xs text-destructive">{e.maxLength.message}</p>}
               </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Voice messages & media storage</CardTitle>
+              <CardDescription>Pictures and voice messages are stored in your file storage (Cloudflare R2). Old ones can be deleted automatically; the messages stay, marked “expired”.</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="voicemax"><Mic className="inline size-3.5" /> Longest voice message (seconds)</Label>
+                <Input id="voicemax" type="number" min={10} max={600} inputMode="numeric" aria-invalid={!!e.voiceMaxSeconds} {...register('voiceMaxSeconds', { valueAsNumber: true })} />
+                {e.voiceMaxSeconds ? <p className="text-xs text-destructive">{e.voiceMaxSeconds.message}</p> : <p className="text-xs text-muted-foreground">Recording stops and sends by itself at this length.</p>}
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="retention"><Eraser className="inline size-3.5" /> Delete pictures and voice messages after (days)</Label>
+                <Input id="retention" type="number" min={0} max={3650} inputMode="numeric" aria-invalid={!!e.mediaRetentionDays} {...register('mediaRetentionDays', { valueAsNumber: true })} />
+                {e.mediaRetentionDays ? <p className="text-xs text-destructive">{e.mediaRetentionDays.message}</p> : (
+                  <p className="text-xs text-muted-foreground">{!days ? '0 keeps everything forever.' : `Files older than ${days} day${days === 1 ? '' : 's'} are deleted (checked every 6 hours). Profile photos, logos and partner pictures are never touched.`}</p>
+                )}
+              </div>
+              {usage && (
+                <div className="grid gap-1.5 rounded-lg border bg-muted/40 p-3 text-sm">
+                  <span className="flex items-center gap-2"><ImageIcon className="size-4 text-muted-foreground" />{usage.pictures.count} picture{usage.pictures.count === 1 ? '' : 's'} · {mb(usage.pictures.bytes)}{usage.pictures.oldest ? ` · oldest ${formatDistanceToNowStrict(new Date(usage.pictures.oldest), { addSuffix: true })}` : ''}</span>
+                  <span className="flex items-center gap-2"><Mic className="size-4 text-muted-foreground" />{usage.voices.count} voice message{usage.voices.count === 1 ? '' : 's'} · {mb(usage.voices.bytes)}{usage.voices.oldest ? ` · oldest ${formatDistanceToNowStrict(new Date(usage.voices.oldest), { addSuffix: true })}` : ''}</span>
+                </div>
+              )}
+              <Button type="button" variant="outline" className="w-fit" disabled={cleaning || formState.isDirty || !initial.mediaRetentionDays}
+                title={formState.isDirty ? 'Save your changes first' : !initial.mediaRetentionDays ? 'Set a number of days and save first' : undefined}
+                onClick={() => startClean(async () => { const r = await runMediaCleanupNow(); if (r.ok && r.data) { toast.success(r.data.pictures + r.data.voices ? `Deleted ${r.data.pictures} picture(s) and ${r.data.voices} voice message(s) · ${mb(r.data.freedBytes)} freed` : 'Nothing old enough to delete'); router.refresh() } else if (!r.ok) toast.error(r.error) })}>
+                {cleaning ? <Loader2 className="animate-spin" /> : <Eraser />}Run clean-up now
+              </Button>
             </CardContent>
           </Card>
 

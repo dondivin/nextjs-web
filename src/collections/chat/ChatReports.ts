@@ -1,3 +1,4 @@
+import { encryptedField } from '../../chat/crypto'
 import type { CollectionConfig } from 'payload'
 import { hasRole } from '../../access'
 import { onReportChange } from '../../chat/hooks'
@@ -24,7 +25,7 @@ export const ChatReports: CollectionConfig = {
   },
   fields: [
     { name: 'message', type: 'relationship', relationTo: 'chat-messages', required: true, index: true },
-    { name: 'messageText', type: 'text', admin: { description: 'Snapshot of the text when it was reported' } },
+    { name: 'messageText', type: 'text', hooks: encryptedField((d) => d.room as string) as never, admin: { description: 'Snapshot of the text when it was reported (encrypted with the conversation’s key)' } },
     { name: 'messageAuthor', type: 'relationship', relationTo: 'members', index: true },
     { name: 'room', type: 'text', index: true },
     { name: 'reporter', type: 'relationship', relationTo: 'members' },

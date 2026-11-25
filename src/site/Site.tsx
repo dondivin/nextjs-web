@@ -9,7 +9,7 @@ import { rich, plain } from '@/i18n/rich'
 import { startEngine } from './engine/engine'
 import type { EngineConfig } from './engine/types'
 
-type Props = { cfg: EngineConfig; initial: { bookmaker: string; promo: string; bonus: string; payments: string }; extras: { helpline: string; company: string; year: number }; languageSwitcher?: React.ReactNode; logoUrl?: string | null; hero?: { url: string; w: number; h: number } | null; chat?: { room: string | null } }
+type Props = { cfg: EngineConfig; initial: { bookmaker: string; promo: string; bonus: string; payments: string }; extras: { helpline: string; company: string; year: number }; languageSwitcher?: React.ReactNode; logoUrl?: string | null; hero?: { url: string; w: number; h: number } | null; anyHero?: boolean; chat?: { room: string | null } }
 
 const I = {
   chat: <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" />,
@@ -72,7 +72,7 @@ function BrandMark({ logoUrl }: { logoUrl?: string | null }) {
   )
 }
 
-export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl, hero, chat }: Props) {
+export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl, hero, anyHero, chat }: Props) {
   const chatBase = `/${cfg.locale}/chat`
   const s = cfg.strings
   const t = (k: string) => (s[k] != null ? s[k] : k)
@@ -126,10 +126,11 @@ export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl, 
           <div className="pitch-lines" aria-hidden="true"></div>
           <div className="beam l" aria-hidden="true"></div>
           <div className="beam r" aria-hidden="true"></div>
-          {hero && (
-            // first-screen person picture (Site settings → First screen picture): decorative
+          {(hero || anyHero) && (
+            // first-screen person picture (partner's own, else Site settings → First screen picture): decorative.
+            // Rendered (hidden) even when the first partner has none, so the engine can show another partner's picture.
             // eslint-disable-next-line @next/next/no-img-element
-            <img className="hero-person" src={hero.url} alt="" aria-hidden="true" width={hero.w || undefined} height={hero.h || undefined} fetchPriority="high" decoding="async" />
+            <img className="hero-person" src={hero?.url} hidden={!hero} alt="" aria-hidden="true" width={hero?.w || undefined} height={hero?.h || undefined} fetchPriority="high" decoding="async" />
           )}
           <div className="partners" id="partners" role="group" aria-label={t('hero.partnersAria')}>
             <span className="lbl">{t('hero.partnerLabel')}</span>
@@ -457,6 +458,8 @@ export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl, 
                     <b id="replyWho"></b>
                     <span id="replyText"></span>
                   </div>
+                  {/* replying to a picture: its thumbnail */}
+                  <img id="replyThumb" className="rb-thumb" alt="" hidden />
                   <button className="iconbtn" id="replyClose" type="button" aria-label={t('chat.cancelReply')}>
                     <Icon>{I.close}</Icon>
                   </button>
@@ -498,6 +501,29 @@ export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl, 
                 </svg>
                 <span className="slow" id="slowNum" hidden></span>
               </button>
+              {/* voice message: the mic shows while the box is empty; recording swaps the box for the recording bar */}
+              <button className="mic" id="micBtn" type="button" aria-label={t('voice.recordAria')} title={t('voice.recordAria')} hidden>
+                <Icon>
+                  <rect x="9" y="3" width="6" height="11" rx="3" />
+                  <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+                </Icon>
+              </button>
+              <div className="rec-bar" id="recBar" hidden>
+                <button className="rec-cancel" id="recCancel" type="button" aria-label={t('voice.cancel')} title={t('voice.cancel')}>
+                  <Icon>
+                    <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
+                  </Icon>
+                </button>
+                <span className="rec-dot" aria-hidden="true"></span>
+                <span className="rec-time" id="recTime" aria-live="off">0:00</span>
+                <span className="rec-wave" id="recWave" aria-hidden="true"></span>
+                <span className="sr" id="recStatus" role="status">{t('voice.recording')}</span>
+                <button className="rec-send" id="recSend" type="button" aria-label={t('voice.send')} title={t('voice.send')}>
+                  <svg className="icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 19V5M6 11l6-6 6 6" />
+                  </svg>
+                </button>
+              </div>
             </form>
             <div className="gate glass" id="gate" hidden>
               <p id="gateText"></p>
@@ -505,6 +531,38 @@ export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl, 
               <button className="btn btn-primary" id="gateBtn" type="button">
                 {t('chat.readRules')}
               </button>
+            </div>
+          </div>
+          {/* no conversation chosen yet (wide screens): a welcome page instead of opening one at random */}
+          <div className="c-welcome" id="cWelcome" aria-labelledby="cwTitle">
+            <div className="cw-in">
+              <div className="cw-logo">
+                <BrandMark logoUrl={logoUrl} />
+              </div>
+              <h2 id="cwTitle">{t('chat.title')}</h2>
+              <p>{t('welcome.text')}</p>
+              <ul className="cw-points">
+                <li>
+                  <Icon>
+                    <path d="M4 5h16v11H8l-4 4z" />
+                  </Icon>
+                  {t('welcome.f1')}
+                </li>
+                <li>
+                  <Icon>
+                    <circle cx="9" cy="8" r="3" />
+                    <path d="M3 19c0-3 2.7-5 6-5s6 2 6 5M16 11a3 3 0 1 0 0-6M21 19c0-2.4-1.6-4.3-4-4.8" />
+                  </Icon>
+                  {t('welcome.f2')}
+                </li>
+                <li>
+                  <Icon>
+                    <path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z" />
+                  </Icon>
+                  {t('welcome.f3')}
+                </li>
+              </ul>
+              <small className="cw-foot">{t('welcome.foot')}</small>
             </div>
           </div>
         </section>
@@ -536,14 +594,70 @@ export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl, 
         </div>
       </div>
       <div className="sheet-wrap" id="themeSheet" data-ct="oddsclub" role="dialog" aria-modal="true" aria-labelledby="themeTitle" aria-hidden="true">
-        <div className="sheet glass">
-          <h3 id="themeTitle">{r('themes.title')}</h3>
-          <p>{t('themes.intro')}</p>
-          <div className="themes" id="themeList" role="group" aria-label={t('themes.aria')}></div>
-          <div className="sheet-actions">
-            <button className="btn btn-primary" id="themeDone" type="button">
-              {t('themes.done')}
-            </button>
+        {/* two steps: 1 the theme (colours), 2 the bubble style (shape) — picking a theme moves on to step 2 */}
+        <div className="sheet glass theme-steps" id="themeSteps" data-step="1">
+          <div className="ts-pane" id="tsThemes">
+            <h3 id="themeTitle">{r('themes.title')}</h3>
+            <p>{t('themes.intro')}</p>
+            <div className="themes" id="themeList" role="group" aria-label={t('themes.aria')}></div>
+            <div className="sheet-actions">
+              <button className="btn btn-secondary" id="toWalls" type="button">
+                {t('walls.open')}
+              </button>
+              <button className="btn btn-secondary" id="toBubbles" type="button">
+                {t('bubbles.open')}
+              </button>
+              <button className="btn btn-primary" id="themeDone" type="button">
+                {t('themes.done')}
+              </button>
+            </div>
+          </div>
+          <div className="ts-pane" id="tsBubbles" hidden>
+            <div className="ts-head">
+              <button className="iconbtn" id="bubblesBack" type="button" aria-label={t('bubbles.back')} title={t('bubbles.back')}>
+                <Icon>
+                  <path d="M15 5l-7 7 7 7" />
+                </Icon>
+              </button>
+              <h3 id="bubblesTitle">{r('bubbles.title')}</h3>
+            </div>
+            <p>{t('bubbles.intro')}</p>
+            <div className="themes bubbles" id="bubbleList" role="group" aria-label={t('bubbles.aria')}></div>
+            <div className="sheet-actions">
+              <button className="btn btn-secondary" id="bubblesBack2" type="button">
+                {t('bubbles.back')}
+              </button>
+              <button className="btn btn-secondary" id="bubblesNext" type="button">
+                {t('walls.open')} →
+              </button>
+              <button className="btn btn-primary" id="bubblesDone" type="button">
+                {t('themes.done')}
+              </button>
+            </div>
+          </div>
+          <div className="ts-pane" id="tsWalls" hidden>
+            <div className="ts-head">
+              <button className="iconbtn" id="wallsBack" type="button" aria-label={t('walls.back')} title={t('walls.back')}>
+                <Icon>
+                  <path d="M15 5l-7 7 7 7" />
+                </Icon>
+              </button>
+              <h3 id="wallsTitle">{r('walls.title')}</h3>
+            </div>
+            <p>{t('walls.intro')}</p>
+            <div className="themes walls" id="wallList" role="group" aria-label={t('walls.aria')}></div>
+            {/* only for one of our wallpapers: how dark it is, for this device */}
+            <div className="wall-dim" id="wallDim" hidden>
+              <label htmlFor="wallDimRange">{t('walls.darken')}</label>
+              <input type="range" id="wallDimRange" min={0} max={80} step={5} />
+              <output id="wallDimVal" htmlFor="wallDimRange"></output>
+            </div>
+            <input type="file" id="wallFile" accept="image/*" hidden />
+            <div className="sheet-actions">
+              <button className="btn btn-primary" id="wallsDone" type="button">
+                {t('themes.done')}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -643,6 +757,9 @@ export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl, 
       <div className="sheet-wrap" id="roomSheet" data-ct="oddsclub" role="dialog" aria-modal="true" aria-labelledby="rsTitle" aria-hidden="true">
         <div className="sheet glass room-sheet" id="rsBody"></div>
       </div>
+      <div className="sheet-wrap" id="groupSheet" data-ct="oddsclub" role="dialog" aria-modal="true" aria-labelledby="gsTitle" aria-hidden="true">
+        <div className="sheet glass group-sheet" id="gsBody"></div>
+      </div>
       <div className="sheet-wrap" id="personSheet" data-ct="oddsclub" role="dialog" aria-modal="true" aria-labelledby="psName" aria-hidden="true">
         <div className="sheet glass person-sheet">
           <div className="ps-head">
@@ -658,6 +775,17 @@ export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl, 
             <input id="psNote" type="text" maxLength={140} placeholder={t('pm.notePlaceholder')} autoComplete="off" />
           </label>
           <div className="sheet-actions ps-actions" id="psActions"></div>
+        </div>
+      </div>
+      {/* in-app "are you sure?" (instead of the browser's confirm box): engine.ts → askConfirm() */}
+      <div className="sheet-wrap confirm-wrap" id="confirmSheet" data-ct="oddsclub" role="alertdialog" aria-modal="true" aria-labelledby="cfTitle" aria-describedby="cfText" aria-hidden="true">
+        <div className="sheet glass confirm-sheet">
+          <h4 id="cfTitle"></h4>
+          <p id="cfText"></p>
+          <div className="sheet-actions">
+            <button className="btn btn-secondary" id="cfCancel" type="button">{t('rooms.cancel')}</button>
+            <button className="btn btn-primary" id="cfOk" type="button"></button>
+          </div>
         </div>
       </div>
       <div className="toast" id="toast" role="status" aria-live="polite">

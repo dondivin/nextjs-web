@@ -214,6 +214,10 @@ export function ModerationView({ reports, messages, members, roles = [] }: { rep
           />
         </TabsContent>
         <TabsContent value="members" className="mt-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/40 p-3 text-sm">
+            <span>Delete accounts, reset passwords, edit usernames and see each member’s rooms and messages in <b>Members</b>.</span>
+            <Button variant="outline" size="sm" asChild><a href="/admin/members">Open Members</a></Button>
+          </div>
           <DataTable columns={memberCols} data={members} searchPlaceholder="Search by name or email" empty={<EmptyState icon={Users} title="No members yet">Visitors who sign up to chat appear here.</EmptyState>} />
         </TabsContent>
       </Tabs>

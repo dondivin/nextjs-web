@@ -15,20 +15,39 @@ export type GroupView = {
   id: string; name: string; description: string; rules: string; kind: 'group' | 'channel'; join: 'open' | 'request' | 'invite'
   gradient: string | null; members: number; requests?: number; status: GroupStatus; canRead: boolean; canPost: boolean
   isAdmin: boolean; isOwner: boolean; owned: boolean // owned = made by a member (not the team)
+  media: { view: string; save: boolean }   // who sees pictures / voice messages here, saving allowed
+  vis: 'public' | 'members' | 'hidden'; preview: boolean   // who sees it · non-members read before joining
+  photo: string | null   // the room's picture (else its colours)
 }
 
 export const groupRoom = (id: string) => 'g:' + id
 export const groupIdOf = (room: string) => (room.startsWith('g:') && isObjectId(room.slice(2)) ? room.slice(2) : null)
 const relId = (x: unknown) => (x && typeof x === 'object' && 'id' in x ? String((x as { id: unknown }).id) : x ? String(x) : '')
 
+/**
+ * Who sees a room and whether non-members can read it. Rooms made before these settings existed keep their old behaviour
+ * (from "join": invite → hidden, else everyone; reading before joining only for open rooms).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function roomVisibility(room: any): { vis: 'public' | 'members' | 'hidden'; preview: boolean } {
+  const vis = room.visibility === 'public' || room.visibility === 'members' || room.visibility === 'hidden' ? room.visibility : room.join === 'invite' ? 'hidden' : 'public'
+  const preview = typeof room.preview === 'boolean' ? room.preview : room.join === 'open'
+  return { vis, preview }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function rules(room: any, viewer: Viewer, status: GroupStatus, admin: boolean) {
   const staff = viewer.kind === 'staff'
-  const isOwner = !!viewer.uid && relId(room.owner) === viewer.uid
+  // a member who made the room, or — for a room made by the team — the team account that made it
+  const isOwner = !!viewer.uid && (room.owner ? relId(room.owner) === viewer.uid : staff && relId(room.createdBy) === viewer.uid)
   const isAdmin = staff || isOwner || (status === 'member' && admin)   // admins manage the room and post in a channel
+  const { vis, preview } = roomVisibility(room)
+  const pending = status === 'invited' || status === 'requested'
+  // sees it without being a member: everyone (public), signed-in accounts (members), or because they were invited / asked
+  const seesAsGuest = vis === 'public' || (vis === 'members' && !!viewer.uid) || pending
   return {
-    visible: staff || isOwner || room.join !== 'invite' || status === 'member' || status === 'invited',
-    canRead: staff || isOwner || room.join === 'open' || status === 'member',
+    visible: staff || isOwner || status === 'member' || seesAsGuest,
+    canRead: staff || isOwner || status === 'member' || (seesAsGuest && preview),
     canPost: staff || isOwner || (status === 'member' && (room.kind !== 'channel' || admin)),
     isAdmin, isOwner,
   }
@@ -47,14 +66,22 @@ export async function roomsFor(payload: Payload, viewer: Viewer, req?: PayloadRe
     if (m.status === 'requested') requests[r] = (requests[r] || 0) + 1
     if (viewer.uid && relId(m.member) === viewer.uid) { mine[r] = m.status as GroupStatus; adm[r] = !!m.admin }
   }
+  // room pictures: one look-up for all of them
+  const photoIds = rooms.docs.map((r) => relId(r.photo)).filter(Boolean)
+  const photos: Record<string, string> = {}
+  if (photoIds.length) for (const m of (await payload.find({ collection: 'media', where: { id: { in: photoIds } }, pagination: false, depth: 0, overrideAccess: true, select: { url: true, filename: true }, req })).docs) if (m.url) photos[String(m.id)] = m.url   // (the url is computed from the file name)
   const out: GroupView[] = []
   for (const r of rooms.docs) {
     const id = String(r.id), status = mine[id] || 'none', can = rules(r, viewer, status, !!adm[id])
     if (!can.visible) continue
     out.push({
       id, name: r.name, description: r.description || '', rules: r.rules || '', kind: (r.kind || 'group') as GroupView['kind'], join: (r.join || 'open') as GroupView['join'],
-      gradient: r.gradient || null, members: count[id] || 0, ...(can.isAdmin ? { requests: requests[id] || 0 } : {}),
+      // a room made by the team (no member owner): its creator is part of it, though not stored as a membership
+      gradient: r.gradient || null, members: (count[id] || 0) + (teamCreatorOf(r) ? 1 : 0), ...(can.isAdmin ? { requests: requests[id] || 0 } : {}),
       status, canRead: can.canRead, canPost: can.canPost, isAdmin: can.isAdmin, isOwner: can.isOwner, owned: !!r.owner,
+      media: { view: r.mediaView || 'everyone', save: r.mediaSave !== false },
+      ...roomVisibility(r),
+      photo: photos[relId(r.photo)] || null,
     })
   }
   return out
@@ -73,6 +100,20 @@ export async function roomAccess(payload: Payload, viewer: Viewer, roomId: strin
   }
   const can = rules(room, viewer, status, admin)
   return can.visible ? { room, status, ...can } : null
+}
+
+/** The team account that made a room with no member owner (it takes part like a member, without a membership row). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const teamCreatorOf = (room: any): string | null => (!room.owner && room.createdBy ? relId(room.createdBy) || null : null)
+
+/** Everyone taking part in a room: its members + the team creator of a team-made room (for read receipts). */
+export async function participantUids(payload: Payload, roomId: string, req?: PayloadRequest) {
+  const [uids, room] = await Promise.all([
+    memberUids(payload, roomId, req),
+    payload.findByID({ collection: 'chat-rooms', id: roomId, depth: 0, overrideAccess: true, disableErrors: true, select: { owner: true, createdBy: true }, req }),
+  ])
+  const creator = room ? teamCreatorOf(room) : null
+  return creator && !uids.includes(creator) ? [...uids, creator] : uids
 }
 
 /** Member ids of a room (status member). */

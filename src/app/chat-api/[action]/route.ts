@@ -16,6 +16,9 @@ const ACTIONS: Record<string, Handler> = {
   rules: chat.acceptRules,
   presence: chat.presence,
   seen: chat.seen,
+  receipt: chat.receipt,
+  stickers: chat.myStickers,
+  'sticker-remove': chat.removeSticker,
   thread: chat.thread,
   profiles: chat.profiles,
   forgot: chat.forgot,
@@ -31,7 +34,12 @@ const ACTIONS: Record<string, Handler> = {
   'room-update': chat.roomUpdate,
   'room-remove': chat.roomRemove,
   'room-members': chat.roomMembers,
+  'room-info': chat.roomInfo,
+  history: chat.history,
+  'room-color': chat.roomColor,
   'room-member': chat.roomMember,
+  'room-invite': chat.roomInvite,
+  'join-link': chat.roomJoinLink,
 }
 
 /**
@@ -41,7 +49,7 @@ const ACTIONS: Record<string, Handler> = {
 export async function POST(req: Request, { params }: { params: Promise<{ action: string }> }) {
   const { action } = await params
   // multipart uploads (profile photo, chat picture). Same-origin only (cross-site requests don't carry the Lax session cookie anyway).
-  if (action === 'avatar' || action === 'image') {
+  if (action === 'avatar' || action === 'image' || action === 'voice' || action === 'sticker' || action === 'room-photo') {
     const origin = req.headers.get('origin')
     if (origin && new URL(origin).host !== req.headers.get('host')) return json({ error: 'Forbidden' }, 403)
     const payload = await getPayload({ config })
@@ -49,6 +57,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ action:
     try {
       const form = await req.formData()
       if (action === 'image') return json({ ok: true, ...(await chat.sendImage(ctx, form)) })
+      if (action === 'voice') return json({ ok: true, ...(await chat.sendVoice(ctx, form)) })
+      if (action === 'sticker') return json({ ok: true, ...(await chat.addSticker(ctx, form)) })
+      if (action === 'room-photo') return json({ ok: true, ...(await chat.roomPhoto(ctx, form)) })
       const file = form.get('file')
       return json({ ok: true, ...(await chat.uploadAvatar(ctx, file instanceof File ? file : null)) })
     } catch (e) {

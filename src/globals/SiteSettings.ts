@@ -17,7 +17,8 @@ export const SiteSettings: GlobalConfig = {
     localizedText('companyLine', 'Company / licence line', { description: 'Footer line with company and licence details, per language.' }),
     // brand + search (managed in the back office: Site settings → Brand & search)
     { name: 'logo', type: 'upload', relationTo: 'media', admin: { description: 'Square logo (stored as 512×512 PNG). Used in the nav, chat, back office, browser tab, home-screen icon and search engines.' } },
-    { name: 'heroImage', type: 'upload', relationTo: 'media', admin: { description: 'Big cut-out picture of a person (no background) on the left of the first screen, in front of the headline.' } },
+    // no longer used: each partner has its own first-screen picture (partners.heroImage). Kept hidden so old data isn't lost.
+    { name: 'heroImage', type: 'upload', relationTo: 'media', admin: { hidden: true } },
     { name: 'shareImage', type: 'upload', relationTo: 'media', admin: { description: 'Optional 1200×630 image for link previews (WhatsApp, Facebook, X…). Without it one is made from the logo.' } },
     localizedText('seoDescription', 'Search description', { textarea: true, description: 'What search engines show under the site name, per language (about 150 characters).' }),
   ],

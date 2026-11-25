@@ -48,17 +48,31 @@ export type SiteForm = z.infer<typeof siteSchema>
 export const chatSchema = z.object({
   slowModeSeconds: z.number({ error: 'Enter a number' }).int().min(0, '0 to 120').max(120, '0 to 120'),
   maxLength: z.number({ error: 'Enter a number' }).int().min(50, '50 to 2000').max(2000, '50 to 2000'),
+  voiceMaxSeconds: z.number({ error: 'Enter a number' }).int().min(10, '10 to 600 seconds').max(600, '10 to 600 seconds'),
+  mediaRetentionDays: z.number({ error: 'Enter a number' }).int().min(0, '0 to 3650 days').max(3650, '0 to 3650 days'),
   rules: z.array(z.object({ icon: z.string(), title: localized, body: localized })),
   bannedWords: z.string().max(20000), // one per line in the form
 })
 export type ChatForm = z.infer<typeof chatSchema>
+
+/* ---------- community lounge (the chat's built-in main room) ---------- */
+export const loungeSchema = z.object({
+  chatTitle: localized,
+  name: localized,
+  subtitle: localized,
+  description: localized,
+  postBy: z.enum(['everyone', 'team']),
+  mediaView: z.enum(['everyone', 'members', 'team', 'none']),
+  mediaSave: z.boolean(),
+})
+export type LoungeForm = z.infer<typeof loungeSchema>
 
 /* ---------- team ---------- */
 export const ROLE_OPTIONS = [
   { value: 'owner', label: 'Owner', hint: 'Everything, including team accounts' },
   { value: 'editor', label: 'Editor', hint: 'Partners, matches, site settings' },
   { value: 'translator', label: 'Translator', hint: 'Languages and translations' },
-  { value: 'moderator', label: 'Moderator', hint: 'Chat moderation, matches, talks to fans as the partner team' },
+  { value: 'moderator', label: 'Moderator', hint: 'Chat moderation, matches, talks to members as the partner team' },
 ] as const
 export const roleEnum = z.enum(['owner', 'editor', 'translator', 'moderator'])
 export const newMemberSchema = z.object({
@@ -84,9 +98,13 @@ export const groupSchema = z.object({
   rules: z.string().max(1000),
   kind: z.enum(['group', 'channel']),
   join: z.enum(['open', 'request', 'invite']),
+  visibility: z.enum(['public', 'members', 'hidden']),
+  preview: z.boolean(),
   autoAdd: z.boolean(),
   active: z.boolean(),
   order: z.number({ error: 'Enter a number' }).int(),
+  mediaView: z.enum(['everyone', 'members', 'team', 'none']),
+  mediaSave: z.boolean(),
 })
 export type GroupForm = z.infer<typeof groupSchema>
 

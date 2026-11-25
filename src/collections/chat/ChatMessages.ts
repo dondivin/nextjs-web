@@ -1,3 +1,4 @@
+import { encryptedField } from '../../chat/crypto'
 import type { CollectionConfig, Where } from 'payload'
 import { hasRole } from '../../access'
 import { onMessageChange } from '../../chat/hooks'
@@ -24,19 +25,27 @@ export const ChatMessages: CollectionConfig = {
   },
   fields: [
     { name: 'room', type: 'text', required: true, index: true },
-    { name: 'author', type: 'relationship', relationTo: 'members', index: true, admin: { description: 'Fan who wrote it (empty for staff messages)' } },
+    { name: 'author', type: 'relationship', relationTo: 'members', index: true, admin: { description: 'Member who wrote it (empty for team messages)' } },
     { name: 'staffAuthor', type: 'relationship', relationTo: 'users', index: true, admin: { description: 'Back-office staff member who wrote it' } },
     { name: 'clientId', type: 'text', admin: { hidden: true } },
-    { name: 'text', type: 'textarea', maxLength: 2000, admin: { description: 'Can be empty when the message is a picture' } },
+    // encrypted at rest with this conversation's key (src/chat/crypto.ts); the real length limit is checked on the plain
+    // text before saving (chat settings), the stored one is longer
+    { name: 'text', type: 'textarea', maxLength: 12000, hooks: encryptedField((d) => d.room as string) as never, admin: { description: 'Can be empty when the message is a picture' } },
     { name: 'image', type: 'upload', relationTo: 'chat-images' },
+    { name: 'voice', type: 'upload', relationTo: 'chat-voice' },
+    { name: 'mediaExpired', type: 'select', options: ['photo', 'voice'], admin: { description: 'Its picture / voice message was removed by the media clean-up (Chat settings)' } },
     { name: 'isMod', type: 'checkbox', defaultValue: false },
     {
       name: 'reply', type: 'group',
       fields: [
-        { name: 'id', type: 'text' },
+        // the quoted message's id ('id' is reserved by Payload inside a group and was silently dropped → quotes never showed)
+        { name: 'msgId', type: 'text' },
+        { name: 'kind', type: 'select', options: ['photo', 'voice'], admin: { description: 'What was quoted, when it was a picture / voice message' } },
+        { name: 'thumb', type: 'text', admin: { description: 'Tiny preview of a quoted picture (data URL)' } },
+        { name: 'dur', type: 'number', admin: { description: 'Length of a quoted voice message (s)' } },
         { name: 'author', type: 'relationship', relationTo: 'members' },
-        { name: 'by', type: 'text', admin: { description: 'Chat id of the quoted author (fan or staff)' } },
-        { name: 'text', type: 'text' },
+        { name: 'by', type: 'text', admin: { description: 'Chat id of the quoted author (member or team)' } },
+        { name: 'text', type: 'text', hooks: encryptedField((d) => d.room as string) as never },   // the quoted text, encrypted like the message
       ],
     },
     { name: 'reactions', type: 'json', admin: { description: '{ reactionKey: { memberId: true } }' } },

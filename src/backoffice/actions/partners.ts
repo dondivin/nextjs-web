@@ -2,6 +2,7 @@
 import { revalidatePath } from 'next/cache'
 import { actionUser, payloadClient, run } from '@/backoffice/lib/server'
 import { partnerSchema, type PartnerForm } from '@/backoffice/lib/partner-schema'
+import { AvatarError, dropMedia, storeHeroImage } from '@/chat/avatar'
 
 export async function savePartner(id: string, input: PartnerForm) {
   return run(async () => {
@@ -50,7 +51,30 @@ export async function deletePartner(id: string) {
   return run(async () => {
     await actionUser('owner')
     const payload = await payloadClient()
+    const p = await payload.findByID({ collection: 'partners', id, depth: 0 })
     await payload.delete({ collection: 'partners', id })
+    if (p.heroImage) await dropMedia(payload, p.heroImage)
     revalidatePath('/admin/partners')
+  })
+}
+
+/** This partner's first-screen picture (cut-out). Saved right away; null removes it (the site-wide picture shows instead). */
+export async function setPartnerHero(id: string, fd: FormData | null) {
+  return run(async () => {
+    await actionUser('editor')
+    const payload = await payloadClient()
+    const p = await payload.findByID({ collection: 'partners', id, depth: 0 })
+    const file = fd?.get('file')
+    let mid: string | number | null = null, transparent: boolean | undefined
+    if (file instanceof File && file.size > 0) {
+      try { ({ id: mid, transparent } = await storeHeroImage(payload, file)) } catch (e) {
+        if (e instanceof AvatarError) throw new Error(e.message === 'tooBig' ? 'That picture is over 10 MB.' : 'That file can’t be used. Use a PNG or WebP with a transparent background.')
+        throw e
+      }
+    }
+    await payload.update({ collection: 'partners', id, data: { heroImage: mid } })
+    if (p.heroImage) await dropMedia(payload, p.heroImage)
+    revalidatePath('/admin/partners/' + id)
+    return { transparent }
   })
 }
