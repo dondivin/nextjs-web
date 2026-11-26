@@ -1014,20 +1014,24 @@ function buildRow(m){
   var sx = 0, sy = 0, drag = false, swiping = false, holdTimer = 0, sp = Spring(0, .42, .72, .3).on(function(v){ b.style.translate = Math.abs(v) < .3 ? '' : v.toFixed(1) + 'px 0'; var av = Math.abs(v); sw.classList.toggle('from-right', v < 0); sw.style.opacity = Math.min(1, av / 50); sw.style.transform = 'scale(' + (0.5 + Math.min(.5, av / 100)) + ')'; });
   /* swipe to reply, either way (right like WhatsApp, left like Telegram): finger, mouse drag (not from the message's buttons,
      picture or voice player) and the two-finger trackpad swipe (wheel events) */
-  var mouse = false, dir = 1;
+  var mouse = false, dir = 1, held = false;
   b.addEventListener('pointerdown', function(e){
-    mouse = e.pointerType === 'mouse';
+    mouse = e.pointerType === 'mouse'; held = false;
     if (mouse && (e.button !== 0 || (e.target.closest && e.target.closest('button, a, .v-wave, .b-pic')))) return;
     sx = e.clientX; sy = e.clientY; drag = true; swiping = false;
     if (mouse) return;   // a mouse opens the menu with right-click / "⋯", not by holding
     b.classList.add('pressing');
-    holdTimer = setTimeout(function(){ if (drag && !swiping){ drag = false; b.classList.remove('pressing'); if (navigator.vibrate) try { navigator.vibrate(8); } catch(e2){} openCtx(row); } }, 420); });
+    holdTimer = setTimeout(function(){ if (drag && !swiping){ drag = false; b.classList.remove('pressing'); if (navigator.vibrate) try { navigator.vibrate(8); } catch(e2){} held = true; openCtx(row); } }, 420); });
   b.addEventListener('pointermove', function(e){ if (!drag) return; var dx = e.clientX - sx, dy = e.clientY - sy;
     if (!swiping && (Math.abs(dx) > 8 || Math.abs(dy) > 8)){ clearTimeout(holdTimer); b.classList.remove('pressing');
       if (Math.abs(dx) > Math.abs(dy)){ swiping = true; dir = dx > 0 ? 1 : -1; if (mouse){ try { b.setPointerCapture(e.pointerId); } catch(e3){} b.classList.add('swiping'); var sel = window.getSelection && window.getSelection(); if (sel) sel.removeAllRanges(); } }
       else { drag = false; return; } }
     if (swiping){ var x = Math.max(0, dx * dir); sp.set(dir * x * 0.7 / (1 + x / 260)); } });
-  function end(){ clearTimeout(holdTimer); b.classList.remove('pressing', 'swiping'); if (!drag) return; drag = false; if (swiping && Math.abs(sp.v) > 46) startReply(row._m); swiping = false; sp.to(0); }
+  /* the finger that opened the menu by holding is lifted now: that lift is not a tap on the menu's background (on phones
+     the tap the browser makes from it landed on the backdrop and closed the menu at once) */
+  function lifted(){ if (held){ held = false; CTX.liftAt = Date.now(); } }
+  b.addEventListener('touchend', function(e){ if (held){ lifted(); if (e.cancelable) e.preventDefault(); } });
+  function end(){ lifted(); clearTimeout(holdTimer); b.classList.remove('pressing', 'swiping'); if (!drag) return; drag = false; if (swiping && Math.abs(sp.v) > 46) startReply(row._m); swiping = false; sp.to(0); }
   b.addEventListener('pointerup', end); b.addEventListener('pointercancel', end);
   // trackpad: a two-finger sideways swipe arrives as horizontal wheel events
   var acc = 0, wheelT = 0, wheelDone = false;
@@ -1269,9 +1273,10 @@ function closeCtx(instant){
   if (instant || REDUCE) finish(); else CTX.lift.to(0, finish);
 }
 // lifting the finger after a long press lands on the background: don't treat that as "close"
-$('ctxBg').addEventListener('click', function(){ if (Date.now() - (CTX.at || 0) < 450) return; closeCtx(); });
+$('ctxBg').addEventListener('click', function(){ var now = Date.now(); if (now - (CTX.at || 0) < 450 || now - (CTX.liftAt || 0) < 400) return; closeCtx(); });
 $('ctxBg').addEventListener('contextmenu', function(e){ e.preventDefault(); closeCtx(); });
-window.addEventListener('resize', function(){ if (CTX.row) closeCtx(true); });
+var ctxW = window.innerWidth;
+window.addEventListener('resize', function(){ var w = window.innerWidth, changed = w !== ctxW; ctxW = w; if (CTX.row && changed) closeCtx(true); });   // a rotation, not the keyboard / address bar
 function needsRules(){ if (!CHAT.canPost){ toast(CHAT.uid ? S('chat.cannotPost') : S('chat.signInToJoin')); return true; }
   if (UI.mod.muted[CHAT.uid]){ toast(S('chat.mutedToast')); return true; }
   if (!UI.accepted){ openRules(); return true; } return false; }

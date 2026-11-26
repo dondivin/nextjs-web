@@ -1120,3 +1120,19 @@ See `docs/HANDOFF.md` §4.
 - Found while testing: the local database's logo file (`brand-logo-1795546324466.png`) is gone from R2. The local and
   Render databases share one R2 bucket; replacing the logo on Render removed the old logo's file, which the local copy
   still points at. Re-upload the logo locally, and use a separate bucket (or prefix) for local work.
+
+## 2026-11-26 — Phone long-press menu closing at once; wallpaper behind the input
+
+- Long-press on a message (phones) opened the menu and closed it straight away. Causes: (1) when the finger was held a bit
+  longer than ~0.45 s, the tap the browser makes from the lift landed on the menu's backdrop (`ctxBg`) and closed it;
+  (2) any window resize closed it — on phones the height changes all the time (keyboard closing, address bar sliding);
+  (3) the message text was selectable, so the phone's own selection + Copy bar fought with our menu.
+- `engine.ts`: the press that opened the menu by holding is remembered (`held`); its lift sets `CTX.liftAt` and the
+  `touchend` is cancelled (no tap made from it); the backdrop ignores taps within 400 ms of that lift. The menu now closes
+  on resize only when the width changes (rotation). `site.css`: no text selection on bubbles on touch screens (`hover:none`
+  + `pointer:coarse`) — Copy is in our menu.
+- Wallpaper: the bar under the message field (`.dock`) kept the theme's solid colour; with a wallpaper chosen
+  (`data-wp` cover / tile) it is now see-through, so the wallpaper runs to the bottom like WhatsApp. Theme backgrounds
+  unchanged.
+- Checked on an emulated phone (390×780, real touch events): hold 0.5 s and 1.2 s → menu stays open, no text selected;
+  a tap on the backdrop still closes it; with a tile wallpaper the dock is transparent (screenshot).

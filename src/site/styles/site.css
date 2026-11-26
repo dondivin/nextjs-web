@@ -598,6 +598,8 @@ html.chat-open, html.chat-open body{overflow:hidden}
 .jump i{position:absolute;top:-6px;right:-4px;min-width:20px;height:20px;border-radius:999px;background:var(--c-unread);color:var(--c-unread-ink);font:700 11px/20px var(--font-chat);font-style:normal;padding:0 5px;text-align:center}
 /* composer */
 .dock{position:relative;z-index:4;flex:none;display:flex;flex-direction:column;padding:8px 12px calc(8px + env(safe-area-inset-bottom,0px));background:var(--c-dock-bg)}
+/* a chosen wallpaper runs behind the input too (like WhatsApp): the bar under the field becomes see-through */
+.wp-scope[data-wp="cover"] .dock,.wp-scope[data-wp="tile"] .dock{background:transparent}
 .reply-wrap{display:grid;grid-template-rows:0fr;transition:grid-template-rows var(--spring-d) var(--spring)}
 .reply-wrap.show{grid-template-rows:1fr}
 .reply-wrap > div{overflow:hidden;min-height:0}
@@ -1024,6 +1026,8 @@ html.chat-open, html.chat-open body{overflow:hidden}
 
 /* dragging a message to reply with a mouse: no text selection meanwhile */
 .bubble.swiping{-webkit-user-select:none;user-select:none;cursor:grabbing}
+/* phones: holding a message opens our menu (with Copy) — not the phone's own text selection + Copy bar on top of it */
+@media (hover:none) and (pointer:coarse){.bubble{-webkit-user-select:none;user-select:none}}
 
 /* ---------- Picture editor (before sending) ---------- */
 .pe{position:fixed;inset:0;z-index:90;display:none;flex-direction:column;background:#0B0F14;color:#fff;font-family:var(--font-chat);padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
