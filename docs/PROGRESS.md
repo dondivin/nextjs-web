@@ -1258,3 +1258,84 @@ See `docs/HANDOFF.md` §4.
   #0B1F05 — green buttons' labels and their spinner, the green send button's arrow and the unread badge
   (`--c-accent-ink`, `--c-send-ink`, `--c-unread-ink`). Contrast on #7CC242: 6.9:1 (readable; white would be 2.2:1).
   The main website's green buttons (`--green-ink`) are unchanged. Checked: label and spinner both rgb(13,39,71).
+
+## 2026-11-26 — Owner's Android screenshot: full screen removed, keyboard gap fixed
+
+- Full screen (previous entry) is **removed**, owner's choice: the browser's full screen also hid the phone's
+  notification bar, and a page can't hide only the address bar. The chat stays in the normal browser view; installed
+  from the browser ("Install app" / "Add to Home Screen", manifest kept) the site opens with the notification bar and no
+  address bar. (The empty strip above the chat header in the screenshot came from full screen + the notch padding; gone
+  with it.)
+- No space between the message box and the keyboard: in that mode Android shrank the whole page with the keyboard, so
+  "page height − visible height" never showed it. Now: the visible area is compared with the tallest seen at this width,
+  while a text box has the focus (re-measured on rotation / full-screen change, re-checked on focus in / out).
+  Checked (emulated, page shrinking 780 → 430 with the box focused): `kb-open` on, 14 px under the box; closed → 8 px.
+- Keyboard suggestions: tried turning autofill off on non-login text boxes — reverted at the owner's request; text boxes
+  are as they were.
+
+## 2026-11-26 — Notifications of new messages (Web Push) — built, waiting for the `web-push` package to test
+
+- Owner's choices: private chats, help chat and replies always; joined groups on with a mute per group; lounge and
+  match rooms off; lock screen shows sender + text by default (each person can hide the text); team accounts are
+  notified of members' help-chat messages.
+- Server: `push-subscriptions` collection (device endpoint + keys, account, language; server-only); `pushPreview` /
+  `pushMuted` hidden fields on `members` and `users`; `src/chat/push.ts` (`pushForMessage` after every saved message:
+  recipients by room type, skips whoever is looking at that conversation, per-device language, removes dead devices on
+  404/410); API `push-subscribe` / `push-unsubscribe` / `push-prefs`. `web-push` is loaded on first use (createRequire),
+  so a missing package only turns notifications off — it broke the chat pages for a minute while it was a top-level
+  import (fixed). Page settings `cfg.chat.pushKey` = the public key only when keys + package are there.
+- `public/sw.js` (new `public/` folder): shows the notification (one per conversation, replaced by newer ones), skips it
+  if that conversation is on screen, tap → focuses the open tab and opens the conversation (message `oc-open` →
+  engine routes it) or opens a new window.
+- Chat (`chatBackend.ts`, "Web Push" section): card in the room list ("Get notified of new messages", Turn on / Not now
+  for 14 days; on iPhone outside the Home Screen: how to add it), switch + "Show the message text" in the account panel,
+  "Mute / Unmute notifications" in group info, subscription re-attached to the signed-in account on connect, turned off
+  on sign-out. `engine.ts`: a hidden tab reports no room (so it gets notifications). Strings en + fr (`push.*`).
+- Local `.env`: a VAPID key pair was generated (private key not printed). Docs: new `docs/NOTIFICATIONS.md`,
+  `docs/DEPLOYMENT.md` env table (`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`).
+- Not tested yet: `web-push` is still not installed in this project (`pnpm add web-push` + `pnpm add -D @types/web-push`).
+  Type-check clean; chat pages and API answer normally without it.
+
+## 2026-11-26 — Search results: stretched profile pictures
+
+- Owner's screenshot: people found by the room search showed their picture as a long oval. `.ppl-row-item span{flex:1}`
+  (meant for the name) also matched the picture (`span.ppl-av`). Now only the name grows; the picture is `flex:none`.
+  Checked: a result row's picture measures 36×36. Proposals for a more polished search sent to the owner (not built yet).
+
+## 2026-11-26 — Search mode in the room list (like WhatsApp / Telegram)
+
+- `Site.tsx`: the search box is in a `.search-row` with a clear ✕ (`#searchClear`) and a Cancel button
+  (`#searchCancel`, slides in); `#srchHint`, a "Chats" heading (`#srchChats`) and an empty state (`#srchEmpty`).
+- `engine.ts` "Search mode": tapping the box adds `.searching` to the side panel — the tabs, notification card, rules
+  link, chat requests and online strip make way (on phones the panel header too); one scrolling list with the search
+  bar pinned on top: hint before typing → Chats (all rooms whose name matches, whatever tab was chosen, letters
+  highlighted with `mark.hl`) → People. Nothing found → icon + "No results for “…”" + a tip. Cancel / Escape / the
+  phone's Back leave it (one history step, depth counted); the keyboard's search key and starting to scroll put the
+  keyboard away, results stay. A room opened from the results replaces the search step in the history (Back = room
+  list in one step).
+- `chatBackend.ts`: People results use the same highlight, show two shimmer rows while looking, hide people already
+  in an accepted private chat (they're under Chats), and no longer show their own "no results" (the engine's empty
+  state covers both). `peopleSearch()` / `searchUpdated` link the two.
+- Strings en + fr (`search.*`). Checked on an emulated phone (guest): enter, hint, "ag" → Chats with "Les **Ag**ents",
+  nonsense → empty state, ✕ clears, search key closes the keyboard and keeps results, Back and Cancel leave, open from
+  results → Back once → list → close → site. People results need a signed-in account: not checked here.
+
+## 2026-11-26 — Notifications tested end to end (web-push installed)
+
+- `web-push` 4 + `@types/web-push` installed by the owner; type-check clean; the page now offers notifications
+  (`cfg.chat.pushKey` set).
+- Real test (local, Chrome with a normal profile — Chrome has no push in incognito windows, so Playwright's extra
+  contexts can't subscribe): test account Amara A. signed in, account panel → switch on → subscribed with Google's push
+  service (fcm.googleapis.com), panel "on" + "Show the message text". Bastien H. (2nd test account) wrote in the group
+  "Les Agents" while Amara was on the room list:
+  - notification shown by the service worker: "Les Agents" / "Bastien H.: Push test: who is watching the match
+    tonight?", tag `g:<id>`, opens `/en/chat/g-<id>`;
+  - "Show the message text" off → same notification, body "New message";
+  - group muted → no notification.
+  Cleaned up: the 3 test messages deleted, both accounts left the group, Amara's subscription removed and signed out.
+- Fixed while testing: a failed subscription showed Chrome's raw English error; now our message (`push.err.failed`,
+  mentions private windows).
+- The two load-test accounts `seed-fan-01` / `seed-fan-02@oddsclub.test` (local test data) now have a known test
+  password (they had random ones).
+- Not tested here: tapping the notification (needs a person), private-chat / help-chat / reply notifications (same
+  sending path, recipients chosen in `src/chat/push.ts`), iPhone.

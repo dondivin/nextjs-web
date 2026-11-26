@@ -40,6 +40,9 @@ const ACTIONS: Record<string, Handler> = {
   'room-member': chat.roomMember,
   'room-invite': chat.roomInvite,
   'join-link': chat.roomJoinLink,
+  'push-subscribe': chat.pushSubscribe,
+  'push-unsubscribe': chat.pushUnsubscribe,
+  'push-prefs': chat.pushPrefs,
 }
 
 /**

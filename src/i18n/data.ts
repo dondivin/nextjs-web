@@ -3,6 +3,7 @@ import config from '@payload-config'
 import { en } from './strings'
 import { pickLocalized } from '../fields/localizedText'
 import { toEngineMatch } from '../chat/data'
+import { pushPublicKey } from '../chat/push'
 import type { EngineConfig, EngineMatch, EnginePartner } from '../site/engine/types'
 import { heroMotionOf, heroMotionPlay } from '@/lib/hero-motion'
 
@@ -103,6 +104,8 @@ export async function loadSite(locale: string) {
       rules: (chat.rules || []).map((r) => ({ icon: r.icon, title: pickLocalized(r.title, locale, def), body: pickLocalized(r.body, locale, def) })),
       loungeTeamOnly: chat.lounge?.postBy === 'team',
       loungeMedia: { view: chat.lounge?.mediaView || 'everyone', save: chat.lounge?.mediaSave !== false },
+      // notifications of new messages (src/chat/push.ts): the public VAPID key
+      pushKey: pushPublicKey(),   // (null when the keys or the web-push package are missing: the chat doesn't offer it)
     },
     apiBase: '/chat-api',
     // our own stickers for the photo editor (back office → Stickers)

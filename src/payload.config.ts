@@ -28,6 +28,7 @@ import { ChatVoice } from './collections/chat/ChatVoice'
 import { Stickers } from './collections/Stickers'
 import { Wallpapers } from './collections/Wallpapers'
 import { ChatKeys } from './collections/chat/ChatKeys'
+import { PushSubscriptions } from './collections/chat/PushSubscriptions'
 import { MemberStickers } from './collections/chat/MemberStickers'
 import { seed } from './seed/seed'
 
@@ -76,7 +77,7 @@ export default buildConfig({
       baseDir: path.resolve(dirname),
     },
   },
-  collections: [Users, Media, Partners, Matches, Languages, Translations, Members, ChatMessages, ChatReports, PasswordResets, ChatImages, ChatRequests, ChatRooms, ChatRoomMembers, MemberRoles, ChatReceipts, ChatVoice, Stickers, MemberStickers, Wallpapers, ChatKeys],
+  collections: [Users, Media, Partners, Matches, Languages, Translations, Members, ChatMessages, ChatReports, PasswordResets, ChatImages, ChatRequests, ChatRooms, ChatRoomMembers, MemberRoles, ChatReceipts, ChatVoice, Stickers, MemberStickers, Wallpapers, ChatKeys, PushSubscriptions],
   globals: [SiteSettings, ChatSettings],
   editor: lexicalEditor(),
   secret: process.env.PAYLOAD_SECRET || '',

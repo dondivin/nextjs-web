@@ -45,6 +45,8 @@ Set these in the platform's settings (or a `.env` file on a VPS). Never commit t
 | `CHAT_MASTER_KEY` | yes | Encrypts chat texts (`docs/ENCRYPTION.md`). **Same key as the database's data** if you restore a snapshot; else a new one: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`. **Back it up** |
 | `R2_ACCOUNT_ID` `R2_BUCKET` `R2_ACCESS_KEY_ID` `R2_SECRET_ACCESS_KEY` | yes | Same as today |
 | `R2_PUBLIC_URL` | recommended | The bucket's custom domain (e.g. `https://media.oddsclub.example`) — images then come from Cloudflare's CDN |
+| `VAPID_PUBLIC_KEY` `VAPID_PRIVATE_KEY` | recommended | Notifications of new chat messages (`docs/NOTIFICATIONS.md`). Copy the **same pair** as in your local `.env` (or make a new one: `pnpm exec web-push generate-vapid-keys`). Without them, notifications are simply off. Changing the pair later means everyone has to turn notifications on again |
+| `VAPID_SUBJECT` | no | Contact for the push services: `mailto:you@yourdomain` or the site's `https://` address (default: `NEXT_PUBLIC_SERVER_URL`) |
 | `OC_AUTO_SEED` | no | Leave unset: on start the server adds any texts that new code needs. `false` turns that off |
 | `NODE_ENV` | — | `production` (platforms and `pnpm start` set it) |
 

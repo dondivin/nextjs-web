@@ -89,6 +89,7 @@ export interface Config {
     'member-stickers': MemberSticker;
     wallpapers: Wallpaper;
     'chat-keys': ChatKey;
+    'push-subscriptions': PushSubscription;
     'payload-kv': PayloadKv;
     'payload-locked-documents': PayloadLockedDocument;
     'payload-preferences': PayloadPreference;
@@ -117,6 +118,7 @@ export interface Config {
     'member-stickers': MemberStickersSelect<false> | MemberStickersSelect<true>;
     wallpapers: WallpapersSelect<false> | WallpapersSelect<true>;
     'chat-keys': ChatKeysSelect<false> | ChatKeysSelect<true>;
+    'push-subscriptions': PushSubscriptionsSelect<false> | PushSubscriptionsSelect<true>;
     'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
     'payload-preferences': PayloadPreferencesSelect<false> | PayloadPreferencesSelect<true>;
@@ -191,6 +193,16 @@ export interface User {
    */
   name?: string | null;
   chatLastSeenAt?: string | null;
+  pushPreview?: boolean | null;
+  pushMuted?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
   /**
    * Your photo in the site chat (optional)
    */
@@ -497,6 +509,16 @@ export interface Member {
   moderationNote?: string | null;
   rulesAcceptedAt?: string | null;
   lastSeenAt?: string | null;
+  pushPreview?: boolean | null;
+  pushMuted?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
   updatedAt: string;
   createdAt: string;
   email: string;
@@ -917,6 +939,21 @@ export interface ChatKey {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "push-subscriptions".
+ */
+export interface PushSubscription {
+  id: string;
+  kind: 'member' | 'staff';
+  uid: string;
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  locale?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "payload-kv".
  */
 export interface PayloadKv {
@@ -1022,6 +1059,10 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'chat-keys';
         value: string | ChatKey;
+      } | null)
+    | ({
+        relationTo: 'push-subscriptions';
+        value: string | PushSubscription;
       } | null);
   globalSlug?: string | null;
   user:
@@ -1082,6 +1123,8 @@ export interface PayloadMigration {
 export interface UsersSelect<T extends boolean = true> {
   name?: T;
   chatLastSeenAt?: T;
+  pushPreview?: T;
+  pushMuted?: T;
   chatAvatar?: T;
   chatGradient?: T;
   roles?: T;
@@ -1248,6 +1291,8 @@ export interface MembersSelect<T extends boolean = true> {
   moderationNote?: T;
   rulesAcceptedAt?: T;
   lastSeenAt?: T;
+  pushPreview?: T;
+  pushMuted?: T;
   updatedAt?: T;
   createdAt?: T;
   email?: T;
@@ -1513,6 +1558,20 @@ export interface ChatKeysSelect<T extends boolean = true> {
   room?: T;
   wrapped?: T;
   kv?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "push-subscriptions_select".
+ */
+export interface PushSubscriptionsSelect<T extends boolean = true> {
+  kind?: T;
+  uid?: T;
+  endpoint?: T;
+  p256dh?: T;
+  auth?: T;
+  locale?: T;
   updatedAt?: T;
   createdAt?: T;
 }

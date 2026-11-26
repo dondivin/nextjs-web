@@ -40,7 +40,7 @@ export function createChatBackend(cfg: EngineConfig, h) {
   const QUIET = new Set(['presence', 'receipt', 'profiles', 'history', 'people', 'groups', 'thread', 'room-info', 'room-members', 'stickers', 'reset-status', 'send', 'react', 'rules'])
   function busyButton(action) {
     const b = pressed
-    if (QUIET.has(action) || !b || !b.isConnected || Date.now() - pressedAt > 2000 || b.classList.contains('is-busy')) return () => {}
+    if (QUIET.has(action) || !b || !b.isConnected || Date.now() - pressedAt > 2000 || b.classList.contains('is-busy') || b.getAttribute('role') === 'switch') return () => {}   // (a switch shows its own state)
     pressed = null
     const wasDisabled = b.disabled
     b.disabled = true; b.setAttribute('aria-busy', 'true')
@@ -124,6 +124,7 @@ export function createChatBackend(cfg: EngineConfig, h) {
         const watched = Object.keys(st.watching); st.dms = {}; st.watching = {}
         st.threads = d.threads || {}
         h.ready(info)
+        pushSync().catch(() => {})
         h.mod(d.muted || {}); h.myReports(d.myReports || []); h.reports(d.reports || {})
         h.agent(d.agent)
         if (me.staff) h.threads(Object.assign({}, st.threads))
@@ -304,6 +305,109 @@ export function createChatBackend(cfg: EngineConfig, h) {
   let mode = 'signin', notice = null, lastFocus = null, pollTimer = 0
   function accountButton() { const b = $('chatAccount'); if (b) b.hidden = !me.uid; const n = $('newRoom'); if (n) n.hidden = !canCreate() }
   const show = (id, on) => { const e = $(id); if (e) e.hidden = !on }
+
+  /* ---------- notifications of new messages (Web Push; server: src/chat/push.ts, worker: public/sw.js) ----------
+     Offered to signed-in people: a card in the room list (once; "Not now" hides it for two weeks) and a switch in the
+     account panel (+ "Show message text"). A group can be muted from its info panel. Signing out stops them on this
+     device. iPhone: only when the site was added to the Home Screen — the card says how. */
+  const PUSH_KEY = (cfg.chat && cfg.chat.pushKey) || null
+  const push = { reg: null, sub: null, prefs: null, busy: false }
+  const IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+  const INSTALLED = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true
+  const tag = (t, c, x) => { const e = document.createElement(t); if (c) e.className = c; if (x != null) e.textContent = x; return e }
+  function pushSupport() {
+    if (!PUSH_KEY) return 'off'                                   // not set up on this server
+    const ok = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && window.isSecureContext
+    if (ok) return 'ok'
+    return IOS && !INSTALLED ? 'ios-install' : 'no'
+  }
+  async function pushReg() {
+    if (!push.reg) push.reg = await navigator.serviceWorker.register('/sw.js')
+    return push.reg
+  }
+  async function pushCurrent() {
+    if (pushSupport() !== 'ok') return null
+    try { push.sub = await (await pushReg()).pushManager.getSubscription() } catch (e) { push.sub = null }
+    return push.sub
+  }
+  function keyBytes(b64) {
+    const s = atob((b64 + '='.repeat((4 - (b64.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/'))
+    return Uint8Array.from(s, (c) => c.charCodeAt(0))
+  }
+  /** Turn on, from a tap (the browser only asks for permission after one). */
+  async function pushOn() {
+    if (Notification.permission === 'denied') throw new Error(S('push.blocked'))
+    const perm = await Notification.requestPermission()
+    if (perm !== 'granted') throw new Error(S(perm === 'denied' ? 'push.blocked' : 'push.notAllowed'))
+    const reg = await pushReg(); await navigator.serviceWorker.ready
+    let sub = await reg.pushManager.getSubscription()
+    // (the browser's own errors are technical English — e.g. private windows can't receive notifications)
+    if (!sub) { try { sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(PUSH_KEY) }) } catch (e) { console.warn('[push]', e); throw new Error(S('push.err.failed')) } }
+    await post('push-subscribe', { sub: sub.toJSON(), locale: cfg.locale })
+    push.sub = sub
+  }
+  async function pushOff() {
+    const sub = await pushCurrent()
+    if (sub) { try { await postRaw('push-unsubscribe', { endpoint: sub.endpoint }) } catch (e) {} try { await sub.unsubscribe() } catch (e) {} }
+    push.sub = null
+  }
+  async function pushPrefs(change) {
+    push.prefs = await (change ? post('push-prefs', change) : postRaw('push-prefs', {}))
+    return push.prefs
+  }
+  /** after connecting: this device's subscription belongs to whoever is signed in now (and stays fresh) */
+  async function pushSync() {
+    if (!me.uid || pushSupport() !== 'ok' || Notification.permission !== 'granted') return pushCard()
+    const sub = await pushCurrent()
+    if (sub) { try { await postRaw('push-subscribe', { sub: sub.toJSON(), locale: cfg.locale }) } catch (e) {} }
+    pushCard()
+  }
+  const LATER = 'oc_push_later'
+  function later() { try { return Date.now() - Number(localStorage.getItem(LATER) || 0) < 14 * 864e5 } catch (e) { return false } }
+  /** the card in the room list: "Get notified of new messages" */
+  function pushCard() {
+    const box = $('pushCard'); if (!box) return
+    const st = pushSupport()
+    const show = !!me.uid && !later() && ((st === 'ok' && Notification.permission === 'default' && !push.sub) || st === 'ios-install')
+    box.hidden = !show; box.textContent = ''
+    if (!show) return
+    const ic = tag('span', 'push-ic'); ic.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>'
+    const txt = tag('div', 'push-txt'); txt.appendChild(tag('b', null, S('push.cardTitle'))); txt.appendChild(tag('span', null, st === 'ios-install' ? S('push.iosHint') : S('push.cardBody')))
+    const acts = tag('div', 'push-acts')
+    const no = tag('button', 'btn-text', S('push.later')); no.type = 'button'
+    no.onclick = () => { try { localStorage.setItem(LATER, String(Date.now())) } catch (e) {} box.hidden = true }
+    acts.appendChild(no)
+    if (st === 'ok') {
+      const yes = tag('button', 'btn btn-primary btn-sm', S('push.turnOn')); yes.type = 'button'
+      yes.onclick = () => pushOn().then(() => { box.hidden = true; h.toast(S('push.enabled'), true); renderPushBox() }, (e) => h.toast(e.message))
+      acts.appendChild(yes)
+    }
+    box.appendChild(ic); box.appendChild(txt); box.appendChild(acts)
+  }
+  /** the account panel: notifications on / off + "Show message text" */
+  function renderPushBox() {
+    const box = $('authPush'); if (!box) return
+    const st = pushSupport()
+    box.hidden = !me.uid || st === 'off'; box.textContent = ''
+    if (box.hidden) return
+    const head = tag('div', 'push-row')
+    const label = tag('div', 'push-txt'); label.appendChild(tag('b', null, S('push.title')))
+    head.appendChild(label); box.appendChild(head)
+    if (st === 'ios-install') { label.appendChild(tag('span', null, S('push.iosHint'))); return }
+    if (st === 'no') { label.appendChild(tag('span', null, S('push.unsupported'))); return }
+    if (Notification.permission === 'denied') { label.appendChild(tag('span', null, S('push.blocked'))); return }
+    const on = !!push.sub
+    label.appendChild(tag('span', null, S(on ? 'push.onHint' : 'push.offHint')))
+    const sw = tag('button', 'switch' + (on ? ' on' : '')); sw.type = 'button'; sw.setAttribute('role', 'switch'); sw.setAttribute('aria-checked', on ? 'true' : 'false'); sw.setAttribute('aria-label', S('push.title'))
+    sw.onclick = () => { if (push.busy) return; push.busy = true; (on ? pushOff() : pushOn().then(() => h.toast(S('push.enabled'), true))).catch((e) => h.toast(e.message)).finally(() => { push.busy = false; renderPushBox(); pushCard() }) }
+    head.appendChild(sw)
+    if (on) {
+      const row = tag('label', 'push-check'), cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !push.prefs || push.prefs.preview !== false
+      cb.onchange = () => pushPrefs({ preview: cb.checked }).catch((e) => { h.toast(e.message); cb.checked = !cb.checked })
+      row.appendChild(cb); row.appendChild(tag('span', null, S('push.preview'))); box.appendChild(row)
+      if (!push.prefs) pushPrefs().then(() => { cb.checked = push.prefs.preview !== false }, () => {})
+    }
+  }
   function renderAuth() {
     const r = getReset(), email = (r && r.email) || ''
     const form = ['signin', 'signup', 'forgot', 'newpass', 'profile'].indexOf(mode) >= 0
@@ -323,6 +427,7 @@ export function createChatBackend(cfg: EngineConfig, h) {
     // opened by itself when the chat opens: the way out is "Continue as guest"
     $('authCancel').textContent = guest ? S('auth.asGuest') : S('auth.notNow')
     show('authForm', form); show('authAccount', mode === 'account'); show('authNotice', mode === 'notice')
+    if (mode === 'account') { renderPushBox(); pushCurrent().then(renderPushBox) }
     const named = mode === 'signup' || mode === 'profile'
     show('authNameRow', named); $('authName').required = named; show('authAvatarRow', named)
     show('authEmailRow', mode === 'signin' || mode === 'signup' || mode === 'forgot')
@@ -494,6 +599,7 @@ export function createChatBackend(cfg: EngineConfig, h) {
       } finally { btn.disabled = false }
     })
     $('authSignOut').onclick = async () => {
+      await pushOff().catch(() => {})   // this device stops getting this account's notifications
       try { await post('logout') } catch (e) {}
       closeAuth(); h.toast(S('auth.signedOut'), true); reconnect()
     }
@@ -522,7 +628,7 @@ export function createChatBackend(cfg: EngineConfig, h) {
   /* ---------- people: who's online, chat requests, search, person card ----------
      Members need the other member's consent before a private chat opens (request → accept). Staff message any member directly. */
   const P = (id) => document.getElementById(id)
-  let cardUid = null, searchTimer = 0, searchSeq = 0, results = null
+  let cardUid = null, searchTimer = 0, searchSeq = 0, results = null, peoplePending = false
   const ini = (n) => String(n || '').trim().split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('') || '?'
   const nameOfUid = (uid) => (known[uid] && known[uid].name) || h.nameOf(uid)
   function avatar(uid, size) {
@@ -593,28 +699,40 @@ export function createChatBackend(cfg: EngineConfig, h) {
       b.onclick = () => openCard(uid); row.appendChild(b)
     })
     if (guests) { const g = document.createElement('span'); g.className = 'ppl-guests'; g.textContent = S('people.guests', { n: guests }); row.appendChild(g) }
-    // search results
-    const sr = P('pplSearch'), ul = P('pplResults'); sr.hidden = !searching; ul.textContent = ''
+    // search results (People section of the search mode): placeholders while looking, nothing when none (the engine then
+    // shows "No results" if no chat matched either); people already in a private chat with me show under Chats instead
+    const sr = P('pplSearch'), ul = P('pplResults'); ul.textContent = ''
+    const shown = searching ? results.filter((p) => !(st.pms[p.uid] && st.pms[p.uid].status === 'accepted')) : []
+    sr.hidden = !(peoplePending || shown.length)
+    if (peoplePending && !shown.length) for (let i = 0; i < 2; i++) { const li = document.createElement('li'); li.className = 'ppl-skel'; li.setAttribute('aria-hidden', 'true'); li.appendChild(document.createElement('i')); li.appendChild(document.createElement('b')); ul.appendChild(li) }
     if (searching) {
-      if (!results.length) { const li = document.createElement('li'); li.className = 'ppl-empty'; li.textContent = S('people.noResults'); ul.appendChild(li) }
-      results.forEach((p) => {
+      const q = (P('roomSearch') && P('roomSearch').value.trim()) || ''
+      shown.forEach((p) => {
         const li = document.createElement('li'); const b = document.createElement('button'); b.type = 'button'; b.className = 'ppl-row-item'
-        b.appendChild(avatar(p.uid, 36)); const nm = document.createElement('span'); nm.textContent = p.name || nameOfUid(p.uid); b.appendChild(nm)
+        b.appendChild(avatar(p.uid, 36)); const nm = document.createElement('span'); markName(nm, p.name || nameOfUid(p.uid), q); b.appendChild(nm)
         const rel = st.pms[p.uid]; if (rel) { const tag = document.createElement('em'); tag.textContent = S('pm.status.' + rel.status); b.appendChild(tag) }
         if (onlineUids().includes(p.uid)) { const d = document.createElement('i'); d.className = 'on'; b.appendChild(d) }
         b.onclick = () => openCard(p.uid); li.appendChild(b); ul.appendChild(li)
       })
     }
-    box.hidden = !incoming.length && P('pplOnline').hidden && !searching
+    box.hidden = !incoming.length && P('pplOnline').hidden && sr.hidden
+    if (h.searchUpdated) h.searchUpdated()
+  }
+  /** the name with the searched letters highlighted */
+  function markName(node, text, q) {
+    const i = q ? text.toLowerCase().indexOf(q.toLowerCase()) : -1
+    if (i < 0) { node.textContent = text; return }
+    node.appendChild(document.createTextNode(text.slice(0, i))); const m = document.createElement('mark'); m.className = 'hl'; m.textContent = text.slice(i, i + q.length); node.appendChild(m); node.appendChild(document.createTextNode(text.slice(i + q.length)))
   }
   // the room search box also finds people (signed-in viewers, 2+ letters)
   const search = P('roomSearch')
   if (search) search.addEventListener('input', () => {
     clearTimeout(searchTimer)
     const q = search.value.trim()
-    if (q.length < 2 || !me.uid) { results = null; renderPeople(); return }
+    if (q.length < 2 || !me.uid) { ++searchSeq; results = null; peoplePending = false; renderPeople(); return }
     const seq = ++searchSeq
-    searchTimer = setTimeout(() => post('people', { q }).then((d) => { if (seq !== searchSeq) return; h.profiles(learn(d.profiles || {})); results = d.people || []; renderPeople() }, () => {}), 280)
+    peoplePending = true; renderPeople()
+    searchTimer = setTimeout(() => post('people', { q }).then((d) => { if (seq !== searchSeq) return; peoplePending = false; h.profiles(learn(d.profiles || {})); results = d.people || []; renderPeople() }, () => { if (seq !== searchSeq) return; peoplePending = false; results = []; renderPeople() }), 280)
   })
 
   /* person card (sheet) */
@@ -1067,6 +1185,12 @@ export function createChatBackend(cfg: EngineConfig, h) {
       else if (g.join === 'request') add(S('groups.requestJoin'), 'primary', run(join, S('groups.requested')))
     }
     if (g.isAdmin) add(S('gi.manage'), '', () => { const id = g.id; closeGroupInfo(); openRoomSheet(id) })
+    // notifications: mute / unmute this group (only once they are on for this device)
+    if (g.status === 'member' && push.sub) {
+      const room = 'g:' + g.id, muted = !!(push.prefs && push.prefs.muted.includes(room))
+      add(S(muted ? 'push.unmuteGroup' : 'push.muteGroup'), '', () => pushPrefs({ mute: { room, on: !muted } }).then(() => { h.toast(S(muted ? 'push.unmuted' : 'push.muted', { name: g.name }), true); renderGroupInfo() }, (e) => h.toast(e.message)))
+      if (!push.prefs) pushPrefs().then(() => { if (gi.open) renderGroupInfo() }, () => {})
+    }
     if (g.status === 'member' && !g.isOwner && !me.staff) add(S('groups.leave'), 'text danger', () => {
       h.confirm(S('groups.leaveConfirm', { name: g.name }), S('groups.leave'), true).then((y) => { if (y) run(leave, S('groups.left', { name: g.name }), () => { closeGroupInfo(); if (gi.on.left) gi.on.left() })() })
     })
@@ -1218,6 +1342,8 @@ export function createChatBackend(cfg: EngineConfig, h) {
     },
     /* personal stickers: only their owner sees them */
     myStickers: () => post('stickers', {}).then((d) => d.stickers || []),
+    /** search mode: are people results on their way, and how many are shown */
+    peopleSearch: () => ({ pending: peoplePending, count: results ? results.filter((p) => !(st.pms[p.uid] && st.pms[p.uid].status === 'accepted')).length : 0 }),
     async addSticker(file) {
       const fd = new FormData(); fd.append('file', await shrinkPic(file, 1024))
       let r, d = {}

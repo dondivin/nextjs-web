@@ -55,5 +55,8 @@ export const Members: CollectionConfig = {
     { name: 'moderationNote', type: 'textarea', access: { read: modOnly, create: modOnly, update: modOnly } },
     { name: 'rulesAcceptedAt', type: 'date' },
     { name: 'lastSeenAt', type: 'date', index: true },
+    // notifications of new messages (set from the chat): show the message text on the lock screen · muted groups
+    { name: 'pushPreview', type: 'checkbox', defaultValue: true, admin: { hidden: true } },
+    { name: 'pushMuted', type: 'json', admin: { hidden: true } },
   ],
 }

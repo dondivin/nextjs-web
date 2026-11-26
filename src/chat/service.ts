@@ -9,6 +9,7 @@ import { joinedGroups, lockWire, mediaPolicy, roomMedia } from './media-policy'
 import { groupIdOf, groupRoom, memberUids, participantUids, roomAccess, roomsFor, setMembership, setRoomAdmin, teamCreatorOf } from './groups'
 import { AvatarError, dropMedia, prepareChatImage, prepareSticker, storeAvatar } from './avatar'
 import { shredRoom } from './crypto'
+import { pushForMessage, pushPublicKey } from './push'
 import { broadcast, hub, peersList, setPresence, type Viewer } from './hub'
 import {
   agentInfo, cached, chatConfig, imagesFor, isObjectId, mutedMap, permsOf, STAFF_PERMS, type Perms, myReports, profilesFor, reportCounts, threadsFor, toWire, type ChatConfig,
@@ -279,6 +280,12 @@ async function createMessage(ctx: Ctx, b: Body, p: Awaited<ReturnType<typeof pre
     },
   })
   if (ctx.viewer.kind === 'staff') touchStaff(ctx).catch(() => {})
+  // notifications for whoever should hear about it and isn't looking (runs in the background)
+  pushForMessage(ctx.payload, {
+    id: String(doc.id), room: p.room, text, kind: image ? 'photo' : voice ? 'voice' : 'text', replyTo: p.reply?.by || null,
+    authorKind: ctx.viewer.kind === 'staff' ? 'staff' : 'member', authorUid: p.uid,
+    authorName: (ctx.member?.displayName || ctx.staff?.name || ctx.t('push.team')).slice(0, 40),
+  })
   return { id: String(doc.id) }
 }
 
@@ -1038,4 +1045,45 @@ export async function roomJoinLink(ctx: Ctx, b: Body) {
     await setMembership(ctx.payload, String(room.id), ctx.viewer.uid as string, 'member')
   }
   return { id: String(room.id), name: room.name }
+}
+
+/* ---------- notifications (Web Push, see src/chat/push.ts) ---------- */
+function pushOwner(ctx: Ctx) {
+  if (!ctx.viewer.uid || ctx.viewer.kind === 'anon') throw new ChatError(ctx.t('chat.signInToJoin'), 401)
+  return { kind: ctx.viewer.kind as 'member' | 'staff', uid: ctx.viewer.uid }
+}
+/** This device wants notifications: keep its subscription (one row per device; a device that changed account moves over). */
+export async function pushSubscribe(ctx: Ctx, b: Body) {
+  const o = pushOwner(ctx)
+  if (!pushPublicKey()) throw new ChatError(ctx.t('push.err.off'), 503)
+  const sub = (b.sub || {}) as { endpoint?: unknown; keys?: { p256dh?: unknown; auth?: unknown } }
+  const endpoint = str(sub.endpoint, 1000), p256dh = str(sub.keys?.p256dh, 200), auth = str(sub.keys?.auth, 100)
+  if (!/^https:\/\//.test(endpoint) || !p256dh || !auth) throw new ChatError(ctx.t('push.err.failed'))
+  const locale = str(b.locale, 10) || 'en'
+  const found = await ctx.payload.find({ collection: 'push-subscriptions', where: { endpoint: { equals: endpoint } }, limit: 1, depth: 0, overrideAccess: true })
+  const data = { kind: o.kind, uid: o.uid, endpoint, p256dh, auth, locale }
+  if (found.docs[0]) await ctx.payload.update({ collection: 'push-subscriptions', id: found.docs[0].id, data, overrideAccess: true })
+  else await ctx.payload.create({ collection: 'push-subscriptions', data, overrideAccess: true })
+  return {}
+}
+/** This device stops (turned off, or signing out): forget it. */
+export async function pushUnsubscribe(ctx: Ctx, b: Body) {
+  const endpoint = str(b.endpoint, 1000)
+  if (endpoint) await ctx.payload.delete({ collection: 'push-subscriptions', where: { endpoint: { equals: endpoint } }, overrideAccess: true })
+  return {}
+}
+/** Read / change my notification settings: message text on the lock screen, muted groups. */
+export async function pushPrefs(ctx: Ctx, b: Body) {
+  const o = pushOwner(ctx), collection = o.kind === 'member' ? 'members' : 'users'
+  const me = (await ctx.payload.findByID({ collection, id: o.uid, depth: 0, overrideAccess: true, select: { pushPreview: true, pushMuted: true } })) as { pushPreview?: boolean | null; pushMuted?: unknown }
+  let preview = me.pushPreview !== false, muted = Array.isArray(me.pushMuted) ? (me.pushMuted as string[]).filter((r) => typeof r === 'string') : []
+  let changed = false
+  if (typeof b.preview === 'boolean') { preview = b.preview; changed = true }
+  const mute = b.mute as { room?: unknown; on?: unknown } | undefined
+  if (mute && typeof mute.room === 'string' && groupIdOf(mute.room)) {
+    muted = muted.filter((r) => r !== mute.room); if (mute.on) muted.push(mute.room)
+    muted = muted.slice(-200); changed = true
+  }
+  if (changed) await ctx.payload.update({ collection, id: o.uid, data: { pushPreview: preview, pushMuted: muted }, overrideAccess: true })
+  return { preview, muted }
 }

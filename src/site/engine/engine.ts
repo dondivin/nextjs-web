@@ -527,7 +527,13 @@ function lastSeenOf(uid){ if (uid && uid === DM.agent.uid) return DM.agent.lastS
 function seenText(ts){ if (!ts) return ''; var l = dayLabel(ts); return S('chat.lastSeen', {day: isTodayLabel(l) ? S('time.todayLower') : (l === S('time.yesterday') ? S('time.yesterdayLower') : l), time: hhmm(ts)}); }
 function roomHash(id){ return 'chat-' + String(id).replace(/^(sup|pm|g):/, '$1-'); }
 function roomFromHash(h){ var id = h.slice(5), m = /^(sup|pm|g)-([a-f0-9]{24})$/i.exec(id); return m ? m[1] + ':' + m[2] : id; }
-function openRoom(id){ goChat(id); }
+function openRoom(id){
+  // a room opened from the search results: the search is done, and the room takes the search's place in the history
+  // (so Back returns to the room list in one step)
+  if (SR.on){ var fromSearch = SR.pushed; if (fromSearch) try { var st = Object.assign({}, history.state); delete st.srch; history.replaceState(st, '', location.href); } catch(e){}
+    srchExit(false, true); if (fromSearch && isOpen()){ goChat(id, {replace: true}); return; } }
+  goChat(id);
+}
 function rooms(){ var list = [];
   if (CHAT.db && CHAT.uid){
     if (CHAT.canEdit) threadOrder().forEach(function(uid){ list.push({id:'sup:' + uid, dm:true, uid:uid, title:nameOf(uid)}); });
@@ -617,13 +623,74 @@ function roomAvatar(r, showOnline){
 /* ---------- Filter control ---------- */
 function placeSegPill(){ var b = document.querySelector('#seg button[aria-pressed="true"]'); if (b && b.offsetWidth) segPill.move(b.offsetLeft, b.offsetLeft + b.offsetWidth, true); }
 document.querySelectorAll('#seg button').forEach(function(c){ c.onclick = function(){ UI.filter = c.dataset.f; document.querySelectorAll('#seg button').forEach(function(x){ x.setAttribute('aria-pressed', x === c ? 'true' : 'false'); }); placeSegPill(); renderRooms(); }; });
-$('roomSearch').addEventListener('input', renderRooms);
+/* ---------- Search mode (like WhatsApp / Telegram) ----------
+   Tapping the search box: the tabs, the notification card and the rules link make way (on phones the list's header
+   too), and the results come in sections — Chats (rooms whose name matches, the letters highlighted), then People
+   (chatBackend.ts). A clear ✕ in the box, Cancel / Escape / the phone's Back leave it. The keyboard's search key, or
+   starting to scroll the results, puts the keyboard away and keeps the results. Nothing found: a clear empty state. */
+var SR = {on: false, pushed: false};
+function srchQ(){ return $('roomSearch').value.trim(); }
+function srchSide(){ return document.querySelector('#messenger .m-side'); }
+function srchEnter(){
+  if (SR.on) return; SR.on = true; srchSide().classList.add('searching');
+  // the phone's Back leaves the search (one step in the history, counted like a chat page)
+  try { var st = history.state || {}; history.pushState(Object.assign({}, st, {srch: 1, depth: (st.depth || 0) + 1}), '', location.href); SR.pushed = true; } catch(e){}
+  renderRooms();
+}
+function srchExit(fromBack, keepHistory){
+  if (!SR.on) return; SR.on = false;
+  var inp = $('roomSearch'); inp.value = ''; inp.blur(); srchSide().classList.remove('searching');
+  inp.dispatchEvent(new Event('input'));   // the room list and the people results go back to normal
+  if (SR.pushed && !fromBack && !keepHistory){ SR.pushed = false; history.back(); }
+  SR.pushed = false;
+}
+window.addEventListener('popstate', function(){ if (SR.on && !(history.state && history.state.srch)) srchExit(true); });
+$('roomSearch').addEventListener('focus', srchEnter);
+$('roomSearch').addEventListener('input', function(){ if (!SR.on && srchQ()) srchEnter(); renderRooms(); });
+$('roomSearch').addEventListener('keydown', function(e){
+  if (e.key === 'Escape'){ e.preventDefault(); e.stopPropagation(); srchExit(); }
+  else if (e.key === 'Enter'){ e.preventDefault(); this.blur(); }   // the keyboard's search key: put the keyboard away, keep the results
+});
+$('searchCancel').addEventListener('click', function(){ srchExit(); });
+['pointerdown', 'mousedown'].forEach(function(ev){ $('searchClear').addEventListener(ev, function(e){ e.preventDefault(); }); });   // (the box keeps the focus)
+$('searchClear').addEventListener('click', function(){ var i = $('roomSearch'); i.value = ''; i.dispatchEvent(new Event('input')); i.focus({preventScroll: true}); });
+// starting to scroll the results puts the keyboard away (the results stay)
+(function(){ var y0 = null;
+  srchSide().addEventListener('touchstart', function(e){ y0 = SR.on && !e.target.closest('.search-row') ? e.touches[0].clientY : null; }, {passive: true});
+  srchSide().addEventListener('touchmove', function(e){ if (y0 !== null && Math.abs(e.touches[0].clientY - y0) > 12 && document.activeElement === $('roomSearch')){ $('roomSearch').blur(); y0 = null; } }, {passive: true});
+})();
+/** the name with the searched letters highlighted */
+function hlName(text, q){
+  var span = el('span'); text = String(text || '');
+  var i = q ? text.toLowerCase().indexOf(q.toLowerCase()) : -1;
+  if (i < 0){ span.textContent = text; return span; }
+  span.appendChild(document.createTextNode(text.slice(0, i))); span.appendChild(el('mark', 'hl', text.slice(i, i + q.length))); span.appendChild(document.createTextNode(text.slice(i + q.length)));
+  return span;
+}
+/** hint before typing, "Chats" heading, empty state — after the rooms or the people results change */
+function srchRender(){
+  var q = srchQ(), on = SR.on;
+  $('searchClear').hidden = !q;
+  var hint = $('srchHint'); hint.hidden = !(on && !q); if (!hint.hidden) hint.textContent = S(CHAT.uid ? 'search.hint' : 'search.hintGuest');
+  var nRooms = on && q ? $('rooms').querySelectorAll('li:not(.pill)').length : 0;
+  $('srchChats').hidden = !(on && q && nRooms);
+  var ppl = backend.peopleSearch ? backend.peopleSearch() : {pending: false, count: 0};
+  var empty = $('srchEmpty'), none = on && q && !nRooms && !ppl.pending && !ppl.count;
+  if (none){
+    empty.textContent = '';
+    var ic = el('span', 'srch-ic'); ic.appendChild(svg('<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5M8.5 8.5l5 5M13.5 8.5l-5 5"/>')); empty.appendChild(ic);
+    empty.appendChild(el('b', null, S('search.none', {q: q})));
+    empty.appendChild(el('span', null, CHAT.uid && q.length < 2 ? S('search.morePeople') : S('search.noneHint')));
+  }
+  empty.hidden = !none;
+}
 
 /* ---------- Room list (keyed; the selection pill glides between rooms) ---------- */
 function renderRooms(){
   var q = $('roomSearch').value.trim().toLowerCase(), ul = $('rooms');
   var list = rooms().filter(function(r){
     if (q && r.title.toLowerCase().indexOf(q) < 0) return false;
+    if (SR.on && q) return true;   // searching: all rooms (the tabs are hidden)
     if (UI.filter === 'live') return r.lounge || (r.match && r.match.status === 'live');
     if (UI.filter === 'upcoming') return r.lounge || (r.match && r.match.status === 'upcoming');
     return true; });
@@ -635,7 +702,7 @@ function renderRooms(){
     if (ul.children[i + 1] !== li) ul.insertBefore(li, ul.children[i + 1] || null);
   });
   Array.prototype.slice.call(ul.children).forEach(function(c){ if (!keep.has(c)) c.remove(); });
-  placeRoomPill();
+  placeRoomPill(); srchRender();
 }
 function placeRoomPill(){
   var li = UI.roomEls.get(CHAT.active), show = !!(li && li.isConnected && viewing() && window.innerWidth > 820);
@@ -648,11 +715,11 @@ function fillRoom(b, r){
   var typ = typersIn(r.id), current = r.id === CHAT.active && viewing();
   // our last message: its status, like WhatsApp (also for a team thread whose messages aren't loaded yet: its summary has the time)
   var myTick = !typ.length && last && last.by === CHAT.uid && last.ts ? tickState(r.id, last) : '';
-  var sig = [myTick, r.title, !!r.pendingOut, r.group && [r.group.status, r.group.canRead, r.group.kind, r.group.gradient, r.group.photo, r.group.description].join(','), last && last.id, msgPreview(last), unread, typ.length, r.dm ? isOnline(r.uid) : online(r.id) > 0, r.dm && LIVE.profiles[r.uid] && (LIVE.profiles[r.uid].avatarUrl || LIVE.profiles[r.uid].gradient), r.match && [r.match.status, r.match.hs, r.match.as, r.match.kickoff], current, last && nameOf(last.by)].join('|');
+  var sig = [myTick, r.title, SR.on ? srchQ() : '', !!r.pendingOut, r.group && [r.group.status, r.group.canRead, r.group.kind, r.group.gradient, r.group.photo, r.group.description].join(','), last && last.id, msgPreview(last), unread, typ.length, r.dm ? isOnline(r.uid) : online(r.id) > 0, r.dm && LIVE.profiles[r.uid] && (LIVE.profiles[r.uid].avatarUrl || LIVE.profiles[r.uid].gradient), r.match && [r.match.status, r.match.hs, r.match.as, r.match.kickoff], current, last && nameOf(last.by)].join('|');
   if (b._sig === sig) return; b._sig = sig;
   b.textContent = ''; if (current) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
   b.appendChild(roomAvatar(r, true));
-  var main = el('div', 'r-main'), t = el('div', 'r-title'); t.appendChild(el('span', null, r.title));
+  var main = el('div', 'r-main'), t = el('div', 'r-title'); t.appendChild(SR.on ? hlName(r.title, srchQ()) : el('span', null, r.title));
   if (r.agent) t.appendChild(el('span', 'r-tag', S('chat.partnerTag')));
   if (r.group && r.group.kind === 'channel') t.appendChild(el('span', 'r-tag', S('groups.channelTag')));
   if (r.match && r.match.status === 'live'){ t.appendChild(el('span', 'r-live', S('chat.liveTag'))); t.appendChild(el('span', 'r-score', (r.match.hs||0) + '–' + (r.match.as||0))); }
@@ -1339,7 +1406,19 @@ function checkMessage(text){
 }
 
 /* ---------- Composer ---------- */
-function setPresence(){ if (!CHAT.db) return; backend.presence({room: viewing() ? CHAT.active : null, typing: viewing() && !!$('msgInput').value.trim()}); }
+function setPresence(){ if (!CHAT.db) return; var on = viewing() && !document.hidden; backend.presence({room: on ? CHAT.active : null, typing: on && !!$('msgInput').value.trim()}); }
+// a hidden tab isn't "looking at" the conversation (the server then sends notifications for it)
+document.addEventListener('visibilitychange', function(){ setPresence(); });
+// tapping a notification while the site is open: the service worker asks this tab to open that conversation
+if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', function(e){
+  var d = e.data || {}; if (d.type !== 'oc-open' || !d.url) return;
+  var u; try { u = new URL(d.url); } catch(x){ return; } if (u.origin !== location.origin) return;
+  if (u.pathname.indexOf(CH.base) !== 0){ location.assign(u.href); return; }   // (another language)
+  if (location.pathname === u.pathname && isOpen()) return;
+  if (!isOpen()){ CH.scroll = window.scrollY || 0; history.pushState({oc: 1, depth: 1, fromSite: true}, '', u.pathname); }
+  else history.pushState({oc: 1, depth: ((history.state || {}).depth || 0) + 1, fromSite: !!(history.state || {}).fromSite}, '', u.pathname);
+  route();
+});
 function refreshSend(){ var v = $('msgInput').value.trim() || UI.pic, slow = slowApplies() && Date.now() < UI.slowUntil; $('composer').classList.toggle('has-text', !!v || slow); $('sendBtn').disabled = !v || slow; if ($('micBtn')) updateMic(); }
 function roomMediaRule(id){ id = String(id); if (isDmRoom(id)) return null; if (grpId(id)){ var g = grpOf(id); return (g && g.media) || null; } return (cfg.chat && cfg.chat.loungeMedia) || null; }
 function mediaOff(){ var r = roomMediaRule(CHAT.active); return !!(r && r.view === 'none'); }   // text-only room: no pictures / voice at all
@@ -1833,12 +1912,19 @@ function startSlow(){
    with a little space between the box and the keys; a conversation read to the end stays at the end. */
 (function(){
   var vv = window.visualViewport; if (!vv) return;
-  var m = $('messenger'), root = document.documentElement, raf = 0;
+  var m = $('messenger'), root = document.documentElement, raf = 0, base = {w: 0, h: 0};
+  ['fullscreenchange', 'webkitfullscreenchange'].forEach(function(ev){ document.addEventListener(ev, function(){ base.h = 0; soon(); }); });   // the screen's height changed: measure again
+  document.addEventListener('focusin', function(){ soon(); }); document.addEventListener('focusout', function(){ setTimeout(soon, 50); });
   function sync(){ raf = 0;
     // on the page root: the chat and every pop-up form (sign-in, room settings…) use it
     if (vv.scale > 1.01){ root.style.removeProperty('--vvh'); root.style.removeProperty('--vvt'); m.classList.remove('kb-open'); root.classList.remove('kb-open'); return; }   // (pinch-zoomed: leave it)
     var wall = $('wall'), atEnd = wall && wall.scrollHeight - wall.scrollTop - wall.clientHeight < 40;
-    var kb = window.innerHeight - vv.height > 120;
+    // keyboard up? The visible area is clearly shorter than the tallest seen at this width while a text box has the focus.
+    // (Comparing with the page height alone missed it in full screen: there the whole page shrinks with the keyboard.)
+    var w = window.innerWidth; if (w !== base.w){ base.w = w; base.h = 0; }
+    base.h = Math.max(base.h, vv.height, window.innerHeight);
+    var a = document.activeElement, typing = !!a && (a.tagName === 'TEXTAREA' || a.isContentEditable || (a.tagName === 'INPUT' && /^(text|search|email|password|url|tel|number)$/.test(a.type)));
+    var kb = window.innerHeight - vv.height > 120 || (typing && base.h - vv.height > 120);
     root.style.setProperty('--vvh', vv.height + 'px'); root.style.setProperty('--vvt', vv.offsetTop + 'px'); m.classList.toggle('kb-open', kb && m.classList.contains('open')); root.classList.toggle('kb-open', kb);
     if (kb && window.scrollY) window.scrollTo(0, 0);   // iOS scrolls the page under a fixed chat to show the box: not needed any more
     if (atEnd && wall) wall.scrollTop = wall.scrollHeight;
@@ -1975,25 +2061,6 @@ function maybePromptSignIn(){
 /* a conversation is really on screen (not the welcome page shown when none is chosen) */
 function viewing(){ var m = $('messenger'); return m.classList.contains('open') && !m.classList.contains('no-room'); }
 function siteInert(on){ ['.nav', 'main#top', 'footer', '.to-top'].forEach(function(q){ var e = document.querySelector(q); if (e){ if (on) e.setAttribute('inert', ''); else e.removeAttribute('inert'); } }); }
-/* Phones: the chat takes the whole screen (no address bar, like an app) — Android browsers allow it from a tap; on
-   iPhone Safari a page can't, there the site added to the home screen opens without it (manifest). Started when the chat
-   opens from a tap; opened from a link (no tap yet), the first tap inside the chat does it. Leaving the chat ends it.
-   If the person leaves full screen themselves (Back), it isn't forced again until the chat is opened again. */
-var FS = {mine: false, armed: false};
-function fsCan(){ var d = document.documentElement; return !!(d.requestFullscreen || d.webkitRequestFullscreen) && matchMedia('(hover: none) and (pointer: coarse)').matches && !matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches; }
-function fsEl(){ return document.fullscreenElement || document.webkitFullscreenElement || null; }
-function fsEnter(){
-  if (!fsCan() || fsEl()) return;
-  var d = document.documentElement, req = d.requestFullscreen ? d.requestFullscreen({navigationUI: 'hide'}) : d.webkitRequestFullscreen();
-  var ok = function(){ FS.mine = true; FS.armed = false; }, no = function(){ fsArm(); };   // no tap behind it: wait for one
-  if (req && req.then) req.then(ok, no); else setTimeout(function(){ if (fsEl()) ok(); else no(); }, 300);
-}
-function fsArm(){ if (FS.armed) return; FS.armed = true;
-  // any tap while the chat is open (also on the sign-in form that opens with it — it isn't inside the chat panel)
-  var go = function(){ document.removeEventListener('pointerup', go, true); if (FS.armed && isOpen()){ FS.armed = false; fsEnter(); } };
-  document.addEventListener('pointerup', go, true); }
-function fsLeave(){ FS.armed = false; if (FS.mine && fsEl()){ var x = document.exitFullscreen ? document.exitFullscreen() : document.webkitExitFullscreen && document.webkitExitFullscreen(); if (x && x.catch) x.catch(function(){}); } FS.mine = false; }
-['fullscreenchange', 'webkitfullscreenchange'].forEach(function(ev){ document.addEventListener(ev, function(){ if (!fsEl()) FS.mine = false; }); });   // left it (Back): fine, not forced again
 function showMessenger(){ var m = $('messenger'); m.classList.add('open'); m.setAttribute('aria-hidden', 'false'); markSeen(); renderRooms(); setPresence(); setTimeout(function(){ placeSegPill(); placeRoomPill(); }, 30); }
 /* Invite link: join the group / channel, then open it. Not signed in yet: ask to sign in (the token waits in this tab). */
 var JOINING = false;
@@ -2021,7 +2088,7 @@ function route(){
     if (valid && id === 'support' && location.pathname !== chatPathFor('support')) { try { history.replaceState(history.state, '', chatPathFor('support')); } catch(e){} }
     if (!wasOpen){
       document.documentElement.classList.add('chat-open'); document.body.classList.add('chat-open'); if (lenis) lenis.stop();
-      siteInert(true); showMessenger(); fsEnter();
+      siteInert(true); showMessenger();
       maybePromptSignIn();
     }
     clearReply(); closeCtx(true); renderRooms(); renderHeader(); renderConvo(); setPresence(); placeRoomPill(); applyComposer();
@@ -2031,7 +2098,7 @@ function route(){
   } else if (isOpen()){
     UI.routed = true; UI.prompted = false; clearTimeout(UI.promptT);   // back on the site: next time the chat opens, offer sign-in again
     closeCtx(true);
-    m.classList.remove('open', 'in-convo'); m.setAttribute('aria-hidden', 'true'); fsLeave();
+    m.classList.remove('open', 'in-convo'); m.setAttribute('aria-hidden', 'true');
     document.documentElement.classList.remove('chat-open'); document.body.classList.remove('chat-open'); siteInert(false);
     setTitle(CH.title);
     // back where the visitor was on the site
@@ -2270,6 +2337,7 @@ var backend = createChatBackend(cfg, {
   },
   unavailable: function(){ CHAT.db = null; UI.loaded = true; UI.unavailable = true; if (CHAT.wantRoom){ CHAT.wantRoom = null; $('messenger').classList.remove('want-room'); } applyComposer(); updateLounge(); refreshChat(); },
   profiles: function(p){ Object.assign(LIVE.profiles, p); refreshChat(); },
+  searchUpdated: function(){ srchRender(); },   // the people results changed (search mode)
   messages: function(list, mode){ var firstLoad = !UI.loaded; UI.loaded = true; LIVE.messages = list; if (isOpen()) renderConvo(firstLoad ? undefined : mode); renderRooms(); renderMatches(); updateLounge(); LIVE.dirty = true; },
   myDm: function(list, mode){ DM.mine = list; refreshChat(CHAT.active === 'support' ? mode : undefined); },
   pms: function(rels){ PM.rels = rels || {}; refreshChat(); if (pmUid(CHAT.active)) applyComposer(); if (CHAT.wantRoom) return;

@@ -352,14 +352,27 @@ export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl, 
               </a>
             </div>
           </div>
-          <label className="search">
-            <span className="sr">{t('chat.searchLabel')}</span>
-            <Icon>
-              <circle cx="11" cy="11" r="7" />
-              <path d="M20 20l-3.5-3.5" />
-            </Icon>
-            <input id="roomSearch" type="search" placeholder={t('chat.searchPlaceholder2')} autoComplete="off" />
-          </label>
+          {/* search: tapping the box enters a search mode (engine.ts "Search mode") — the tabs and other blocks make way,
+              results come in sections (Chats, People), with a clear ✕ and Cancel */}
+          <div className="search-row" id="searchRow">
+            <label className="search">
+              <span className="sr">{t('chat.searchLabel')}</span>
+              <Icon>
+                <circle cx="11" cy="11" r="7" />
+                <path d="M20 20l-3.5-3.5" />
+              </Icon>
+              <input id="roomSearch" type="search" placeholder={t('chat.searchPlaceholder2')} autoComplete="off" enterKeyHint="search" />
+              <button className="search-clear" id="searchClear" type="button" aria-label={t('search.clear')} title={t('search.clear')} hidden>
+                <Icon>{I.close}</Icon>
+              </button>
+            </label>
+            <button className="search-cancel" id="searchCancel" type="button">
+              {t('search.cancel')}
+            </button>
+          </div>
+          <p className="srch-hint" id="srchHint" hidden></p>
+          {/* "Get notified of new messages" — offered once to people who are signed in (engine: chatBackend.ts) */}
+          <div className="push-card" id="pushCard" hidden></div>
           <div className="seg" id="seg" role="group" aria-label={t('chat.filterAria')}>
             <span className="pill" id="segPill" aria-hidden="true"></span>
             <button type="button" data-f="all" aria-pressed="true">
@@ -386,9 +399,13 @@ export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl, 
               <ul id="pplResults"></ul>
             </div>
           </section>
+          <div className="ppl-h srch-h" id="srchChats" hidden>
+            {t('search.chats')}
+          </div>
           <ul className="rooms" id="rooms">
             <li className="pill" id="roomPill" aria-hidden="true"></li>
           </ul>
+          <div className="srch-empty" id="srchEmpty" role="status" hidden></div>
           <button className="side-foot" id="rulesLink" type="button">
             <Icon>{I.shieldCheck}</Icon>
             {t('chat.rulesLink')}
@@ -747,6 +764,8 @@ export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl, 
                 <small id="authWhoSub"></small>
               </div>
             </div>
+            {/* notifications of new messages: on / off, message text on the lock screen (engine: chatBackend.ts) */}
+            <div className="push-box" id="authPush" hidden></div>
             <div className="sheet-actions">
               <button className="btn-text auth-switch" id="authEdit" type="button">
                 {t('auth.editProfile')}

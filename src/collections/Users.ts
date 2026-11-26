@@ -65,6 +65,9 @@ export const Users: CollectionConfig = {
   fields: [
     { name: 'name', type: 'text', admin: { description: 'Shown in the site chat when you post as staff' } },
     { name: 'chatLastSeenAt', type: 'date', admin: { hidden: true } },
+    // notifications of new messages (set from the chat): show the message text on the lock screen · muted groups
+    { name: 'pushPreview', type: 'checkbox', defaultValue: true, admin: { hidden: true } },
+    { name: 'pushMuted', type: 'json', admin: { hidden: true } },
     { name: 'chatAvatar', type: 'upload', relationTo: 'media', admin: { description: 'Your photo in the site chat (optional)' } },
     { name: 'chatGradient', type: 'text', admin: { description: 'Avatar gradient used when there is no photo' } },
     {
