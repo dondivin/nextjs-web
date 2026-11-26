@@ -95,4 +95,6 @@ Optional: `OC_SNAPSHOT_DIR` in `.env` to keep snapshots in another folder (defau
 | "The database already has data in: …" | You are not on an empty database. Check `DATABASE_URL`, or use `pnpm seed --restore --yes` to replace it |
 | "…encrypted with master key X, but this server has Y" | Set the old server's `CHAT_MASTER_KEY` and run again |
 | Pictures don't show after the move | The new server's `R2_*` settings differ from the old one's — use the same bucket |
+| The data went into a database called `test` (Atlas) | `DATABASE_URL` has no database name: add `/oddsclub` before the `?` (`…mongodb.net/oddsclub?retryWrites=true&w=majority`), run `pnpm seed` again, then delete `test` in Atlas |
+| "The database already has data" right after creating it | The server was started first and filled it with the default content. Restore **before** starting the server, or use `pnpm seed --restore --yes` |
 | Everyone has to sign in again | `PAYLOAD_SECRET` changed — expected; passwords are unchanged |

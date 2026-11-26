@@ -39,7 +39,10 @@ export async function seed(payload: Payload, opts: { forceStrings?: boolean } = 
 
   // a fresh, empty database + a snapshot of a real one (pnpm data:export) → bring that data back first;
   // the rest of the seed then only adds texts that newer code needs
-  if (snapshotExists() && (await databaseIsEmpty(payload))) await restoreSnapshot(payload, { log })
+  if (snapshotExists()) {
+    if (await databaseIsEmpty(payload)) await restoreSnapshot(payload, { log })
+    else log(`the database "${(payload.db as unknown as { connection: { db: { databaseName: string } } }).connection.db.databaseName}" already has data, so the snapshot was not restored (nothing to do). To replace its data with the snapshot: pnpm seed --restore --yes`)
+  }
 
   // languages
   for (const l of [

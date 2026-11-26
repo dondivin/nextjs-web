@@ -986,3 +986,39 @@ See `docs/HANDOFF.md` §4.
   of them (every count equal), messages decrypt with authors, partners keep their hero images, group and site settings
   there, team account same id + password hash; a second `pnpm seed` doesn't restore again; `--restore` without `--yes`
   refuses; another master key → stops with a clear message. Test databases dropped; the real database untouched.
+
+### 2026-11-26 — deployment guide + a working Dockerfile
+- Owner: "I'm going to deploy it, write an md file for deployment".
+- `docs/DEPLOYMENT.md`: why it must be ONE long-running server (the chat's live connections and presence live in memory —
+  not Vercel / serverless, no auto-scaling), requirements, every environment variable, three ways to run it (VPS with pm2 +
+  Nginx/HTTPS incl. the live-chat proxy settings, Docker, a platform such as Railway / Render / Fly / DigitalOcean), the
+  database (restore the snapshot or start fresh → first account at /admin), post-deploy checklist, updating, backups,
+  troubleshooting. Linked from HANDOFF.
+- `Dockerfile` replaced (the template expected `output: 'standalone'` and a `public/` folder this project doesn't have):
+  pnpm install → build with placeholder env → `pnpm start`, full app kept so `pnpm seed` / `chat:crypto` /
+  `data:export` work in the container; `.dockerignore` added (no `.env`, `seed-data/`, `node_modules`, `.git`).
+  The template was kept in the scratchpad only.
+- Verified on a copy of the project (the running dev setup untouched): `pnpm build` succeeds (≈ 20 s), also with only
+  placeholder env and no reachable database (what the Dockerfile does); `pnpm start` serves /en, /fr, /en/chat,
+  /admin/login, robots, sitemap (200, ≈ 40 ms) and the live chat stream delivers decrypted messages. Not verified: the
+  Docker image build itself (Docker's engine wasn't running).
+- Noted: `src/app/my-route/` (template example route) still answers at /my-route — optional to delete.
+
+### 2026-11-26 — Atlas: data went into `test`
+- Owner: "why does it add the seed in `test` on MongoDB?" — the Atlas `DATABASE_URL` had no database name, so MongoDB used
+  `test`. `test` held only the default demo content (1 account, 14 partners — added more than once — 641 texts, no members or
+  messages): the server's automatic seed had filled it before the snapshot could be restored.
+- Fixed the local `.env` (password untouched): `…mongodb.net/oddsclub?retryWrites=true&w=majority`. Ran `pnpm seed` → restored
+  the snapshot of 2026-11-26 11:08 into Atlas `oddsclub`: 5254 documents / 24 collections (≈ 25 s); checked: 26 members,
+  5 partners, 646 texts, 4521 messages (decrypt fine), 3 conversation keys, 18 media, 3 wallpapers.
+- Left for the owner: delete the `test` database in Atlas (not touched). Atlas steps + this case added to DEPLOYMENT.md /
+  MOVING-DATA.md troubleshooting.
+- Follow-up: `test` is the database of ANOTHER site (not to be deleted). Inspected read-only: its data dates from Nov 17–24;
+  OddsClub had added today 4 partners (1xBet, 888STARZ, Melbet, Betwinner — the other site's partners use other fields), and
+  created translations (641) / languages (2) / globals (2) / member-roles (1) + 20 empty collections. No blocking index on
+  the shared `partners` (only date indexes); `users` has the usual unique e-mail. With the owner's OK: backed up everything
+  removed to `seed-data/test-cleanup-backup.json` (git-ignored), then removed only those (checks: exactly 4 partners by slug
+  + date; whole collections only if every document was from today; empty collections only if still empty). `test` now:
+  only the other site's collections, counts unchanged (partners 10, users 1, …). The owner's `pnpm seed` output
+  ("0 created") was correct: `oddsclub` was already restored.
+- Follow-up: `pnpm seed` now says why it skips the snapshot ("the database \"oddsclub\" already has data, so the snapshot was not restored (nothing to do). To replace its data with the snapshot: pnpm seed --restore --yes") instead of only "translations: 0 created" — the owner thought the restore had failed.

@@ -1,0 +1,14 @@
+# never send these into the image
+node_modules
+.next
+.git
+.env
+.env.*
+!.env.example
+seed-data
+media
+coverage
+test-results
+playwright-report
+*.log
+.DS_Store

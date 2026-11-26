@@ -84,6 +84,8 @@ Run from the project folder. Use **pnpm** (never npm).
 | `pnpm admin:reset-password` | Shows which account is the main admin | Server, recovery |
 | `pnpm admin:reset-password <main-admin-email>` | New password for the **main admin** (the first account created), typed hidden; `--generate` prints a random one instead. Unlocks it and keeps it an owner. Refuses every other account (they use "Forgot your password?" + owner approval) | Server, when the main admin is locked out |
 
+Deploying: `docs/DEPLOYMENT.md` (one long-running server — not serverless; env vars, VPS / Docker / platform, checks, updates, backups).
+
 Environment variables: see `.env.example` (MongoDB, `PAYLOAD_SECRET`, `NEXT_PUBLIC_SERVER_URL`, Cloudflare R2 `R2_*`,
 `CHAT_MASTER_KEY`).
 
