@@ -1136,3 +1136,18 @@ See `docs/HANDOFF.md` §4.
   unchanged.
 - Checked on an emulated phone (390×780, real touch events): hold 0.5 s and 1.2 s → menu stays open, no text selected;
   a tap on the backdrop still closes it; with a tile wallpaper the dock is transparent (screenshot).
+- Follow-up from the owner's screen recording (Android Chrome, on Render = old code): the menu opened, then closed
+  ~0.25 s later **with the finger still down**. Cause: our menu opens at 0.42 s; Android's own long-press (`contextmenu`,
+  ≈0.5–0.65 s) then arrives on what is under the finger now — the menu's backdrop — whose handler closed the menu; Android
+  also sends `pointercancel` then, which the first fix took for the finger lifting. Now: `contextmenu` anywhere on the
+  menu is swallowed and only closes it from the backdrop more than 1.5 s after it opened; `pointercancel` no longer
+  counts as a lift. Replayed the Android sequence on the emulated phone (hold → contextmenu on `ctx-bg` + pointercancel →
+  lift + stray click): stays open; a later tap on the backdrop closes it.
+- Slip while editing: an inline `//` comment inside a one-line function swallowed its end → the page 500'd for a minute
+  (`Expected '}'`), fixed with `/* */`. Note: tsc doesn't check `engine.ts`, so it didn't catch it — load the page after
+  editing that file.
+- Lifted copy re-wrapping: `openCtx` measured the message while it was still shrinking back from the press
+  (`.bubble.pressing` = scale .96), so the copy was made ~4% narrower, its text re-wrapped (the time dropped to a new line)
+  and it jumped in height during the lift animation (visible in the owner's video). Now the message is measured with its
+  transform switched off for that instant, and the copy gets that exact width and height (border-box). Checked on a
+  360 px emulated phone, 6 messages: copy width/height = original, no overflow, same text height.

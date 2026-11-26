@@ -1031,7 +1031,7 @@ function buildRow(m){
      the tap the browser makes from it landed on the backdrop and closed the menu at once) */
   function lifted(){ if (held){ held = false; CTX.liftAt = Date.now(); } }
   b.addEventListener('touchend', function(e){ if (held){ lifted(); if (e.cancelable) e.preventDefault(); } });
-  function end(){ lifted(); clearTimeout(holdTimer); b.classList.remove('pressing', 'swiping'); if (!drag) return; drag = false; if (swiping && Math.abs(sp.v) > 46) startReply(row._m); swiping = false; sp.to(0); }
+  function end(e){ if (!e || e.type !== 'pointercancel') lifted(); /* Android cancels the pointer when its own long-press starts: the finger is still down */ clearTimeout(holdTimer); b.classList.remove('pressing', 'swiping'); if (!drag) return; drag = false; if (swiping && Math.abs(sp.v) > 46) startReply(row._m); swiping = false; sp.to(0); }
   b.addEventListener('pointerup', end); b.addEventListener('pointercancel', end);
   // trackpad: a two-finger sideways swipe arrives as horizontal wheel events
   var acc = 0, wheelT = 0, wheelDone = false;
@@ -1223,9 +1223,14 @@ function openCtx(row){
   CTX.at = Date.now();
   var mine = m.by === CHAT.uid, ctx = $('ctx');
   document.body.classList.add('ctx-on');
-  var b = row._bubble, r = b.getBoundingClientRect(), W = window.innerWidth, H = window.innerHeight;
+  /* measure the message at its real size: while held it is still shrinking back from the press (scale .96), and a copy
+     made 4% narrower re-wraps its text (the time drops to a new line) and jumps in height */
+  var b = row._bubble; b.classList.remove('pressing'); var tr = b.style.transition, tf = b.style.transform;
+  b.style.transition = 'none'; b.style.transform = 'none';
+  var r = b.getBoundingClientRect(), W = window.innerWidth, H = window.innerHeight;
+  b.style.transform = tf; void b.offsetWidth; b.style.transition = tr;
   var clone = b.cloneNode(true); clone.classList.add('ctx-bubble', mine ? 'out' : 'in'); clone.classList.remove('pressing'); clone.removeAttribute('tabindex');
-  clone.style.left = r.left + 'px'; clone.style.top = r.top + 'px'; clone.style.width = r.width + 'px'; clone.style.transformOrigin = mine ? 'right center' : 'left center';
+  clone.style.left = r.left + 'px'; clone.style.top = r.top + 'px'; clone.style.width = r.width + 'px'; clone.style.height = r.height + 'px'; clone.style.boxSizing = 'border-box'; clone.style.transformOrigin = mine ? 'right center' : 'left center';
   ctx.insertBefore(clone, $('ctxReact')); b.classList.add('lifted-src');
   // reactions
   var rbar = $('ctxReact'); rbar.textContent = '';
@@ -1274,7 +1279,10 @@ function closeCtx(instant){
 }
 // lifting the finger after a long press lands on the background: don't treat that as "close"
 $('ctxBg').addEventListener('click', function(){ var now = Date.now(); if (now - (CTX.at || 0) < 450 || now - (CTX.liftAt || 0) < 400) return; closeCtx(); });
-$('ctxBg').addEventListener('contextmenu', function(e){ e.preventDefault(); closeCtx(); });
+/* Android: our menu opens after 0.42 s of holding, then the phone's own long-press event (≈0.5–0.65 s, finger still down)
+   arrives on whatever is under the finger now — the menu's backdrop or the lifted copy. That is the same press, not a new
+   one: never let it close the menu (and never show the phone's menu) */
+$('ctx').addEventListener('contextmenu', function(e){ e.preventDefault(); if (e.target === $('ctxBg') && Date.now() - (CTX.at || 0) > 1500 && Date.now() - (CTX.liftAt || 0) > 400) closeCtx(); });
 var ctxW = window.innerWidth;
 window.addEventListener('resize', function(){ var w = window.innerWidth, changed = w !== ctxW; ctxW = w; if (CTX.row && changed) closeCtx(true); });   // a rotation, not the keyboard / address bar
 function needsRules(){ if (!CHAT.canPost){ toast(CHAT.uid ? S('chat.cannotPost') : S('chat.signInToJoin')); return true; }
