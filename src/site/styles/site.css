@@ -1354,3 +1354,7 @@ button.gs-person:hover{background:color-mix(in srgb, var(--c-menu-text) 7%, tran
 
 /* the old sentence fading out over the new one after a partner switch */
 .brand-ghost{z-index:1}
+
+/* a menu / back-to-top jump flying past the features: the callouts step aside for the flight (the arrival feature
+   comes back with its entrance once the page lands) */
+.features.jumping .callout{opacity:0 !important;transition:opacity .2s ease-in}

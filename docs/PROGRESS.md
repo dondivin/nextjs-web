@@ -1060,3 +1060,20 @@ See `docs/HANDOFF.md` §4.
   two add up to one visible sentence every frame), with the block's height gliding as before. Applies to the hero intro and
   the join steps (`BRAND_TEXTS`). Verified (FR, 430 px and 1600 px): ghost exactly on the old paragraph, old + new = 1.00
   in every frame, steps crossfade too, no copies left — also after 4 switches 90 ms apart (final text right, opacity 1).
+
+### 2026-11-26 — features section (3D phone): menu links, back to top and fast scrolling look deliberate
+- Owner screenshot of "Your edge on every match": "looks like a beginner: scroll quickly, click the menu (Bonus), or the
+  back-to-top button at the bottom — see what happens in that section".
+- Reproduced on the running site (1440 px): during back-to-top / menu jumps the phone was frozen in its pose at the start
+  (from the bottom: back-facing, tilted) floating over every section flying past, then blended slowly into place; the
+  callouts played their entrance for every feature passed (half-drawn callouts mid-flight).
+- Now (`JUMP`, `__phoneJump`, frame loop): a jump fades the phone (.22 s) and the callouts (`.features.jumping`) out for the
+  flight; the phone follows the destination pose / screen unseen (screen shown directly, no turn); on arrival it fades and
+  scales back in (.6 s) and only the arrival feature plays its entrance once. Wheel / touch / key during a jump ends it.
+  Removed the old frozen "held" pose. Verified: back to top → phone 0 during the flight, 1.0 at the top with the partner's
+  home screen; Bonus link → arrives on the welcome-bonus screen; callouts hidden in flight.
+- Fast wheel flicks: the steady-rhythm chase owed up to ~1.7 s of turning after the page had already left the section (the
+  phone keeps showing in the sections below). Owed turns now finish fast once outside the features (boost 4 per turn owed);
+  inside them the catch-up is a bit quicker (0.6 instead of 0.35). Measured: flick past the whole section → phone settles
+  0.3 s after the page (was ≈ 1.7 s); flick stopping inside → 1.2 s of calm turns.
+- The cut-off left texts in the screenshot: no width between 880 and 1440 px cuts a callout (checked) — the screenshot crop.

@@ -92,6 +92,10 @@ var S2 = {pA:0, pB:0, pC:0, feature:-1, prevFeature:-1, inFeat:false, local:0};
 // the section's scroll is split into 4 features + a short hold at the end (FEAT_UNITS − 4), so the last progress bar fills
 // before the section ends instead of crawling to the very bottom
 var FEAT_UNITS = 4.08;
+/* a programmatic jump (menu link, back to top) is in flight until JUMP.until: the features section doesn't play its
+   per-feature animations for every feature it flies past — it fades out, and shows the arrival state once (phone code) */
+var JUMP = {until: 0};
+function jumpingNow(){ return !REDUCE && performance.now() < JUMP.until; }
 /* Phones (same query as the CSS and the 3D phone): the features are NOT pinned. They are 4 blocks stacked down the page,
    each with an empty "slot" at its top where the phone sits. The phone rides with the current block, then glides DOWN to
    the next block's slot while turning once, landing (facing you, new screen) as that block reaches the rest line. */
@@ -133,7 +137,7 @@ function applyFeature(){
   if (f !== S2.feature){ S2.feature = f;
     callouts.forEach(function(c){ var i = +c.dataset.i; c.classList.toggle('on', i === f); c.classList.toggle('seen', f >= 0 && i < f); });
     dots.forEach(function(d, i){ d.classList.toggle('on', i === f); });
-    animateCallouts(f, S2.prevFeature);
+    if (!jumpingNow()) animateCallouts(f, S2.prevFeature);   // flying past during a jump: no entrance per feature
     S2.prevFeature = f;
     if (window.onFeatureChange) window.onFeatureChange(f); }
 }
@@ -2342,8 +2346,17 @@ route();
   var t0 = performance.now(), lastDraw = 0, flipping = false, settling = false;
   window.__phoneFlipping = function(v){ flipping = v; };
   // jump state (back-to-top / nav links) and footer fade
-  var jumpUntil = 0, held = null, blendK = 0, shownPose = [0, 0, 0, 0, 0, 1], lastFrame = performance.now(), footEl = document.querySelector('footer'), lastOp = '';
-  window.__phoneJump = function(ms){ jumpUntil = performance.now() + ms + 80; };
+  var jumpUntil = 0, shownPose = [0, 0, 0, 0, 0, 1], lastFrame = performance.now(), footEl = document.querySelector('footer'), lastOp = '';
+  /* Menu links / back to top: the page flies past several sections. Instead of a frozen phone floating over them (and the
+     callouts flashing through every feature), the phone and the callouts fade out for the flight, the phone takes the
+     destination's pose and screen while unseen, and both come back once on arrival. */
+  var JF = {v: 1}, wasJumping = false;
+  window.__phoneJump = function(ms){
+    jumpUntil = performance.now() + ms + 80; JUMP.until = jumpUntil;
+    if (REDUCE) return;
+    G.to(JF, {v: 0, duration: .22, ease: 'power2.in', overwrite: true});
+    if (feat) feat.classList.add('jumping');
+  };
   // Screen changes: normally they happen while the phone's back faces you (mid-turn), so you never see a cut. When the phone is
   // facing you and the screen must change anyway (e.g. arriving at the top after "back to top"), it turns once and swaps
   // at the half turn.
@@ -2362,7 +2375,7 @@ route();
     if (REDUCE || flipping || Math.cos(facingAngle) < 0.2) showScreen(i, true);   // back (or edge) towards you: swap unseen
     else turnToScreen(i);
   }
-  ['wheel', 'touchstart', 'keydown'].forEach(function(ev){ window.addEventListener(ev, function(){ jumpUntil = 0; }, {passive:true}); });   // the user took over: stop holding
+  ['wheel', 'touchstart', 'keydown'].forEach(function(ev){ window.addEventListener(ev, function(){ jumpUntil = 0; JUMP.until = 0; }, {passive:true}); });   // the user took over: the jump ends here
   /* Steady rhythm: whatever the scroll speed, the phone turns at most one turn per SPIN_SEC and its position eases after the
      scroll instead of snapping. A hard flick plays the same calm turns one after another (screens still change mid-turn).
      When it is far behind (several turns owed) it may go a little faster — 35 % more per extra turn — so it catches up
@@ -2371,9 +2384,10 @@ route();
   // per-turn tumble [rx, rz, x] at the half turn, cycling — and the resting angle [ry, rz] of each stop on phones
   var TUMBLE = [[0.42, 0.24, 0.30], [-0.32, -0.36, -0.34], [0.30, 0.40, 0.26], [-0.40, -0.22, -0.28], [0.36, -0.30, 0.32]];
   var STANCE = [[-0.30, 0.07], [0.28, -0.07], [-0.24, 0.05], [0.30, -0.06], [-0.26, 0.06]];
-  function steady(cur, target, dt, unit){   // eased chase with a speed limit; unit = one turn (2π for angles, 1 for tail turns)
+  // eased chase with a speed limit; unit = one turn (2π for angles, 1 for tail turns); boost = extra speed per turn owed
+  function steady(cur, target, dt, unit, boost){
     var d = target - cur, behind = Math.abs(d) / unit;
-    var step = d * (1 - Math.exp(-dt * 9)), max = unit / SPIN_SEC * (1 + 0.35 * Math.max(0, behind - 1)) * dt;
+    var step = d * (1 - Math.exp(-dt * 9)), max = unit / SPIN_SEC * (1 + (boost == null ? 0.6 : boost) * Math.max(0, behind - 1)) * dt;
     if (Math.abs(step) > max) step = step > 0 ? max : -max;
     cur += step; return Math.abs(target - cur) < unit * 1e-4 ? target : cur;
   }
@@ -2381,7 +2395,7 @@ route();
     if (document.body.classList.contains('chat-open')) return;
     var now = performance.now(), t = (now - t0) / 1000, jumping = !REDUCE && now < jumpUntil;
     if (S2.feature < 0){
-      if (jumping || held){}
+      if (jumping){}
       else if (S2.pA < 0.5 && shown !== 0 && !turning && Math.abs(Math.sin(O.flip / 2)) < 0.01) wantScreen(0, O.flip + O.drag + O.sa);
       else if (S2.pA >= 0.5 && S2.pC <= 0 && shown === 0) showScreen(1);
     }
@@ -2400,7 +2414,9 @@ route();
       : f >= 0 ? (f + spinPart(f, S2.local)) * TURN : (S2.pC > 0 || S2.pB > 0.5 ? 4 * TURN : 0);   // after the section: the 4 turns are done (never unwind)
     var dt = Math.min(0.05, Math.max(0, (now - lastFrame) / 1000));
     if (jumping || REDUCE) O.sa = saTarget;   // during back-to-top / nav jumps the phone is held still: just follow (no turns owed afterwards)
-    else O.sa = steady(O.sa, saTarget, dt, TURN);
+    // inside the features: calm turns, one after another. Once a flick has carried the page past them, the turns still
+    // owed finish quickly (≈ half a second) instead of the phone spinning on for seconds over the next section.
+    else O.sa = steady(O.sa, saTarget, dt, TURN, f < 0 ? 4 : 0.6);
     var Dk = tailPose(), Q = P;
     // below the features: the turn per section follows the same steady rhythm
     if (Dk){ tailU = (tailU == null || jumping) ? Dk.u : steady(tailU, Dk.u, dt, 1); Dk.spin = REDUCE ? 0 : tailU * TURN; Dk.screen = Dk.scr[Math.max(0, Math.min(Dk.scr.length - 1, Math.round(tailU)))]; Dk.u = tailU; }
@@ -2408,7 +2424,15 @@ route();
     if (flow){ var FP = flowPose(fi), upp0 = 2 * camera.position.z * Math.tan(camera.fov * Math.PI / 360) / size.h;
       if (flowY == null || jumping) flowY = FP.y; else { var dy = FP.y - flowY, stepY = dy * (1 - Math.exp(-dt * 10)), maxY = size.h * upp0 * 2.4 * dt; flowY += Math.abs(stepY) > maxY ? (stepY > 0 ? maxY : -maxY) : stepY; }
       FP.y = flowY; Q = fk >= 1 ? FP : {x:P.x + (FP.x - P.x) * fk, y:P.y + (FP.y - P.y) * fk, rx:P.rx + (FP.rx - P.rx) * fk, ry:P.ry + (FP.ry - P.ry) * fk, rz:P.rz + (FP.rz - P.rz) * fk, s:P.s + (FP.s - P.s) * fk}; }   // below the features: same place, scroll-linked turn (see tailPose)
-    if (jumping || held){}
+    if (wasJumping && !jumping){
+      // arrived: still unseen, so show the destination's screen directly (no turn), then come back in
+      var want = Dk ? Dk.screen : f >= 0 ? FEAT_SCREENS[Math.max(0, Math.min(3, Math.round(O.sa / TURN)))] : (S2.pA < 0.5 ? 0 : 1);
+      if (want !== shown) showScreen(want, true);
+      G.to(JF, {v: 1, duration: .6, ease: 'power2.out', overwrite: true});
+      if (feat){ feat.classList.remove('jumping'); animateCallouts(S2.feature, -1); }   // the arrival feature's entrance, once
+    }
+    wasJumping = jumping;
+    if (jumping){}
     else if (Dk){ if (Dk.screen !== shown) wantScreen(Dk.screen, O.flip + O.drag + O.sa + Dk.spin); }
     else if (f >= 0 && !REDUCE){ var si = FEAT_SCREENS[Math.max(0, Math.min(3, Math.round(O.sa / TURN)))]; if (si !== shown) wantScreen(si, O.flip + O.drag + O.sa); }
     var idle = REDUCE ? 0 : 1, exitK = 1 - Math.min(1, O.ey / 7);
@@ -2425,17 +2449,13 @@ route();
     var live = [Q.x + tb[2] * arc * swayX, Q.y + O.iy + O.ey + Math.sin(t * 1.3) * 0.06 * idle,
       Q.rx + O.leanX + O.erx - O.my * 0.12 * exitK - spinK * 0.12 + tb[0] * arc, Q.ry + O.iry + lean + stRy + O.flip + O.drag + O.sa + dSpin + O.mx * 0.22 * exitK, Q.rz + stRz + tb[1] * arc + Math.sin(t * 0.9) * 0.02 * idle,
       Q.s * O.is * O.es * (1 + Math.abs(spinK) * 0.06)];
-    // back-to-top / nav jumps: hold the phone still while the page flies, then glide (shortest turn) into the live pose
-    var out = live;
-    if (jumping){ if (!held) held = shownPose.slice(); out = held; blendK = 0; }
-    else if (held){ blendK = Math.min(1, blendK + Math.min(50, now - lastFrame) / 900); var k = 1 - Math.pow(1 - blendK, 3);
-      out = live.map(function(v, i){ var d = v - held[i]; if (i === 3) d = Math.atan2(Math.sin(d), Math.cos(d)); return held[i] + d * k; });
-      if (blendK >= 1) held = null; }
+    // jumps: the phone follows the live pose while faded out, and grows back a little as it fades in
+    var out = live.slice(); out[5] *= 0.9 + 0.1 * JF.v;
     shownPose = out; lastFrame = now;
     spin.position.set(out[0], out[1], 0); spin.rotation.set(out[2], out[3], out[4]); spin.scale.setScalar(out[5]);
     // fade a little as the footer comes into view
     var ft = footEl ? footEl.getBoundingClientRect().top : size.h, fv = Math.max(0, Math.min(1, (size.h - ft) / (size.h * 0.45)));
-    var op = (1 - 0.6 * fv * fv * (3 - 2 * fv)).toFixed(3); if (op !== lastOp){ lastOp = op; canvas.style.opacity = op; }
+    var op = ((1 - 0.6 * fv * fv * (3 - 2 * fv)) * JF.v).toFixed(3); if (op !== lastOp){ lastOp = op; canvas.style.opacity = op; }
     renderer.render(scene, camera);
   }
   function setPalette(c){ C.bg = c.night; C.card = c.panel; C.line = c.navy2; C.blue = c.blue; C.green = c.cta; C.ink = c.ink; C.yellow = c.odds; C.oddBg = c.oddBg; C.wall = c.navy; C.bin = c.navy2; C.bout = c.blue; }
