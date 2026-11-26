@@ -13,10 +13,27 @@ const cache = g.__ocBrandImg || (g.__ocBrandImg = new Map())
 const defaultMark = (blue: string) =>
   Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="${blue}"/><g transform="translate(96 96) scale(13.33)" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3L5 14h6l-1 7 8-11h-6z"/></g></svg>`)
 
-async function load(url: string, base: string) {
-  const r = await fetch(new URL(url, base), { cache: 'no-store' })
-  if (!r.ok) throw new Error('logo fetch ' + r.status)
-  return Buffer.from(await r.arrayBuffer())
+/**
+ * Fetch an uploaded image from inside the server. Relative addresses (/api/media/file/…) are tried on the server's own
+ * loopback first — always reachable inside a container (Render, Docker…), where the request's address may be an internal
+ * one or loop back through the public proxy — then on the public address, then on the request's address.
+ */
+export async function load(url: string, base: string) {
+  const tries = /^https?:\/\//i.test(url) ? [url]
+    : [`http://127.0.0.1:${process.env.PORT || 3000}`, process.env.NEXT_PUBLIC_SERVER_URL || '', base].filter(Boolean).map((b) => new URL(url, b).toString())
+  let last = ''
+  for (const u of [...new Set(tries)]) {
+    try {
+      const r = await fetch(u, { cache: 'no-store', signal: AbortSignal.timeout(8000) })
+      if (r.ok) return Buffer.from(await r.arrayBuffer())
+      last = `${u} → ${r.status}`
+    } catch (e) { last = `${u} → ${(e as Error).message}` }
+  }
+  throw new Error('brand image could not be loaded: ' + last)
+}
+/** the icon / preview must never fail: if the uploaded picture can't be read, use the default mark (and say why in the log) */
+async function loadOr(url: string, base: string, fallback: Buffer) {
+  try { return await load(url, base) } catch (e) { console.error('[brand] ' + (e as Error).message); return fallback }
 }
 
 export async function brandContext(): Promise<Brand> {
@@ -42,12 +59,12 @@ export async function brandIcon(brand: Brand, size: number, base: string, solid 
   if (hit) return hit
   let out: Buffer
   if (brand.iconUrl) {
-    let img = sharp(await trimmed(await load(brand.iconUrl, base))).resize(size, size, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    let img = sharp(await trimmed(await loadOr(brand.iconUrl, base, defaultMark(brand.blue)))).resize(size, size, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
     if (solid) img = img.flatten({ background: brand.night })
     out = await img.png().toBuffer()
   } else if (brand.logoUrl) {
     const pad = Math.round(size * (size <= 32 ? 0.1 : 0.14)), inner = size - pad * 2
-    const logo = await sharp(await trimmed(await load(brand.logoUrl, base))).resize(inner, inner, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer()
+    const logo = await sharp(await trimmed(await loadOr(brand.logoUrl, base, defaultMark(brand.blue)))).resize(inner, inner, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer()
     const r = solid ? 0 : Math.round(size * 0.22)   // Apple rounds home-screen icons itself
     const tile = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}"><rect width="${size}" height="${size}" rx="${r}" fill="${brand.night}"/></svg>`)
     out = await sharp(tile).composite([{ input: logo, top: pad, left: pad }]).png().toBuffer()
@@ -62,15 +79,24 @@ export async function brandIcon(brand: Brand, size: number, base: string, solid 
 
 /** 1200×630 link-preview image: the uploaded share image, or the logo on the site's background. */
 export async function brandShareImage(brand: Brand, base: string) {
-  const key = `og:${brand.shareId || ''}:${brand.logoId || 'default'}:${brand.night}:${brand.navy}`
+  const key = `og2:${brand.shareId || ''}:${brand.logoId || 'default'}:${brand.night}:${brand.navy}`
   const hit = cache.get(key)
   if (hit) return hit
-  let out: Buffer
-  if (brand.shareUrl) out = await load(brand.shareUrl, base)
-  else {
+  let out: Buffer | null = null
+  if (brand.shareUrl) { try { out = await load(brand.shareUrl, base) } catch (e) { console.error('[brand] ' + (e as Error).message) } }
+  if (!out) {
+    // the logo, large and centred on the site's dark background (a wide wordmark reads well at this size)
     const bg = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630"><defs><radialGradient id="g" cx="50%" cy="40%" r="75%"><stop offset="0" stop-color="${brand.navy}"/><stop offset="1" stop-color="${brand.night}"/></radialGradient></defs><rect width="1200" height="630" fill="url(#g)"/></svg>`)
-    const logo = await brandIcon(brand, 300, base)
-    out = await sharp(bg).composite([{ input: logo, top: 165, left: 450 }]).jpeg({ quality: 88, mozjpeg: true }).toBuffer()
+    let logo: Buffer
+    try {
+      if (!brand.logoUrl) throw new Error('no logo')
+      logo = await sharp(await trimmed(await load(brand.logoUrl, base))).resize(760, 300, { fit: 'inside' }).png().toBuffer()
+    } catch (e) {
+      if (brand.logoUrl) console.error('[brand] ' + (e as Error).message)
+      logo = await brandIcon(brand, 300, base)
+    }
+    const m = await sharp(logo).metadata()
+    out = await sharp(bg).composite([{ input: logo, top: Math.round((630 - (m.height || 300)) / 2), left: Math.round((1200 - (m.width || 300)) / 2) }]).jpeg({ quality: 88, mozjpeg: true }).toBuffer()
   }
   cache.set(key, out)
   return out

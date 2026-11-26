@@ -1086,3 +1086,37 @@ See `docs/HANDOFF.md` §4.
   for checks. Measured (rotation as seen on screen): back to top — 0° while flying, 31° landing glide; Odds — 0° in flight,
   6° landing; Bonus — 0° in flight, one turn on arrival to show the welcome-bonus screen; phone visible throughout
   (opacity only lowered by the usual footer fade).
+
+## 2026-11-26 — Link previews & favicon on the live site (Render)
+
+- Problem on Render: `NEXT_PUBLIC_SERVER_URL` was not set, so the preview image pointed at `http://localhost:3000`; the
+  `/brand/*` and `/favicon.ico` routes answered 500 (the logo was fetched through the public address from inside the
+  container); chat pages had no preview tags at all (WhatsApp showed a bare "Community · OddsClub").
+- `src/lib/brand-images.ts`: the logo is read through the server's own loopback first (then `NEXT_PUBLIC_SERVER_URL`, then
+  the request address), with an 8 s timeout; if it still fails the icons fall back to the default mark (never a 500) and
+  the reason is logged as `[brand] …`. The share image now shows the trimmed logo large and centred.
+- `src/lib/brand.ts` `publicOrigin()`: `NEXT_PUBLIC_SERVER_URL`, else the address the request came in on
+  (`x-forwarded-host` / `x-forwarded-proto`), so previews are absolute and correct even before the variable is set.
+- New `src/lib/site-metadata.ts` `siteMetadata()`: one place for Open Graph / X card / icons / theme colour; the preview
+  image URL is versioned (`/brand/og?v=…`) so a new logo gives a new preview. Used by the home page and the chat page.
+- Chat page: every chat link gets the logo card. A **public** group's link (`/chat/g-<id>`) shows that group's name,
+  description and picture; an invite link (`/chat/join-<token>`) shows the group it invites to. Hidden / members-only
+  groups only get the generic community card. Group pictures are served as JPEG by the new `/brand/room/<id>` (public
+  groups, or with the invite token) since WhatsApp doesn't reliably show .webp.
+- Checked locally: `/en`, `/en/chat`, `/en/chat/g-…` have absolute og:image / twitter:image / icons; `/brand/og`,
+  `/brand/icon/32|192`, `/favicon.ico`, `/brand/room/<id>` → 200; unknown room → 404. Type-check clean.
+- `docs/DEPLOYMENT.md`: troubleshooting row for missing link-preview logos.
+
+## 2026-11-26 — Links to a conversation that isn't yours
+
+- Opening `/chat/pm-<id>`, `/chat/sup-<id>` or `/chat/g-<id>` for a conversation the viewer has no access to (someone
+  else's private chat, a hidden group, a deleted room) waited for it forever: the address kept the foreign id, the
+  "waiting for the room" state stayed on, and the Community lounge showed behind it. The server was already safe
+  (`history` / hello only send a private chat to its two people and a group to those allowed to read it).
+- `engine.ts` `giveUpWantRoom()`: called when the groups arrive (the last part of each connection's data); if the room
+  still isn't in the viewer's list → stop waiting, back to the room list (`/chat`) with "This conversation isn't
+  available to you." (new string `chat.roomUnavailable`, en + fr). Checked: foreign pm link → room list + note; unknown
+  group → same; a real public group link still opens after a refresh.
+- Found while testing: the local database's logo file (`brand-logo-1795546324466.png`) is gone from R2. The local and
+  Render databases share one R2 bucket; replacing the logo on Render removed the old logo's file, which the local copy
+  still points at. Re-upload the logo locally, and use a separate bucket (or prefix) for local work.

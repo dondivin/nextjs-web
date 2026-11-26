@@ -680,6 +680,7 @@ export const en: Strings = {
   'rooms.joinSignIn': 'Sign in to join the room you were invited to.',
   'rooms.joinedByLink': 'You joined {name}',
   'rooms.err.badLink': 'This invite link doesn’t work any more.',
+  'chat.roomUnavailable': 'This conversation isn’t available to you.',
 }
 
 export const fr: Strings = {
@@ -1337,6 +1338,7 @@ export const fr: Strings = {
   'rooms.joinSignIn': 'Connectez-vous pour rejoindre le salon où vous êtes invité·e.',
   'rooms.joinedByLink': 'Vous avez rejoint {name}',
   'rooms.err.badLink': 'Ce lien d’invitation ne marche plus.',
+  'chat.roomUnavailable': 'Cette conversation ne vous est pas accessible.',
 }
 
 /** Translator help text per key prefix (shown in the back office). */

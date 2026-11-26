@@ -34,3 +34,20 @@ export async function seoDescription(payload: Payload, locale: string, def: stri
 
 /** Absolute base URL of the site (needed for share images, sitemap, structured data). Set NEXT_PUBLIC_SERVER_URL in production. */
 export const siteUrl = () => (process.env.NEXT_PUBLIC_SERVER_URL || 'http://localhost:3000').replace(/\/+$/, '')
+
+/**
+ * The site's public address for links in page metadata (link previews, canonical…): NEXT_PUBLIC_SERVER_URL, or else the
+ * address the visitor / crawler actually used (the host the hosting's proxy passes on) — never a localhost address on a
+ * real server even if the variable was forgotten.
+ */
+export async function publicOrigin(): Promise<string> {
+  const env = (process.env.NEXT_PUBLIC_SERVER_URL || '').replace(/\/+$/, '')
+  if (env) return env
+  try {
+    const { headers } = await import('next/headers')
+    const h = await headers()
+    const host = h.get('x-forwarded-host') || h.get('host')
+    if (host) return `${(h.get('x-forwarded-proto') || (/^(localhost|127\.)/.test(host) ? 'http' : 'https')).split(',')[0]}://${host}`
+  } catch {}
+  return siteUrl()
+}

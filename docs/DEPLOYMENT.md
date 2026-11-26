@@ -216,5 +216,6 @@ to the chat reconnect by themselves after a few seconds.
 | Messages show "🔒 This message can't be read" | `CHAT_MASTER_KEY` missing or not the key the data was encrypted with (`docs/ENCRYPTION.md`) |
 | Everyone was signed out | `PAYLOAD_SECRET` changed — expected; passwords are unchanged |
 | Invite links / share images point to localhost | `NEXT_PUBLIC_SERVER_URL` not set to the public `https://` address (then restart — it's read when the server runs, no rebuild needed) |
+| WhatsApp / Facebook link preview has no logo | Set `NEXT_PUBLIC_SERVER_URL`, redeploy, then share a **new** link (WhatsApp caches a preview per link for a while — adding `?x=1` gives a fresh one). If the logo still doesn't load, the server log shows a line starting with `[brand]` with the reason |
 | Microphone button missing / not working | The site isn't on HTTPS |
 | `pnpm build` killed / out of memory | Build on a machine with ≥ 4 GB RAM (add swap on a small VPS), or build the Docker image elsewhere |

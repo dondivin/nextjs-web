@@ -2065,6 +2065,15 @@ window.addEventListener('pagehide', touchSeen);
 /* ================= Data + chat backend ================= */
 LIVE.matches = (cfg.matches || []).map(function(m){ var o = Object.assign({}, m); o.kickoff = kickoffLabel(m.startsAt); return o; });
 renderSportTabs(); renderMatches(); updateTicker(); LIVE.dirty = true;
+/* A link to a conversation that isn't this viewer's (someone else's private chat, a hidden group, a deleted room…):
+   once everything has arrived (groups come last on connect) and it's still not there, stop waiting for it — back to the
+   room list with a short note, instead of waiting forever with the lounge showing behind. The server never sends its
+   messages anyway. */
+function giveUpWantRoom(){
+  if (!CHAT.wantRoom || !UI.ready || rooms().some(function(r){ return r.id === CHAT.wantRoom; })) return;
+  CHAT.wantRoom = null; $('messenger').classList.remove('want-room');
+  if (isOpen()){ toast(S('chat.roomUnavailable')); goChat('', {replace: true}); }
+}
 function refreshChat(mode){ renderRooms(); if (isOpen()){ renderHeader(); renderConvo(mode); } if (CHAT.wantRoom && rooms().some(function(r){ return r.id === CHAT.wantRoom; })){ CHAT.wantRoom = null; route(); } }
 function updateLounge(){
   var n = online(null), msgs = LIVE.messages.length;
@@ -2092,7 +2101,7 @@ var backend = createChatBackend(cfg, {
     // the chat I'm looking at was closed (blocked / cancelled / declined): back to the room list
     if (pmUid(CHAT.active) && !PM.rels[pmUid(CHAT.active)] && isOpen() && chatFromPath().room === CHAT.active) goChat('', {replace: true}); },
   receipts: function(map, gmap){ RCPT = map || {}; RCPTG = gmap || {}; renderRooms(); if (isOpen() && (isDmRoom(CHAT.active) || grpId(CHAT.active))) renderConvo(); },
-  groups: function(list){ GR.list = list || []; refreshChat(); if (grpId(CHAT.active)) applyComposer();
+  groups: function(list){ GR.list = list || []; refreshChat(); if (grpId(CHAT.active)) applyComposer(); giveUpWantRoom();
     if (grpId(CHAT.active) && !grpOf(CHAT.active) && !CHAT.wantRoom && isOpen() && chatFromPath().room === CHAT.active) goChat('', {replace: true}); },
   groupMsgs: function(id, list, mode){ GR.msgs[id] = list; refreshChat(CHAT.active === 'g:' + id ? mode : undefined); },
   pmMsgs: function(uid, list, mode){ PM.msgs[uid] = list; refreshChat(CHAT.active === 'pm:' + uid ? mode : undefined); },
