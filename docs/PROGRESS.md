@@ -1077,3 +1077,12 @@ See `docs/HANDOFF.md` §4.
   inside them the catch-up is a bit quicker (0.6 instead of 0.35). Measured: flick past the whole section → phone settles
   0.3 s after the page (was ≈ 1.7 s); flick stopping inside → 1.2 s of calm turns.
 - The cut-off left texts in the screenshot: no width between 880 and 1440 px cuts a callout (checked) — the screenshot crop.
+- Follow-up (owner: "you made the mockup disappear on back to top / Bonus / Odds — let it travel there as before, just
+  without spinning until it arrives"): the phone no longer fades out. During a jump it stays visible and follows the page's
+  position and size, but its rotation is fixed to an upright pose facing you (the nearest front-facing angle; settles into it
+  over ½ s from wherever it was) — the scroll-driven pose itself turns as the page flies, so it isn't used during the jump.
+  On arrival it glides (shortest way, .9 s) into the live pose; if the destination shows another screen it then turns once
+  and swaps at the half turn (as before). Callouts still step aside for the flight. `window.__phonePose()` (read-only) added
+  for checks. Measured (rotation as seen on screen): back to top — 0° while flying, 31° landing glide; Odds — 0° in flight,
+  6° landing; Bonus — 0° in flight, one turn on arrival to show the welcome-bonus screen; phone visible throughout
+  (opacity only lowered by the usual footer fade).

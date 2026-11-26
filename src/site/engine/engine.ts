@@ -2347,16 +2347,20 @@ route();
   window.__phoneFlipping = function(v){ flipping = v; };
   // jump state (back-to-top / nav links) and footer fade
   var jumpUntil = 0, shownPose = [0, 0, 0, 0, 0, 1], lastFrame = performance.now(), footEl = document.querySelector('footer'), lastOp = '';
-  /* Menu links / back to top: the page flies past several sections. Instead of a frozen phone floating over them (and the
-     callouts flashing through every feature), the phone and the callouts fade out for the flight, the phone takes the
-     destination's pose and screen while unseen, and both come back once on arrival. */
-  var JF = {v: 1}, wasJumping = false;
+  /* Menu links / back to top: the page flies past several sections. The phone stays visible and travels with the page,
+     but doesn't spin: over ~½ s it settles from wherever it was into a calm upright pose facing you, keeps that pose for
+     the flight, and on arrival glides (shortest way) into the destination's pose — one turn there if the screen must
+     change. The callouts step aside for the flight instead of flashing through every feature. */
+  var wasJumping = false, jumpFrom = null, jumpT0 = 0, landFrom = null, landK = 0, jumpFace = 0;
   window.__phoneJump = function(ms){
     jumpUntil = performance.now() + ms + 80; JUMP.until = jumpUntil;
     if (REDUCE) return;
-    G.to(JF, {v: 0, duration: .22, ease: 'power2.in', overwrite: true});
+    if (!wasJumping){ jumpFrom = shownPose.slice(); jumpT0 = performance.now(); landFrom = null; jumpFace = Math.round(jumpFrom[3] / (Math.PI * 2)) * Math.PI * 2; }   // facing you, the nearest way
     if (feat) feat.classList.add('jumping');
   };
+  function blendPose(a, b, k){   // angles the shortest way round (ry carries whole turns)
+    return b.map(function(v, i){ var d = v - a[i]; if (i >= 2 && i <= 4) d = Math.atan2(Math.sin(d), Math.cos(d)); return a[i] + d * k; });
+  }
   // Screen changes: normally they happen while the phone's back faces you (mid-turn), so you never see a cut. When the phone is
   // facing you and the screen must change anyway (e.g. arriving at the top after "back to top"), it turns once and swaps
   // at the half turn.
@@ -2425,14 +2429,12 @@ route();
       if (flowY == null || jumping) flowY = FP.y; else { var dy = FP.y - flowY, stepY = dy * (1 - Math.exp(-dt * 10)), maxY = size.h * upp0 * 2.4 * dt; flowY += Math.abs(stepY) > maxY ? (stepY > 0 ? maxY : -maxY) : stepY; }
       FP.y = flowY; Q = fk >= 1 ? FP : {x:P.x + (FP.x - P.x) * fk, y:P.y + (FP.y - P.y) * fk, rx:P.rx + (FP.rx - P.rx) * fk, ry:P.ry + (FP.ry - P.ry) * fk, rz:P.rz + (FP.rz - P.rz) * fk, s:P.s + (FP.s - P.s) * fk}; }   // below the features: same place, scroll-linked turn (see tailPose)
     if (wasJumping && !jumping){
-      // arrived: still unseen, so show the destination's screen directly (no turn), then come back in
-      var want = Dk ? Dk.screen : f >= 0 ? FEAT_SCREENS[Math.max(0, Math.min(3, Math.round(O.sa / TURN)))] : (S2.pA < 0.5 ? 0 : 1);
-      if (want !== shown) showScreen(want, true);
-      G.to(JF, {v: 1, duration: .6, ease: 'power2.out', overwrite: true});
+      // arrived: glide from the calm flight pose into the live one (see below); the callouts come back once
+      landFrom = shownPose.slice(); landK = 0; jumpFrom = null;
       if (feat){ feat.classList.remove('jumping'); animateCallouts(S2.feature, -1); }   // the arrival feature's entrance, once
     }
     wasJumping = jumping;
-    if (jumping){}
+    if (jumping || landFrom){}   // screen changes wait for the landing glide (then: one turn if needed)
     else if (Dk){ if (Dk.screen !== shown) wantScreen(Dk.screen, O.flip + O.drag + O.sa + Dk.spin); }
     else if (f >= 0 && !REDUCE){ var si = FEAT_SCREENS[Math.max(0, Math.min(3, Math.round(O.sa / TURN)))]; if (si !== shown) wantScreen(si, O.flip + O.drag + O.sa); }
     var idle = REDUCE ? 0 : 1, exitK = 1 - Math.min(1, O.ey / 7);
@@ -2449,13 +2451,24 @@ route();
     var live = [Q.x + tb[2] * arc * swayX, Q.y + O.iy + O.ey + Math.sin(t * 1.3) * 0.06 * idle,
       Q.rx + O.leanX + O.erx - O.my * 0.12 * exitK - spinK * 0.12 + tb[0] * arc, Q.ry + O.iry + lean + stRy + O.flip + O.drag + O.sa + dSpin + O.mx * 0.22 * exitK, Q.rz + stRz + tb[1] * arc + Math.sin(t * 0.9) * 0.02 * idle,
       Q.s * O.is * O.es * (1 + Math.abs(spinK) * 0.06)];
-    // jumps: the phone follows the live pose while faded out, and grows back a little as it fades in
-    var out = live.slice(); out[5] *= 0.9 + 0.1 * JF.v;
+    // jumps: during the flight a calm pose (live position, no spin / tumble / sway); then the landing glide into the live pose
+    var out = live;
+    if (jumping){
+      // a fixed upright pose facing you (the scroll-driven pose itself turns as the page flies, so it isn't used here);
+      // only the position and size follow the page
+      var calm = [Q.x, Q.y + O.iy + O.ey, -0.06, jumpFace, 0, Q.s * O.is * O.es];
+      var kIn = Math.min(1, (now - jumpT0) / 500); kIn = 1 - Math.pow(1 - kIn, 3);
+      out = jumpFrom ? blendPose(jumpFrom, calm, kIn) : calm;
+    } else if (landFrom){
+      landK = Math.min(1, landK + Math.min(50, now - lastFrame) / 900); var kL = 1 - Math.pow(1 - landK, 3);
+      out = blendPose(landFrom, live, kL);
+      if (landK >= 1) landFrom = null;
+    }
     shownPose = out; lastFrame = now;
     spin.position.set(out[0], out[1], 0); spin.rotation.set(out[2], out[3], out[4]); spin.scale.setScalar(out[5]);
     // fade a little as the footer comes into view
     var ft = footEl ? footEl.getBoundingClientRect().top : size.h, fv = Math.max(0, Math.min(1, (size.h - ft) / (size.h * 0.45)));
-    var op = ((1 - 0.6 * fv * fv * (3 - 2 * fv)) * JF.v).toFixed(3); if (op !== lastOp){ lastOp = op; canvas.style.opacity = op; }
+    var op = (1 - 0.6 * fv * fv * (3 - 2 * fv)).toFixed(3); if (op !== lastOp){ lastOp = op; canvas.style.opacity = op; }
     renderer.render(scene, camera);
   }
   function setPalette(c){ C.bg = c.night; C.card = c.panel; C.line = c.navy2; C.blue = c.blue; C.green = c.cta; C.ink = c.ink; C.yellow = c.odds; C.oddBg = c.oddBg; C.wall = c.navy; C.bin = c.navy2; C.bout = c.blue; }
@@ -2475,6 +2488,7 @@ route();
   };
   if (CUR_BRAND) window.phoneBrand(CUR_BRAND, true);
   window.__phoneO = O;
+  window.__phonePose = function(){ return shownPose.slice(); };   // read-only: the pose drawn last (for checks)
   G.ticker.add(frame);
 })();
   // drag the phone: it follows your finger; let go past the threshold and it spins into the next partner
