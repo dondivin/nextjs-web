@@ -16,6 +16,7 @@ type Hub = {
   clients: Map<string, Client>
   peersTimer: ReturnType<typeof setTimeout> | null
   lastPost: Map<string, number> // uid → time of the last message (slow mode)
+  batches?: Map<string, { id: string; room: string; n: number; at: number }> // uid → photos being sent together (one album)
 }
 
 const g = globalThis as unknown as { __ocChatHub?: Hub }

@@ -28,6 +28,9 @@ export async function siteMetadata(payload: Payload, o: {
       icon: [{ url: '/brand/icon/32?v=' + iconVersion(brand), sizes: '32x32', type: 'image/png' }, { url: '/brand/icon/192?v=' + iconVersion(brand), sizes: '192x192', type: 'image/png' }],
       apple: [{ url: '/brand/icon/180?v=' + iconVersion(brand), sizes: '180x180', type: 'image/png' }],
     },
+    manifest: '/manifest.webmanifest',
+    // iPhone: "Add to Home Screen" opens the site like an app — full screen, no address bar
+    appleWebApp: { capable: true, title: o.siteName, statusBarStyle: 'black' },
     robots: { index: o.index !== false, follow: true },
     other: { 'theme-color': brand.night },
   }

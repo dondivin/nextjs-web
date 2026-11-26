@@ -193,7 +193,7 @@ type Body = Record<string, unknown>
 const str = (v: unknown, max = 200) => (typeof v === 'string' ? v.slice(0, max) : '')
 
 /** Checks shared by text and picture messages: who may post, where it goes, slow mode, the quoted message. */
-async function prepareSend(ctx: Ctx, b: Body, text: string) {
+async function prepareSend(ctx: Ctx, b: Body, text: string, opts: { batch?: string } = {}) {
   needPoster(ctx)
   const cfg = await chatConfig(ctx.payload)
   if (text) {
@@ -238,8 +238,12 @@ async function prepareSend(ctx: Ctx, b: Body, text: string) {
   // slow mode (members only)
   const uid = ctx.viewer.uid as string
   if (ctx.viewer.kind === 'member' && cfg.slowMs && !room.startsWith('dm:') && !room.startsWith('pm:')) {   // shared rooms only
+    // several photos picked together (an album, like WhatsApp) count as one post: the 2nd…10th photo of the same batch, in
+    // the same room, within 3 minutes of the first, skip the wait
+    const bt = opts.batch ? hub.batches?.get(uid) : undefined
+    const inBatch = !!bt && bt.id === opts.batch && bt.room === room && bt.n < ALBUM_MAX && Date.now() - bt.at < 180_000
     const wait = (hub.lastPost.get(uid) || 0) + cfg.slowMs - Date.now()
-    if (wait > 0) throw new ChatError(ctx.t('rule.slow', { s: Math.ceil(wait / 1000) }), 429)
+    if (wait > 0 && !inBatch) throw new ChatError(ctx.t('rule.slow', { s: Math.ceil(wait / 1000) }), 429)
   }
 
   // reply: always quote the stored message, never what the browser claims
@@ -289,10 +293,12 @@ export async function send(ctx: Ctx, b: Body) {
  * A picture (+ optional caption), multipart: file, room | dmTo, text, clientId, reply (JSON).
  * Members: only in their own direct chat with the team. Staff: everywhere.
  */
+const ALBUM_MAX = 10   // photos picked and sent together
 export async function sendImage(ctx: Ctx, form: FormData) {
   const b: Body = Object.fromEntries([...form.entries()].filter(([, v]) => typeof v === 'string'))
   const text = str(b.text, 5000).trim()
-  const p = await prepareSend(ctx, b, text)
+  const batch = /^[\w-]{4,40}$/.test(String(b.batch || '')) ? String(b.batch) : undefined
+  const p = await prepareSend(ctx, b, text, { batch })
   if (ctx.viewer.kind !== 'staff' && p.room !== 'dm:' + ctx.viewer.uid && !(ctx.perms.sendPictures && !p.room.startsWith('pm:'))) throw new ChatError(ctx.t('chat.err.imagesDmOnly'), 403)
   if (roomMedia(await mediaPolicy(ctx.payload), p.room)?.view === 'none') throw new ChatError(ctx.t('chat.err.mediaOff'), 403)   // text-only room
   const file = form.get('file')
@@ -310,6 +316,11 @@ export async function sendImage(ctx: Ctx, form: FormData) {
     data: { room: p.room, thumb },
     file: { data, mimetype: 'image/webp', name: `chat-${randomBytes(12).toString('hex')}.webp`, size: data.length },
   })
+  if (batch && ctx.viewer.uid) {
+    const map = (hub.batches ||= new Map()), cur = map.get(ctx.viewer.uid)
+    if (cur && cur.id === batch && cur.room === p.room) cur.n++
+    else map.set(ctx.viewer.uid, { id: batch, room: p.room, n: 1, at: Date.now() })
+  }
   return createMessage(ctx, b, p, text, String(img.id))
 }
 

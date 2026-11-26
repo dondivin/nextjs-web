@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import { CheckCircle2, Clock, Loader2, XCircle } from 'lucide-react'
 import { Button } from '@/backoffice/components/ui/button'
 import { Input } from '@/backoffice/components/ui/input'
+import { PasswordInput } from '@/backoffice/components/ui/password-input'
 import { Label } from '@/backoffice/components/ui/label'
 import { Textarea } from '@/backoffice/components/ui/textarea'
 import { completeStaffReset, requestStaffReset, staffResetStatus } from '@/backoffice/actions/staff-reset'
@@ -96,7 +97,7 @@ export function ForgotForm() {
       </div>
       <div className="grid gap-2">
         <Label htmlFor="password">New password</Label>
-        <Input id="password" type="password" autoComplete="new-password" minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} required />
+        <PasswordInput id="password" autoComplete="new-password" minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} required />
         <p className="text-xs text-muted-foreground">At least 8 characters.</p>
       </div>
       {err}

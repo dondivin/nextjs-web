@@ -77,6 +77,22 @@ body.scrolled .nav{background:color-mix(in srgb, var(--nav-bg) 94%, transparent)
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:10px;min-height:52px;padding:0 26px;border-radius:12px;font:800 14px/1 var(--body);letter-spacing:.06em;text-transform:uppercase;text-decoration:none;border:2px solid transparent;cursor:pointer;transition:transform .2s, background .2s, opacity .2s}
 .btn:hover{transform:translateY(-1px)}
 .btn:disabled{opacity:.45;cursor:not-allowed;transform:none}
+/* waiting for the server: the button keeps its size and colour, its label makes way for a spinner (not a faded "stuck" look) */
+/* password field with an eye (show / hide) */
+.pw-wrap{position:relative;display:block}
+.pw-wrap input{width:100%;padding-right:48px !important}
+.pw-eye{position:absolute;top:0;right:0;bottom:0;width:46px;display:grid;place-items:center;border:0;background:transparent;color:inherit;opacity:.6;cursor:pointer;border-radius:0 12px 12px 0;transition:opacity .15s}
+.pw-eye:hover,.pw-eye:focus-visible,.pw-eye.on{opacity:1}
+.pw-eye:focus-visible{outline:2px solid var(--c-accent,#88AB45);outline-offset:-4px}
+.pw-eye .icon{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.pw-eye .i-hide,.pw-eye.on .i-show{display:none}
+.pw-eye.on .i-hide{display:block}
+.is-busy{position:relative;cursor:progress !important;-webkit-text-fill-color:transparent}
+.is-busy:disabled,.btn.is-busy:disabled,[aria-busy="true"]:disabled{opacity:1;cursor:progress}   /* from the press on: no fading while it waits */
+.is-busy > *{opacity:0}
+.is-busy::after{content:"";position:absolute;inset:0;margin:auto;width:18px;height:18px;border-radius:50%;box-sizing:border-box;border:2.4px solid color-mix(in srgb, currentColor 28%, transparent);border-top-color:currentColor;animation:busy-spin .7s linear infinite}
+@keyframes busy-spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.is-busy::after{animation-duration:1.6s}}
 .btn-primary{background:var(--green);color:var(--green-ink)}
 .btn-primary:hover{filter:brightness(1.08)}
 .btn-secondary{border-color:rgba(242,247,255,.45);color:var(--light);background:transparent}
@@ -248,12 +264,12 @@ html.chat-open, html.chat-open body{overflow:hidden}
   --c-pin-bg:#0A2140; --c-pin-text:#C9D9F0; --c-pin-accent:#7CC242;
   --c-wall:#0A2140; --c-wall-img:radial-gradient(rgba(214,230,255,.05) 1.2px, transparent 1.4px); --c-wall-size:24px 24px;
   --c-in:#14385F; --c-in-text:#F2F7FF; --c-out:#1F6FE0; --c-out-text:#FFFFFF; --c-meta-in:rgba(242,247,255,.6); --c-meta-out:rgba(255,255,255,.78); --c-tick:#FFFFFF;
-  --c-accent:#7CC242; --c-accent-ink:#0B1F05; --c-quote-bar:#7CC242; --c-quote-bg:rgba(0,0,0,.2); --c-quote-name:#7CC242;
+  --c-accent:#7CC242; --c-accent-ink:#0D2747; --c-quote-bar:#7CC242; --c-quote-bg:rgba(0,0,0,.2); --c-quote-name:#7CC242;
   --c-dock-bg:#0D2747; --c-field:#081A30; --c-field-text:#F2F7FF; --c-field-border:rgba(214,230,255,.13); --c-placeholder:#6C84A3; --r-field:24px;
   --c-day-bg:#0D2747; --c-day-text:#9DB3CF; --c-menu-bg:#123460; --c-menu-text:#F2F7FF; --c-menu-hover:rgba(255,255,255,.08); --c-danger:#FF8A80;
   --c-react-bg:#0D2747; --c-react-border:rgba(214,230,255,.15); --c-react-mine:rgba(124,194,66,.28);
   --c-seg-bg:#081A30; --c-seg-pill:#F2F7FF; --c-seg-text:#9DB3CF; --c-seg-on:#081A30;
-  --c-unread:#7CC242; --c-unread-ink:#0B1F05; --c-send:#7CC242; --c-send-ink:#0B1F05;
+  --c-unread:#7CC242; --c-unread-ink:#0D2747; --c-send:#7CC242; --c-send-ink:#0D2747;
   --r-bubble:18px; --r-group:6px; --shadow-bubble:0 1px 1px rgba(0,0,0,.25);
   --font-chat:Manrope,"Segoe UI",system-ui,sans-serif; --font-title:Anton,Impact,sans-serif; --title-tf:uppercase; --title-size:21px; --title-weight:400;
   color-scheme:dark;
@@ -600,6 +616,20 @@ html.chat-open, html.chat-open body{overflow:hidden}
 .dock{position:relative;z-index:4;flex:none;display:flex;flex-direction:column;padding:8px 12px calc(8px + env(safe-area-inset-bottom,0px));background:var(--c-dock-bg)}
 /* a chosen wallpaper runs behind the input too (like WhatsApp): the bar under the field becomes see-through */
 .wp-scope[data-wp="cover"] .dock,.wp-scope[data-wp="tile"] .dock{background:transparent}
+/* on-screen keyboard: the chat takes the visible part of the screen above it (see engine.ts), with room between the box and the keys */
+.messenger.open{top:var(--vvt,0px);bottom:auto;height:var(--vvh,100%)}
+.messenger.kb-open .dock{padding-bottom:14px}
+.sheet-wrap.open{top:var(--vvt,0px);bottom:auto;height:var(--vvh,100%)}
+.sheet-wrap.open .sheet{max-height:min(calc(var(--vvh,100vh) - 24px),780px)}
+html.kb-open .sheet-wrap.open .sheet{padding-bottom:16px}
+.sheet[tabindex="-1"]:focus{outline:none}   /* the form itself holds the focus on phones (no keyboard popping up): no ring */
+/* the picture editor follows the visible area too: caption + photo strip stay just above the keyboard, and its height
+   follows the keyboard smoothly instead of jumping */
+.pe.open{top:var(--vvt,0px);bottom:auto;height:var(--vvh,100%);transition:height .26s cubic-bezier(.2,.8,.2,1)}
+.messenger.open{transition:opacity .24s ease, visibility 0s, height .26s cubic-bezier(.2,.8,.2,1)}   /* (the open state, plus a smooth height with the keyboard) */
+@keyframes pe-thumb-in{from{opacity:0;transform:scale(.6)}}
+.pe-thumb.fresh{animation:pe-thumb-in .28s cubic-bezier(.2,.9,.3,1.2) both}
+@media (prefers-reduced-motion:reduce){.pe.open,.messenger.open{transition:none}.pe-thumb.fresh{animation:none}}
 .reply-wrap{display:grid;grid-template-rows:0fr;transition:grid-template-rows var(--spring-d) var(--spring)}
 .reply-wrap.show{grid-template-rows:1fr}
 .reply-wrap > div{overflow:hidden;min-height:0}
@@ -1051,6 +1081,17 @@ html.chat-open, html.chat-open body{overflow:hidden}
 .pe-h::after{content:"";position:absolute;inset:8px;background:#fff;border-radius:3px;box-shadow:0 1px 4px rgba(0,0,0,.5)}
 .pe-nw{left:0;top:0;cursor:nwse-resize}.pe-n{left:50%;top:0;cursor:ns-resize}.pe-ne{left:100%;top:0;cursor:nesw-resize}.pe-e{left:100%;top:50%;cursor:ew-resize}
 .pe-se{left:100%;top:100%;cursor:nwse-resize}.pe-s{left:50%;top:100%;cursor:ns-resize}.pe-sw{left:0;top:100%;cursor:nesw-resize}.pe-w{left:0;top:50%;cursor:ew-resize}
+.pe-strip{display:flex;gap:8px;padding:10px 12px 0;overflow-x:auto;flex:none;scrollbar-width:none;justify-content:center}
+.pe-strip::-webkit-scrollbar{display:none}
+@media (max-width:560px){.pe-strip{justify-content:flex-start}}
+.pe-thumb{position:relative;flex:none;width:52px;height:52px;padding:0;border:2px solid transparent;border-radius:10px;overflow:hidden;background:#1A222C;cursor:pointer;opacity:.7;transition:opacity .15s,border-color .15s,transform .15s}
+.pe-thumb img{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none}
+.pe-thumb.on{border-color:#fff;opacity:1}
+.pe-thumb:hover{opacity:1}
+.pe-thumb:active{transform:scale(.94)}
+.pe-add{display:grid;place-items:center;color:#fff;border:2px dashed rgba(255,255,255,.35);background:transparent;opacity:1}
+.pe-add .icon{width:22px;height:22px}
+.pe-del-photo[hidden]{display:none}
 .pe-sub{display:none;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;padding:10px 12px 0;flex:none}
 .pe[data-mode="crop"] .pe-sub,.pe[data-mode="draw"] .pe-sub,.pe[data-mode="sticker"] .pe-sub{display:flex}
 .pe-aspects,.pe-colors{display:none;gap:6px;align-items:center}
@@ -1063,7 +1104,7 @@ html.chat-open, html.chat-open body{overflow:hidden}
 .pe-bottom input{flex:1;min-width:0;height:46px;border-radius:999px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:#fff;padding:0 18px;font:500 15px var(--font-chat);outline:none}
 .pe-bottom input:focus{border-color:rgba(255,255,255,.5)}
 .pe-bottom input::placeholder{color:rgba(255,255,255,.55)}
-.pe-send{width:48px;height:48px;border:0;border-radius:50%;background:var(--c-send,#7DB342);color:var(--c-send-ink,#0B1F05);display:grid;place-items:center;cursor:pointer;flex:none}
+.pe-send{width:48px;height:48px;border:0;border-radius:50%;background:var(--c-send,#7DB342);color:var(--c-send-ink,#0D2747);display:grid;place-items:center;cursor:pointer;flex:none}
 .pe-send .icon{width:22px;height:22px}
 @media (max-width:560px){ .pe-title{display:none} .pe-top{justify-content:space-between} }
 @media (prefers-reduced-motion:reduce){ .pe.open{animation:none} }
@@ -1234,12 +1275,18 @@ button.gs-person:hover{background:color-mix(in srgb, var(--c-menu-text) 7%, tran
 .ts-pane.ts-in-r{animation:rs-in-r .34s cubic-bezier(.2,.8,.25,1)}
 .ts-pane.ts-in-l{animation:rs-in-l .34s cubic-bezier(.2,.8,.25,1)}
 .ts-head{display:flex;align-items:center;gap:6px;margin-left:-8px}
+/* the step's title stays visible while its cards scroll (it was cut off by the sheet's top edge) */
+.theme-steps .ts-head{position:sticky;top:-24px;z-index:3;margin:-24px -24px 0 -24px;padding:16px 24px 8px 16px;background:var(--c-menu-bg)}
 .ts-head .iconbtn{color:var(--c-menu-text);flex:none}
 /* bubble cards: a tiny chat in the chosen theme's colours */
 .bprev{height:128px;border-radius:12px;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;padding:8px 16px 12px;background-color:var(--c-wall);background-image:var(--c-wall-img);background-size:var(--c-wall-size);border:1px solid var(--c-border);pointer-events:none}
 .bprev .row{margin-top:3px}.bprev .row.gap{margin-top:7px}
 .bprev .bwrap{max-width:88%}
-.bprev .bubble{font:500 12px/1.25 var(--font-chat);padding:6px 10px;white-space:nowrap;overflow:visible}
+.bprev .bubble{font:500 12px/1.25 var(--font-chat);padding:6px 10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.bprev .bwrap{min-width:0}
+/* small phones: the cards are narrow — the whole mini chat is drawn smaller so the bubbles fit whole (no "…") */
+@media (max-width:420px){.bprev{padding:8px 10px 12px}.bprev .row{zoom:.8}.bprev .bwrap{max-width:100%}}
+@media (max-width:380px){.bprev{padding:8px 8px 12px}.bprev .row{zoom:.7}}
 .bcard .tname small{display:block;font-weight:500;opacity:.65;font-size:12px}
 @media (prefers-reduced-motion:reduce){.ts-pane.ts-in-r,.ts-pane.ts-in-l{animation:none}}
 

@@ -1431,11 +1431,16 @@ $('recCancel').addEventListener('click', function(){ recStop(false); });
 $('recSend').addEventListener('click', function(){ recStop(true); });
 document.addEventListener('visibilitychange', function(){ if (document.hidden && REC) recStop(false); });   // never keep the mic on in the background
 function clearPic(){ UI.pic = null; $('picWrap').classList.remove('show'); refreshSend(); }
-function setPic(f){
-  if (!f) return;
-  if (!/^image\//.test(f.type || 'image/')){ toast(S('auth.err.photoType')); return; }
-  if (f.size > 10 * 1024 * 1024){ toast(S('chat.err.imageTooBig')); return; }
-  peOpen(f);   // preview + crop / rotate / flip / draw + caption, then send (see the picture editor below)
+function picOk(f){
+  if (!/^image\//.test(f.type || 'image/')){ toast(S('auth.err.photoType')); return false; }
+  if (f.size > 10 * 1024 * 1024){ toast(S('chat.err.imageTooBig')); return false; }
+  return true;
+}
+/* one or several pictures (an album, like WhatsApp): preview + crop / rotate / flip / draw + caption each, then send
+   (see the picture editor below). append: add them to the editor that is open ("+" in its strip) */
+function setPic(files, append){
+  files = [].concat(files || []).filter(Boolean).filter(picOk);
+  if (files.length) peOpen(files, append);
 }
 // a picture the editor can't open (e.g. HEIC outside Safari): send it as it is, like before
 function setPicRaw(f){
@@ -1466,7 +1471,8 @@ function peEl(){
   var tDraw = btn('', S('pe.draw'), '<path d="M15 5l4 4L8 20H4v-4z"/><path d="M13 7l4 4"/>', function(){ peMode(PE.mode === 'draw' ? 'view' : 'draw'); });
   var tStick = btn('', S('pe.sticker'), '<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0M9 9.5h.01M15 9.5h.01"/>', function(){ peMode(PE.mode === 'sticker' ? 'view' : 'sticker'); });
   var tUndo = btn('', S('pe.undo'), '<path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>', peUndo);
-  [tCrop, tRot, tFlip, tDraw, tStick, tUndo].forEach(function(b){ tools.appendChild(b); }); top.appendChild(tools);
+  var tDel = btn('pe-del-photo', S('pe.removePhoto'), '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/>', peRemove);   // several photos: drop this one
+  [tCrop, tRot, tFlip, tDraw, tStick, tUndo, tDel].forEach(function(b){ tools.appendChild(b); }); top.appendChild(tools);
   var stage = el('div', 'pe-stage'), cv = document.createElement('canvas'); cv.className = 'pe-cv'; stage.appendChild(cv);
   var box = el('div', 'pe-crop'); ['nw','n','ne','e','se','s','sw','w'].forEach(function(h){ var d = el('span', 'pe-h pe-' + h); d.dataset.h = h; box.appendChild(d); }); stage.appendChild(box);
   // the selected sticker: move it (drag), resize + rotate it (round handle), remove it (✕)
@@ -1484,9 +1490,10 @@ function peEl(){
   var bottom = el('form', 'pe-bottom'), cap = document.createElement('input'); cap.type = 'text'; cap.maxLength = MAXLEN; cap.placeholder = S('pe.caption'); cap.setAttribute('aria-label', S('pe.caption')); cap.autocomplete = 'off';
   var send = el('button', 'pe-send'); send.type = 'submit'; send.setAttribute('aria-label', S('pe.send')); send.appendChild(svg('<path d="M12 19V5M6 11l6-6 6 6"/>'));
   bottom.appendChild(cap); bottom.appendChild(send); bottom.onsubmit = function(e){ e.preventDefault(); peSend(); };
-  [top, stage, sub, bottom].forEach(function(x){ r.appendChild(x); });
+  var strip = el('div', 'pe-strip'); strip.setAttribute('role', 'tablist'); strip.setAttribute('aria-label', S('pe.photos'));   // the photos picked together
+  [top, stage, sub, strip, bottom].forEach(function(x){ r.appendChild(x); });
   ($('messenger') || document.body).appendChild(r);
-  PE = {root:r, cv:cv, stage:stage, box:box, sel:sel, sub:sub, aspects:aspects, colors:colors, size:1, sizeBtn:sz, caption:cap, tools:{crop:tCrop, draw:tDraw, sticker:tStick, undo:tUndo}};
+  PE = {root:r, cv:cv, stage:stage, box:box, sel:sel, sub:sub, aspects:aspects, colors:colors, size:1, sizeBtn:sz, caption:cap, strip:strip, items:[], cur:-1, tools:{crop:tCrop, draw:tDraw, sticker:tStick, undo:tUndo, del:tDel}};
   peStickerEvents(sel, rz, del);
   // drawing
   cv.addEventListener('pointerdown', function(e){ if (PE.mode !== 'draw'){ if (PE.mode !== 'crop') peStickerDown(e); return; } e.preventDefault(); cv.setPointerCapture(e.pointerId); pePush(); var p = peToBase(e); PE.stroke = {c:PE.color, s:PE.size, pts:[p]}; PE.strokes.push(PE.stroke); peRender(); });
@@ -1500,19 +1507,60 @@ function peEl(){
   r.addEventListener('keydown', function(e){ if ((e.key === 'Delete' || e.key === 'Backspace') && PE.selSticker && document.activeElement !== PE.caption){ e.preventDefault(); peRemoveSticker(); return; }
     if (e.key === 'Escape'){ e.stopPropagation(); if (PE.mode !== 'view') peMode('view'); else peClose(); } });
   window.addEventListener('resize', function(){ if (PE && PE.open) peRender(); });
+  // the stage changes size with the keyboard (the editor follows the visible area): fit the photo again as it moves
+  if (window.ResizeObserver) new ResizeObserver(function(){ if (PE && PE.open) peRender(); }).observe(stage);
   return PE;
 }
-function peOpen(file){
-  var url = URL.createObjectURL(file), img = new Image();
-  img.onload = function(){
-    peEl(); URL.revokeObjectURL(PE.url || ''); PE.file = file; PE.url = url; PE.img = img; PE.rot = 0; PE.flip = false; PE.crop = {x:0, y:0, w:1, h:1}; PE.aspect = 0;
-    PE.strokes = []; PE.stickers = []; PE.selSticker = null; PE.hist = []; PE.color = PE.color || PE_COLORS[2]; PE.mode = 'view'; PE.caption.value = $('msgInput').value; PE.open = true;
-    peBase(); PE.root.classList.add('open'); peMode('view'); setTimeout(function(){ PE.caption.focus({preventScroll:true}); }, 60);
-  };
-  img.onerror = function(){ URL.revokeObjectURL(url); setPicRaw(file); };
-  img.src = url;
+var PE_MAX = 10;   // photos picked and sent together (the server allows the same)
+function peLoadImg(file){ return new Promise(function(res){ var url = URL.createObjectURL(file), img = new Image();
+  img.onload = function(){ res({file:file, url:url, img:img}); }; img.onerror = function(){ URL.revokeObjectURL(url); res({file:file, bad:true}); }; img.src = url; }); }
+function peItem(x, caption, n){ return {fresh:n || 0, file:x.file, url:x.url, img:x.img, rot:0, flip:false, crop:{x:0, y:0, w:1, h:1}, aspect:0, strokes:[], stickers:[], hist:[], caption:caption || ''}; }
+/* Every photo keeps its own edits and caption: the editor works on PE's fields, and they are copied to / from the photo's
+   item when switching */
+function peSave(){ var it = PE.items[PE.cur]; if (!it) return; it.rot = PE.rot; it.flip = PE.flip; it.crop = PE.crop; it.aspect = PE.aspect; it.strokes = PE.strokes; it.stickers = PE.stickers; it.hist = PE.hist; it.caption = PE.caption.value; }
+function peLoad(it){ PE.file = it.file; PE.url = it.url; PE.img = it.img; PE.rot = it.rot; PE.flip = it.flip; PE.crop = it.crop; PE.aspect = it.aspect; PE.strokes = it.strokes; PE.stickers = it.stickers; PE.hist = it.hist; PE.selSticker = null; }
+function peShow(i, dir){
+  var from = PE.cur; if (PE.items[from]) peSave();
+  PE.cur = i; var it = PE.items[i]; peLoad(it); PE.caption.value = it.caption; PE.tools.undo.disabled = !PE.hist.length;
+  peBase(); peMode('view'); peStrip();
+  // switching photos: the next one slides in from the side it is on (and fades), instead of replacing it at once
+  var d = dir || (from >= 0 && from !== i ? (i > from ? 1 : -1) : 0);
+  if (d && !REDUCE && PE.cv.animate) PE.cv.animate([{opacity: 0, transform: 'translateX(' + (d * 28) + 'px) scale(.98)'}, {opacity: 1, transform: 'none'}], {duration: 240, easing: 'cubic-bezier(.2,.8,.2,1)'});
 }
-function peClose(){ if (!PE || !PE.open) return; PE.open = false; PE.root.classList.remove('open'); URL.revokeObjectURL(PE.url || ''); PE.url = null; PE.img = null; $('msgInput').focus({preventScroll:true}); }
+function peStrip(){
+  var s = PE.strip, n = PE.items.length; s.textContent = ''; PE.root.classList.toggle('multi', n > 1); PE.tools.del.hidden = n < 2;
+  PE.items.forEach(function(it, i){
+    var b = el('button', 'pe-thumb' + (i === PE.cur ? ' on' : '') + (it.fresh ? ' fresh' : '')); b.type = 'button'; if (it.fresh){ b.style.animationDelay = (it.fresh - 1) * 40 + 'ms'; it.fresh = 0; }   // new ones pop in, one after the other b.setAttribute('role', 'tab'); b.setAttribute('aria-selected', i === PE.cur ? 'true' : 'false');
+    b.setAttribute('aria-label', S('pe.photoN', {n: i + 1, total: n})); var im = el('img'); im.alt = ''; im.src = it.url; b.appendChild(im);
+    b.onclick = function(){ if (i !== PE.cur) peShow(i); }; s.appendChild(b); });
+  if (n < PE_MAX){ var a = el('button', 'pe-thumb pe-add'); a.type = 'button'; a.setAttribute('aria-label', S('pe.addMore')); a.title = S('pe.addMore'); a.appendChild(svg('<path d="M12 5v14M5 12h14"/>'));
+    a.onclick = function(){ PE.adding = true; $('picFile').click(); }; s.appendChild(a); }
+  var on = s.querySelector('.on'); if (on && on.scrollIntoView) try { on.scrollIntoView({inline: 'nearest', block: 'nearest'}); } catch(e){}
+}
+function peRemove(){
+  if (!PE || PE.items.length < 2) return;
+  var i = PE.cur, last = i >= PE.items.length - 1; URL.revokeObjectURL(PE.items[i].url); PE.items.splice(i, 1); PE.cur = -1; peShow(Math.min(i, PE.items.length - 1), last ? -1 : 1);   // the next one slides in where it was
+}
+function peOpen(files, append){
+  Promise.all(files.map(peLoadImg)).then(function(res){
+    var good = res.filter(function(r){ return !r.bad; }), bad = res.length - good.length;
+    // a picture the editor can't open (e.g. HEIC outside Safari): alone, send it as it is, like before
+    if (!good.length){ if (!append && res.length === 1) setPicRaw(res[0].file); else toast(S('auth.err.photoType')); return; }
+    if (bad) toast(S('auth.err.photoType'));
+    peEl();
+    if (append && PE.open){ var start = PE.items.length; good.slice(0, PE_MAX - start).forEach(function(r, k){ PE.items.push(peItem(r, '', k + 1)); }); peShow(start, 1); return; }
+    PE.items.forEach(function(it){ URL.revokeObjectURL(it.url); });
+    PE.items = good.slice(0, PE_MAX).map(function(r, i){ return peItem(r, i === 0 ? $('msgInput').value : ''); });
+    PE.cur = -1; PE.color = PE.color || PE_COLORS[2]; PE.open = true; PE.root.classList.add('open'); peShow(0);
+    // computers: straight to the caption. Phones: no keyboard over the photo — they tap the caption if they want one
+    if (!matchMedia('(hover: none) and (pointer: coarse)').matches) setTimeout(function(){ PE.caption.focus({preventScroll:true}); }, 60);
+  });
+}
+/* closing the editor (✕, Back, or after Send) puts the keyboard away: the caption had it open, and the chat behind
+   shouldn't pop it up again */
+function peClose(){ if (!PE || !PE.open) return; PE.open = false; PE.adding = false; PE.root.classList.remove('open');
+  PE.items.forEach(function(it){ URL.revokeObjectURL(it.url); }); PE.items = []; PE.cur = -1; PE.url = null; PE.img = null;
+  var a = document.activeElement; if (a && a.blur && a !== document.body) a.blur(); }
 /* the picture with rotation / flip applied (at most 2560 px), in its own canvas */
 function peBase(){
   var im = PE.img, w0 = im.naturalWidth, h0 = im.naturalHeight, k = Math.min(1, 2560 / Math.max(w0, h0)), w = Math.round(w0 * k), h = Math.round(h0 * k), side = PE.rot % 180 !== 0;
@@ -1673,21 +1721,94 @@ function peCropDrag(e){
   }
   PE.crop = {x: L, y: T, w: R - L, h: B - T}; peRender();
 }
-function peSend(){
+/* the current photo with its edits, drawn at full size (sync) */
+function peDrawOut(){
   var bw = PE.base.width, bh = PE.base.height, c = PE.crop, sw = Math.max(1, Math.round(c.w * bw)), sh = Math.max(1, Math.round(c.h * bh));
   var out = document.createElement('canvas'); out.width = sw; out.height = sh; var x = out.getContext('2d');
   x.drawImage(PE.base, c.x * bw, c.y * bh, sw, sh, 0, 0, sw, sh); peStrokes(x, c, 0, 0, sw, sh); peStickersDraw(x, c, 0, 0, sw, sh);
-  var caption = PE.caption.value;
-  out.toBlob(function(blob){
-    if (!blob){ toast(S('auth.err.photoType')); return; }
-    var file = new File([blob], 'photo.jpg', {type: 'image/jpeg'});
-    if (file.size > 10 * 1024 * 1024){ toast(S('chat.err.imageTooBig')); return; }
-    UI.pic = {file: file, url: URL.createObjectURL(blob), w: sw, h: sh}; $('picThumb').src = UI.pic.url; $('picName').textContent = S('chat.photo');
-    peClose(); $('msgInput').value = caption; refreshSend(); $('composer').requestSubmit();
-  }, 'image/jpeg', 0.92);
+  return out;
+}
+function peBlob(cv){ return new Promise(function(res){ cv.toBlob(function(b){ res(b); }, 'image/jpeg', 0.92); }); }
+function peSend(){
+  if (!PE || PE.sending) return;
+  peSave();
+  var items = PE.items.slice();
+  // every photo drawn with its own edits (each one loaded in turn, then the shown one put back)
+  var cur = PE.cur, outs = items.map(function(it){ peLoad(it); peBase(); return peDrawOut(); }); peLoad(items[cur]); peBase();
+  if (items.length === 1){
+    var caption = items[0].caption, out = outs[0];
+    PE.sending = true;
+    peBlob(out).then(function(blob){ PE.sending = false;
+      if (!blob){ toast(S('auth.err.photoType')); return; }
+      var file = new File([blob], 'photo.jpg', {type: 'image/jpeg'});
+      if (file.size > 10 * 1024 * 1024){ toast(S('chat.err.imageTooBig')); return; }
+      UI.pic = {file: file, url: URL.createObjectURL(blob), w: out.width, h: out.height}; $('picThumb').src = UI.pic.url; $('picName').textContent = S('chat.photo');
+      peClose(); $('msgInput').value = caption; refreshSend(); $('composer').requestSubmit(); });
+    return;
+  }
+  // several: the same checks as the message box, once for the album and for each caption
+  if (!CHAT.db || needsRules()) return;
+  var problem = slowApplies() && Date.now() < UI.slowUntil ? S('rule.slow', {s: Math.ceil((UI.slowUntil - Date.now()) / 1000)}) : null, badAt = -1;
+  if (!problem) items.some(function(it, i){ var t = it.caption.trim(); var p = t ? checkMessage(t.slice(0, MAXLEN)) : null; if (p){ problem = p; badAt = i; } return !!p; });
+  if (problem){ if (badAt >= 0 && badAt !== PE.cur) peShow(badAt); toast(problem); return; }
+  PE.sending = true;
+  Promise.all(outs.map(peBlob)).then(function(blobs){ PE.sending = false;
+    if (blobs.some(function(b){ return !b; })){ toast(S('auth.err.photoType')); return; }
+    if (blobs.some(function(b){ return b.size > 10 * 1024 * 1024; })){ toast(S('chat.err.imageTooBig')); return; }
+    var list = blobs.map(function(b, i){ return {blob: b, w: outs[i].width, h: outs[i].height, caption: items[i].caption}; });
+    peClose(); $('msgInput').value = ''; $('msgInput').style.height = ''; refreshSend();
+    sendAlbum(list);
+  });
+}
+/* Photos picked together: they all appear at once (in order), then upload one after the other so they arrive in that order.
+   One album = one post for slow mode (the server agrees, by the batch id). A reply goes with the first photo. */
+async function sendAlbum(list){
+  var room = CHAT.active, dmTo = room === 'support' ? CHAT.uid : (String(room).indexOf('sup:') === 0 ? room.slice(4) : null), pmTo = pmUid(room);
+  var batch = 'a' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8), reply = CHAT.replyTo || null, t0 = Date.now();
+  clearReply();
+  var jobs = list.map(function(p, i){
+    var clientId = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8) + i, url = URL.createObjectURL(p.blob), text = p.caption.trim().slice(0, MAXLEN);
+    var doc = {clientId: clientId, text: text, room: dmTo || pmTo ? null : room, dmTo: dmTo, pmTo: pmTo, reply: i === 0 ? reply : null, batch: batch};
+    CHAT.pending[clientId] = true;
+    backend.addOptimistic({id: clientId, by: CHAT.uid, text: text, ts: t0 + i, room: dmTo ? (dmTo === CHAT.uid ? 'support' : 'sup:' + dmTo) : room, reply: doc.reply, mod: CHAT.canEdit || undefined, image: {url: url, w: p.w, h: p.h}}, dmTo, pmTo);
+    UPLOADS[clientId] = {k: 0, ctl: {}, url: url};
+    return {doc: doc, file: new File([p.blob], 'photo.jpg', {type: 'image/jpeg'}), clientId: clientId};
+  });
+  renderConvo('mine'); startSlow(); backend.presence({typing: false});
+  for (var i = 0; i < jobs.length; i++){
+    var j = jobs[i];
+    var u = UPLOADS[j.clientId];
+    if (!u || u.cancelled){ delete CHAT.pending[j.clientId]; delete UPLOADS[j.clientId]; backend.dropOptimistic(j.clientId, dmTo, pmTo); renderConvo(); continue; }   // cancelled (✕) while waiting its turn
+    try { await backend.sendImage(j.doc, j.file, (function(id){ return function(a, t){ uploadProgress(id, a, t); }; })(j.clientId), UPLOADS[j.clientId].ctl); delete CHAT.pending[j.clientId]; renderConvo('mine'); }
+    catch(err){ delete CHAT.pending[j.clientId]; delete UPLOADS[j.clientId]; backend.dropOptimistic(j.clientId, dmTo, pmTo); renderConvo();
+      if (!(err && err.aborted)) toast(err && err.message ? err.message : S('chat.sendFailed')); }
+  }
 }
 $('attachBtn').onclick = function(){ if (needsRules()) return; $('picFile').click(); };
-$('picFile').onchange = function(){ var f = this.files && this.files[0]; this.value = ''; setPic(f); };
+/* Android's photo picker hands over a picture it may still be copying (from the cloud / gallery): the first read could
+   fail, so the editor said "can't be used as a photo" — and choosing it again worked. Read the file fully first, with a
+   few retries, then open it from the bytes in memory. */
+function readPicked(f, tries){
+  return f.arrayBuffer().then(function(buf){ if (!buf.byteLength) throw new Error('empty'); return buf; }, function(err){ throw err; })
+    .catch(function(err){ if (tries <= 0) throw err; return new Promise(function(r){ setTimeout(r, 350); }).then(function(){ return readPicked(f, tries - 1); }); });
+}
+function picTypeOf(buf, given){
+  if (given && given !== 'application/octet-stream') return given;
+  var b = new Uint8Array(buf.slice(0, 12)), hex = Array.prototype.map.call(b, function(x){ return ('0' + x.toString(16)).slice(-2); }).join('');
+  if (hex.indexOf('ffd8ff') === 0) return 'image/jpeg'; if (hex.indexOf('89504e47') === 0) return 'image/png'; if (hex.indexOf('47494638') === 0) return 'image/gif';
+  if (hex.indexOf('52494646') === 0 && hex.slice(16, 24) === '57454250') return 'image/webp';
+  if (hex.slice(8, 16) === '66747970') return /^(68656963|68656978|6d696631|6d736631)/.test(hex.slice(16, 24)) ? 'image/heic' : 'image/avif';
+  return given || '';
+}
+$('picFile').onchange = function(){
+  var input = this, files = Array.prototype.slice.call(this.files || []), append = !!(PE && PE.open && PE.adding);
+  if (PE) PE.adding = false;
+  if (!files.length) return;
+  var room = PE_MAX - (append ? PE.items.length : 0);
+  if (files.length > room){ toast(S('pe.err.max', {n: PE_MAX})); files = files.slice(0, Math.max(0, room)); }
+  Promise.all(files.map(function(f){ return readPicked(f, 4).then(function(buf){ return new File([buf], f.name || 'photo', {type: picTypeOf(buf, f.type) || 'image/jpeg', lastModified: f.lastModified}); }, function(){ return null; }); }))
+    .then(function(list){ input.value = ''; if (list.some(function(x){ return !x; })) toast(S('chat.err.picRead')); setPic(list, append); });
+};
 tapKeepFocus($('picClose'), clearPic);
 $('msgInput').setAttribute('maxlength', String(MAXLEN));
 $('msgInput').addEventListener('input', function(){
@@ -1707,6 +1828,28 @@ function startSlow(){
     if (left <= 0){ ring.style.strokeDashoffset = 145; num.hidden = true; ic.style.visibility = ''; refreshSend(); return; }
     ring.style.strokeDashoffset = 145 * (1 - left / SLOW_MS); num.textContent = Math.ceil(left / 1000); refreshSend(); requestAnimationFrame(tick); })();
 }
+/* On-screen keyboard. Phones open it OVER the page (Android Chrome, iOS Safari): a chat pinned to the full screen keeps its
+   message box behind the keys. The chat is sized to the part of the screen above the keyboard (visualViewport) instead,
+   with a little space between the box and the keys; a conversation read to the end stays at the end. */
+(function(){
+  var vv = window.visualViewport; if (!vv) return;
+  var m = $('messenger'), root = document.documentElement, raf = 0;
+  function sync(){ raf = 0;
+    // on the page root: the chat and every pop-up form (sign-in, room settings…) use it
+    if (vv.scale > 1.01){ root.style.removeProperty('--vvh'); root.style.removeProperty('--vvt'); m.classList.remove('kb-open'); root.classList.remove('kb-open'); return; }   // (pinch-zoomed: leave it)
+    var wall = $('wall'), atEnd = wall && wall.scrollHeight - wall.scrollTop - wall.clientHeight < 40;
+    var kb = window.innerHeight - vv.height > 120;
+    root.style.setProperty('--vvh', vv.height + 'px'); root.style.setProperty('--vvt', vv.offsetTop + 'px'); m.classList.toggle('kb-open', kb && m.classList.contains('open')); root.classList.toggle('kb-open', kb);
+    if (kb && window.scrollY) window.scrollTo(0, 0);   // iOS scrolls the page under a fixed chat to show the box: not needed any more
+    if (atEnd && wall) wall.scrollTop = wall.scrollHeight;
+  }
+  function soon(){ if (!raf) raf = requestAnimationFrame(sync); }
+  vv.addEventListener('resize', soon); vv.addEventListener('scroll', soon);
+  new MutationObserver(soon).observe(m, {attributes: true, attributeFilter: ['class']});
+})();
+/* Send keeps the keyboard open (people often write several messages in a row): tapping the button must not take the focus
+   from the text box — the tap still sends */
+['pointerdown', 'mousedown'].forEach(function(ev){ $('sendBtn').addEventListener(ev, function(e){ if (document.activeElement === $('msgInput') && !(e.button > 0)) e.preventDefault(); }); });
 $('composer').addEventListener('submit', async function(e){
   e.preventDefault(); var input = $('msgInput'), text = input.value.trim().slice(0, MAXLEN);
   var pic = UI.pic;
@@ -1832,6 +1975,25 @@ function maybePromptSignIn(){
 /* a conversation is really on screen (not the welcome page shown when none is chosen) */
 function viewing(){ var m = $('messenger'); return m.classList.contains('open') && !m.classList.contains('no-room'); }
 function siteInert(on){ ['.nav', 'main#top', 'footer', '.to-top'].forEach(function(q){ var e = document.querySelector(q); if (e){ if (on) e.setAttribute('inert', ''); else e.removeAttribute('inert'); } }); }
+/* Phones: the chat takes the whole screen (no address bar, like an app) — Android browsers allow it from a tap; on
+   iPhone Safari a page can't, there the site added to the home screen opens without it (manifest). Started when the chat
+   opens from a tap; opened from a link (no tap yet), the first tap inside the chat does it. Leaving the chat ends it.
+   If the person leaves full screen themselves (Back), it isn't forced again until the chat is opened again. */
+var FS = {mine: false, armed: false};
+function fsCan(){ var d = document.documentElement; return !!(d.requestFullscreen || d.webkitRequestFullscreen) && matchMedia('(hover: none) and (pointer: coarse)').matches && !matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches; }
+function fsEl(){ return document.fullscreenElement || document.webkitFullscreenElement || null; }
+function fsEnter(){
+  if (!fsCan() || fsEl()) return;
+  var d = document.documentElement, req = d.requestFullscreen ? d.requestFullscreen({navigationUI: 'hide'}) : d.webkitRequestFullscreen();
+  var ok = function(){ FS.mine = true; FS.armed = false; }, no = function(){ fsArm(); };   // no tap behind it: wait for one
+  if (req && req.then) req.then(ok, no); else setTimeout(function(){ if (fsEl()) ok(); else no(); }, 300);
+}
+function fsArm(){ if (FS.armed) return; FS.armed = true;
+  // any tap while the chat is open (also on the sign-in form that opens with it — it isn't inside the chat panel)
+  var go = function(){ document.removeEventListener('pointerup', go, true); if (FS.armed && isOpen()){ FS.armed = false; fsEnter(); } };
+  document.addEventListener('pointerup', go, true); }
+function fsLeave(){ FS.armed = false; if (FS.mine && fsEl()){ var x = document.exitFullscreen ? document.exitFullscreen() : document.webkitExitFullscreen && document.webkitExitFullscreen(); if (x && x.catch) x.catch(function(){}); } FS.mine = false; }
+['fullscreenchange', 'webkitfullscreenchange'].forEach(function(ev){ document.addEventListener(ev, function(){ if (!fsEl()) FS.mine = false; }); });   // left it (Back): fine, not forced again
 function showMessenger(){ var m = $('messenger'); m.classList.add('open'); m.setAttribute('aria-hidden', 'false'); markSeen(); renderRooms(); setPresence(); setTimeout(function(){ placeSegPill(); placeRoomPill(); }, 30); }
 /* Invite link: join the group / channel, then open it. Not signed in yet: ask to sign in (the token waits in this tab). */
 var JOINING = false;
@@ -1859,7 +2021,7 @@ function route(){
     if (valid && id === 'support' && location.pathname !== chatPathFor('support')) { try { history.replaceState(history.state, '', chatPathFor('support')); } catch(e){} }
     if (!wasOpen){
       document.documentElement.classList.add('chat-open'); document.body.classList.add('chat-open'); if (lenis) lenis.stop();
-      siteInert(true); showMessenger();
+      siteInert(true); showMessenger(); fsEnter();
       maybePromptSignIn();
     }
     clearReply(); closeCtx(true); renderRooms(); renderHeader(); renderConvo(); setPresence(); placeRoomPill(); applyComposer();
@@ -1869,7 +2031,7 @@ function route(){
   } else if (isOpen()){
     UI.routed = true; UI.prompted = false; clearTimeout(UI.promptT);   // back on the site: next time the chat opens, offer sign-in again
     closeCtx(true);
-    m.classList.remove('open', 'in-convo'); m.setAttribute('aria-hidden', 'true');
+    m.classList.remove('open', 'in-convo'); m.setAttribute('aria-hidden', 'true'); fsLeave();
     document.documentElement.classList.remove('chat-open'); document.body.classList.remove('chat-open'); siteInert(false);
     setTitle(CH.title);
     // back where the visitor was on the site

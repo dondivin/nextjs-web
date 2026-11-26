@@ -484,7 +484,7 @@ export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl, 
               <button className="attach" id="attachBtn" type="button" aria-label={t('chat.attachAria')} hidden>
                 <Icon>{I.image}</Icon>
               </button>
-              <input id="picFile" type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/avif" hidden />
+              <input id="picFile" type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/avif" multiple hidden />
               <label htmlFor="msgInput" className="sr">
                 {t('chat.messageLabel')}
               </label>
@@ -698,7 +698,14 @@ export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl, 
             </label>
             <label className="field" id="authPwRow">
               <span id="authPwLabel">{t('auth.password')}</span>
-              <input id="authPassword" type="password" autoComplete="current-password" required minLength={8} maxLength={200} />
+              <span className="pw-wrap">
+                <input id="authPassword" type="password" autoComplete="current-password" required minLength={8} maxLength={200} />
+                {/* show / hide what was typed (engine: chatBackend.ts) */}
+                <button className="pw-eye" id="authPwEye" type="button" aria-label={t('auth.showPassword')} aria-pressed="false" title={t('auth.showPassword')}>
+                  <svg className="icon i-show" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></svg>
+                  <svg className="icon i-hide" viewBox="0 0 24 24" aria-hidden="true"><path d="M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-2.4 3.2M6.6 6.6C3.8 8.4 2 12 2 12s3.6 7 10 7a9.9 9.9 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2M3 3l18 18" /></svg>
+                </button>
+              </span>
               <small id="authPwHint" hidden>
                 {t('auth.passwordHint')}
               </small>

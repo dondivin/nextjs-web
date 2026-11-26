@@ -1151,3 +1151,110 @@ See `docs/HANDOFF.md` §4.
   and it jumped in height during the lift animation (visible in the owner's video). Now the message is measured with its
   transform switched off for that instant, and the copy gets that exact width and height (border-box). Checked on a
   360 px emulated phone, 6 messages: copy width/height = original, no overflow, same text height.
+
+## 2026-11-26 — Phone keyboard & message box, picture picker, bubble-style cards (owner's Android screenshots)
+
+- Keyboard covering the message box: the chat is `position:fixed; inset:0`, and phones open the keyboard *over* the page
+  (Android Chrome's default, iOS Safari), so the box sat half behind the keys with no gap. `engine.ts`: the open chat is
+  sized to the visible area (`visualViewport` → `--vvh` / `--vvt` on `#messenger`, `kb-open` when the keyboard is up);
+  a conversation read to the end stays at the end; pinch-zoom is left alone. `site.css`: `.messenger.open` uses those
+  values; `kb-open` gives the dock 14 px of space above the keys.
+- Send keeps the keyboard open: tapping the send button no longer takes the focus from the text box
+  (`pointerdown`/`mousedown` default prevented while the box has focus; the tap still sends).
+- Picture editor: closing it (✕) or sending from it now puts the keyboard away (it used to focus the message box again).
+- "Can't be used as a photo" on the first pick, fine on the second: Android's picker hands over a file it may still be
+  copying. The picked file is now read fully first (up to 4 tries, 350 ms apart), its type is taken from its first bytes
+  when the phone gives none (JPEG/PNG/GIF/WebP/HEIC/AVIF), and the editor opens from the bytes in memory. If it still
+  can't be read: "That picture couldn't be opened…" (`chat.err.picRead`, en + fr).
+- Bubble-style sheet: the step title (with ←) stays pinned while the cards scroll (it was cut by the sheet's edge); on
+  narrow phones the mini chats are drawn smaller (`zoom` .8 ≤420 px, .7 ≤380 px) so the bubbles fit whole instead of
+  running out of the card.
+- Checked on emulated phones: chat height = visible height (760 → 420 px: dock bottom at 420); send button keeps the
+  focus in the box; a PNG without extension/type opens the editor with no error; ✕ leaves nothing focused; bubble cards
+  at 340/360/375/412 px: nothing runs out of the card. The real keyboard can't be emulated — to confirm on the phone.
+
+## 2026-11-26 — Checked on the iPhone simulator (iPhone 16e, iOS 26.1, Safari)
+
+- Driven with `safaridriver` (Safari in the simulator, `safari:useSimulator`) + `xcrun simctl io booted screenshot`.
+  Limits: in automation mode Safari never shows the on-screen keyboard, and real taps on the simulator need it in front
+  (no screen-recording permission to aim them) — so typing with the real keyboard still has to be tried by hand.
+- Found: the sign-in form that opens with the chat focused the e-mail box by itself → on iPhone the keyboard popped up
+  uninvited and covered the password field and the buttons. `chatBackend.ts` `focusFirst()`: on touch screens a text
+  box is no longer focused automatically (the form itself takes the focus, no ring); computers unchanged. Checked on the
+  simulator: sign-in opens with the whole form visible, no keyboard.
+- Pop-up forms follow the keyboard like the chat: the visible-area values (`--vvh` / `--vvt`, `kb-open`) now live on the
+  page root; `.sheet-wrap.open` uses them and its sheet's max height fits above the keyboard.
+- Bubble-style cards on iOS Safari: all bubbles whole (screenshot).
+
+## 2026-11-26 — Several photos at once (like WhatsApp)
+
+- Picker (`#picFile`) takes several pictures (up to 10; more → "You can send up to 10 photos at once."). Each one is read
+  fully first (Android fix above), checked (type, 10 MB), then all open in the picture editor.
+- Editor (`engine.ts`): a strip of thumbnails above the caption (tap = switch; dashed "+" = add more, up to 10) and a
+  trash button in the toolbar (only with 2+ photos) to drop the current one. Every photo keeps its own crop / rotation /
+  flip / drawing / stickers / undo history and caption (`PE.items`, `peSave` / `peLoad` / `peShow`). The text already in
+  the message box becomes the first photo's caption. On phones the caption is no longer focused on open (no keyboard
+  over the photo).
+- Send: one photo → as before (through the message box: rules, slow mode, reply). Several → `sendAlbum`: checks once
+  (rules accepted, slow mode, each caption), all appear at once in order, then upload one after the other so they arrive
+  in that order; the reply goes with the first; ✕ on one still waiting skips it.
+- Slow mode: photos sent together carry a batch id (`batch`); the server (`sendImage` / `prepareSend`) lets the 2nd–10th
+  photo of the same batch, same room, within 3 min, through without the wait (`hub.batches`). The first photo still
+  waits like any message.
+- Safety: `sendImage` in `chatBackend.ts` now passes `pmTo` like voice messages do — without it, a picture from a
+  private chat would have been routed as a lounge message (not reachable today: the picture button is hidden in private
+  chats, but no longer possible at all).
+- New strings (en + fr): `pe.photos`, `pe.photoN`, `pe.addMore`, `pe.removePhoto`, `pe.err.max`.
+- Checked on an emulated phone: 3 pictures open with a strip; caption on photo 1 and rotation on photo 2 are kept when
+  switching back and forth; trash removes the current one; "+" adds; going past 10 stops at 10 with the message.
+  Not checked here: the actual upload of an album (needs a signed-in account allowed to send pictures).
+- Follow-up: the picture editor (`.pe`, full screen) now follows the visible area like the chat (`.pe.open` uses
+  `--vvh` / `--vvt`): the caption and the photo strip stay just above the keyboard (12 px gap); its height — and the chat's
+  — eases with the keyboard (.26 s) instead of jumping; a ResizeObserver on the stage re-fits the photo as it changes.
+  Switching photos slides + fades the next one in from its side (240 ms); added thumbnails pop in one after the other;
+  removing a photo slides the next one in. Reduced-motion: none of it. Checked (emulated phone, 780 → 430 px visible):
+  editor 780 → 515 (mid-way) → 430, caption bottom = visible bottom, photo inside the stage, slide animation runs.
+
+## 2026-11-26 — Chat full screen on phones (no address bar)
+
+- Android browsers: the chat asks for full screen (`requestFullscreen({navigationUI:'hide'})`, `engine.ts` `fsEnter`)
+  when it opens from a tap; opened from a link (no tap yet → refused), the first tap anywhere while it is open does it
+  (listener on the document, since the sign-in form isn't inside the chat panel). Leaving the chat exits full screen
+  (`fsLeave`, only if we entered it). If the person leaves it themselves (Back), it isn't asked again until the next
+  opening. Touch screens only; not in an installed app (already full screen).
+- iPhone Safari can't hide its address bar from a page. New `src/app/manifest.ts` (`/manifest.webmanifest`: site name,
+  navy colours, 192/512 icons from the back office, `display: standalone`) + `appleWebApp` in `siteMetadata` (manifest
+  link, `mobile-web-app-capable`, title, black status bar): "Add to Home Screen" opens the site like an app, no address
+  bar — also on Android ("Install app").
+- Checked: manifest served, tags on the pages, icon 512 → 200. Full screen: the test browser refuses every full-screen
+  request (even a bare page), so the calls were checked with a stand-in that behaves like a phone (granted only on a
+  tap): home → no request; chat opened by a tap → full screen; leaving → exit; opened from a link → refused, first tap →
+  full screen; left by the person → not asked again.
+
+## 2026-11-26 — Buttons show a spinner while waiting for the server
+
+- Chat buttons that ask the server something (sign in, create account, reset password, save profile, join / leave /
+  request a group, create / save a room, invite links, report, block, accept / decline…) only faded while waiting and
+  looked stuck. `chatBackend.ts`: every `post()` now puts the button the person just pressed (click, or the form's submit
+  button, within 2 s) into a busy state until the answer: disabled + `aria-busy`, and after 120 ms (no flash on quick
+  answers) `.is-busy` — same size and colour, label hidden, spinner in the button's own text colour. Background requests
+  (presence, receipts, lists, history…) and sending messages / reactions never take a button.
+- Panels that redraw while working: room settings' Save/Create shows the spinner instead of "…"; group info keeps the
+  spinner on the action pressed (others just wait disabled).
+- `site.css`: `.is-busy` (+ `busy-spin`), and no fading for a waiting button (`[aria-busy="true"]:disabled`).
+- Checked (emulated phone, server answer slowed to 1.6 s): Sign in → spinner, full colour, same width (340 px); after
+  the answer the label is back with "Email or password is incorrect."
+
+## 2026-11-26 — Show / hide password (eye)
+
+- Chat sign-in / sign-up / new-password field (`Site.tsx` `#authPassword` in `.pw-wrap` + `#authPwEye`): an eye button
+  inside the field toggles show / hide ("Show password" / "Hide password", en + fr, `aria-pressed`). The tap keeps the
+  focus and the keyboard in the field; the password is hidden again when the form is sent or closed.
+- Back office: new `src/backoffice/components/ui/password-input.tsx` (`PasswordInput`, same props as `Input`, works
+  with react-hook-form) — used on the login page, the forgot-password page and both fields of My account.
+- Checked: chat (emulated phone) — typed, eye → visible with focus kept, eye → hidden, closing the form → hidden;
+  back-office login — eye shows the password. Screenshots look right in both.
+- Owner's choice: text on the chat's green (OddsClub chat theme) is now the site navy #0D2747 instead of near-black
+  #0B1F05 — green buttons' labels and their spinner, the green send button's arrow and the unread badge
+  (`--c-accent-ink`, `--c-send-ink`, `--c-unread-ink`). Contrast on #7CC242: 6.9:1 (readable; white would be 2.2:1).
+  The main website's green buttons (`--green-ink`) are unchanged. Checked: label and spinner both rgb(13,39,71).

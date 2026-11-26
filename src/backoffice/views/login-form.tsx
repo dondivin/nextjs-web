@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { Loader2 } from 'lucide-react'
 import { Button } from '@/backoffice/components/ui/button'
 import { Input } from '@/backoffice/components/ui/input'
+import { PasswordInput } from '@/backoffice/components/ui/password-input'
 import { Label } from '@/backoffice/components/ui/label'
 
 const schema = z.object({
@@ -54,7 +55,7 @@ export function LoginForm({ firstUser, next }: { firstUser: boolean; next: strin
       </div>
       <div className="grid gap-2">
         <Label htmlFor="password">Password</Label>
-        <Input id="password" type="password" autoComplete={firstUser ? 'new-password' : 'current-password'} aria-invalid={!!formState.errors.password} {...register('password')} />
+        <PasswordInput id="password" autoComplete={firstUser ? 'new-password' : 'current-password'} aria-invalid={!!formState.errors.password} {...register('password')} />
         {formState.errors.password && <p className="text-xs text-destructive">{formState.errors.password.message}</p>}
       </div>
       {error && <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}

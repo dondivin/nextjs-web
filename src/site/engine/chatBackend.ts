@@ -29,7 +29,29 @@ export function createChatBackend(cfg: EngineConfig, h) {
   const pres = { room: null, typing: false }, sent = { conn: null, room: undefined, typing: undefined }
 
   /* ---------- helpers ---------- */
+  /* A button that asks the server something shows a spinner on itself until the answer comes back (sign in, create an
+     account, join, save, report…) — before, it only faded and looked stuck. Done here once for every request: the button
+     the person just pressed (or the form they just sent) is the one waiting. Background requests (presence, receipts,
+     loading lists…) and sending messages (they have their own sending state) never take a button. */
+  let pressed = null, pressedAt = 0
+  const remember = (b) => { if (b) { pressed = b; pressedAt = Date.now() } }
+  document.addEventListener('click', (e) => remember(e.target && e.target.closest && e.target.closest('button, .btn')), true)
+  document.addEventListener('submit', (e) => remember(e.submitter || (e.target && e.target.querySelector && e.target.querySelector('[type="submit"]'))), true)
+  const QUIET = new Set(['presence', 'receipt', 'profiles', 'history', 'people', 'groups', 'thread', 'room-info', 'room-members', 'stickers', 'reset-status', 'send', 'react', 'rules'])
+  function busyButton(action) {
+    const b = pressed
+    if (QUIET.has(action) || !b || !b.isConnected || Date.now() - pressedAt > 2000 || b.classList.contains('is-busy')) return () => {}
+    pressed = null
+    const wasDisabled = b.disabled
+    b.disabled = true; b.setAttribute('aria-busy', 'true')
+    const t = setTimeout(() => b.classList.add('is-busy'), 120)   // a quick answer: no spinner flash
+    return () => { clearTimeout(t); b.classList.remove('is-busy'); b.removeAttribute('aria-busy'); if (!wasDisabled) b.disabled = false }
+  }
   async function post(action, body) {
+    const done = busyButton(action)
+    try { return await postRaw(action, body) } finally { done() }
+  }
+  async function postRaw(action, body) {
     let r, d = {}
     try {
       r = await fetch(base + '/' + action, { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json', 'x-oc-locale': cfg.locale }, body: JSON.stringify(body || {}) })
@@ -325,9 +347,18 @@ export function createChatBackend(cfg: EngineConfig, h) {
     clearInterval(pollTimer)
     if (mode === 'notice' && notice === 'waiting') pollTimer = setInterval(() => { if (!$('authSheet').classList.contains('open')) return clearInterval(pollTimer); checkReset(true) }, 20000)
   }
+  const TOUCH = () => typeof matchMedia === 'function' && matchMedia('(hover: none) and (pointer: coarse)').matches
   function focusFirst() {
     const f = mode === 'profile' ? $('authName') : mode === 'account' ? $('authDone') : mode === 'notice' ? $('authNoticePrimary') : mode === 'signup' ? $('authName') : mode === 'newpass' ? $('authPassword') : $('authEmail')
-    if (f) f.focus({ preventScroll: true })
+    if (!f) return
+    // phones: focusing a text box pops the keyboard up by itself (and it covered the form) — let the person tap the field;
+    // the form itself takes the focus so screen readers still land in it
+    if (TOUCH() && /^(INPUT|TEXTAREA)$/.test(f.tagName) && !['checkbox', 'radio', 'button', 'submit'].includes((f as HTMLInputElement).type)) {
+      const box = f.closest('.sheet') as HTMLElement | null
+      if (box) { if (!box.hasAttribute('tabindex')) box.setAttribute('tabindex', '-1'); box.focus({ preventScroll: true }) }
+      return
+    }
+    f.focus({ preventScroll: true })
   }
   let guest = false   // the sheet opened by itself on opening the chat (not from a "Sign in" button)
   function setMode(m, n) { mode = m; notice = n || null; if (m === 'signup' || m === 'profile') resetPick(); renderAuth(); focusFirst() }
@@ -339,7 +370,21 @@ export function createChatBackend(cfg: EngineConfig, h) {
     const w = $('authSheet'); w.classList.add('open'); w.setAttribute('aria-hidden', 'false')
     setTimeout(focusFirst, 60)
   }
+  /* password eye: show / hide what was typed. Hidden again whenever the form closes or is sent (never left on screen). The
+     tap keeps the focus (and the keyboard) in the field. */
+  function pwShow(on) {
+    const i = $('authPassword'), b = $('authPwEye'); if (!i || !b) return
+    i.type = on ? 'text' : 'password'; b.setAttribute('aria-pressed', on ? 'true' : 'false'); b.classList.toggle('on', on)
+    const label = S(on ? 'auth.hidePassword' : 'auth.showPassword'); b.setAttribute('aria-label', label); b.title = label
+  }
+  if ($('authPwEye')) {
+    $('authPwEye').addEventListener('pointerdown', (e) => { if (document.activeElement === $('authPassword')) e.preventDefault() })
+    $('authPwEye').addEventListener('mousedown', (e) => { if (document.activeElement === $('authPassword')) e.preventDefault() })
+    $('authPwEye').addEventListener('click', (e) => { e.preventDefault(); pwShow($('authPassword').type === 'password') })
+    $('authForm').addEventListener('submit', () => pwShow(false), true)
+  }
   function closeAuth() {
+    pwShow(false)
     clearInterval(pollTimer)
     const w = $('authSheet'); w.classList.remove('open'); w.setAttribute('aria-hidden', 'true')
     if (lastFocus && lastFocus.focus) lastFocus.focus({ preventScroll: true })
@@ -754,7 +799,7 @@ export function createChatBackend(cfg: EngineConfig, h) {
       acts.appendChild(danger)
     }
     acts.appendChild(btn(S('rooms.cancel'), 'btn btn-secondary', closeRoomSheet))
-    const save = mk('button', 'btn btn-primary', rs.busy ? '…' : g ? S('rooms.save') : S('rooms.create')); save.type = 'submit'; save.disabled = rs.busy
+    const save = mk('button', 'btn btn-primary' + (rs.busy ? ' is-busy' : ''), g ? S('rooms.save') : S('rooms.create')); save.type = 'submit'; save.disabled = rs.busy; if (rs.busy) save.setAttribute('aria-busy', 'true')
     acts.appendChild(save); f.appendChild(acts)
     f.onsubmit = (e) => { e.preventDefault(); saveRoom() }
     body.appendChild(f)
@@ -1005,13 +1050,13 @@ export function createChatBackend(cfg: EngineConfig, h) {
     body.appendChild(head)
     // what I can do here
     const acts = mk('div', 'gs-acts')
-    const run = (fn, ok, after) => () => {
-      if (gi.busy) return; gi.busy = true; renderGroupInfo()
+    const run = (fn, ok, after, label) => () => {
+      if (gi.busy) return; gi.busy = label || gi.pressed || true; gi.pressed = null; renderGroupInfo()
       fn().then(() => { gi.busy = false; if (ok) h.toast(ok, true); refreshGroups().then(() => { if (after) after(); else { renderGroupInfo(); loadGroupInfo() } }) },
         (e) => { gi.busy = false; h.toast(e.message); renderGroupInfo() })
     }
     const join = () => post('group-join', { id: g.id }), leave = () => post('group-leave', { id: g.id })
-    const add = (label, cls, fn) => { const b = btn(label, 'ppl-btn ' + cls, fn); b.disabled = gi.busy; acts.appendChild(b) }
+    const add = (label, cls, fn) => { const b = btn(label, 'ppl-btn ' + cls, () => { gi.pressed = label; fn() }); b.disabled = !!gi.busy; if (gi.busy === label) { b.classList.add('is-busy'); b.setAttribute('aria-busy', 'true') } acts.appendChild(b) }
     if (g.status === 'invited') {
       body.appendChild(mk('p', 'gs-invited', S('gi.invited')))
       add(S('groups.join'), 'primary', run(join, S('groups.joined', { name: g.name })))
@@ -1152,8 +1197,10 @@ export function createChatBackend(cfg: EngineConfig, h) {
       if (doc.text) fd.append('text', doc.text)
       if (doc.room) fd.append('room', doc.room)
       if (doc.dmTo) fd.append('dmTo', doc.dmTo)
+      if (doc.pmTo) fd.append('pmTo', doc.pmTo)   // (never fall back to the lounge for a private chat)
       if (doc.clientId) fd.append('clientId', doc.clientId)
       if (doc.reply) fd.append('reply', JSON.stringify(doc.reply))
+      if (doc.batch) fd.append('batch', doc.batch)   // photos picked together: one album for slow mode
       return upload('/image', fd, onProg, ctl)
     },
     /** A voice message: the recording (Blob) + {dur, peaks}; same room fields as a text message. */

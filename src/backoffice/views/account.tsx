@@ -17,6 +17,7 @@ import {
 import { Badge } from '@/backoffice/components/ui/badge'
 import { Button } from '@/backoffice/components/ui/button'
 import { Input } from '@/backoffice/components/ui/input'
+import { PasswordInput } from '@/backoffice/components/ui/password-input'
 import { Label } from '@/backoffice/components/ui/label'
 import { ROLE_OPTIONS, accountSchema, type AccountForm } from '@/backoffice/lib/forms'
 import { saveMyAccount } from '@/backoffice/actions/team'
@@ -118,9 +119,8 @@ export function AccountView({
             </div>
             <div className="grid gap-2">
               <Label htmlFor="a-new">New password</Label>
-              <Input
+              <PasswordInput
                 id="a-new"
-                type="password"
                 autoComplete="new-password"
                 placeholder="Leave empty to keep your password"
                 aria-invalid={!!e.newPassword}
@@ -135,9 +135,8 @@ export function AccountView({
             {needsCurrent && (
               <div className="grid gap-2">
                 <Label htmlFor="a-current">Current password</Label>
-                <Input
+                <PasswordInput
                   id="a-current"
-                  type="password"
                   autoComplete="current-password"
                   {...register('currentPassword')}
                 />

@@ -229,6 +229,8 @@ export const en: Strings = {
   'auth.name': 'Display name',
   'auth.email': 'Email',
   'auth.password': 'Password',
+  'auth.showPassword': 'Show password',
+  'auth.hidePassword': 'Hide password',
   'auth.passwordHint': 'At least 8 characters',
   'auth.submitSignIn': 'Sign in',
   'auth.submitSignUp': 'Create account',
@@ -681,6 +683,12 @@ export const en: Strings = {
   'rooms.joinedByLink': 'You joined {name}',
   'rooms.err.badLink': 'This invite link doesn’t work any more.',
   'chat.roomUnavailable': 'This conversation isn’t available to you.',
+  'chat.err.picRead': 'That picture couldn’t be opened. Try again, or pick it from another folder.',
+  'pe.photos': 'Photos to send',
+  'pe.photoN': 'Photo {n} of {total}',
+  'pe.addMore': 'Add photos',
+  'pe.removePhoto': 'Remove this photo',
+  'pe.err.max': 'You can send up to {n} photos at once.',
 }
 
 export const fr: Strings = {
@@ -890,6 +898,8 @@ export const fr: Strings = {
   'auth.name': 'Nom affiché',
   'auth.email': 'E-mail',
   'auth.password': 'Mot de passe',
+  'auth.showPassword': 'Afficher le mot de passe',
+  'auth.hidePassword': 'Masquer le mot de passe',
   'auth.passwordHint': 'Au moins 8 caractères',
   'auth.submitSignIn': 'Se connecter',
   'auth.submitSignUp': 'Créer le compte',
@@ -1339,6 +1349,12 @@ export const fr: Strings = {
   'rooms.joinedByLink': 'Vous avez rejoint {name}',
   'rooms.err.badLink': 'Ce lien d’invitation ne marche plus.',
   'chat.roomUnavailable': 'Cette conversation ne vous est pas accessible.',
+  'chat.err.picRead': 'Impossible d’ouvrir cette image. Réessayez ou choisissez-la dans un autre dossier.',
+  'pe.photos': 'Photos à envoyer',
+  'pe.photoN': 'Photo {n} sur {total}',
+  'pe.addMore': 'Ajouter des photos',
+  'pe.removePhoto': 'Retirer cette photo',
+  'pe.err.max': 'Vous pouvez envoyer jusqu’à {n} photos à la fois.',
 }
 
 /** Translator help text per key prefix (shown in the back office). */
