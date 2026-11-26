@@ -5,14 +5,22 @@ import { themeInitScript } from '@/backoffice/lib/theme-script'
 import { Toaster } from '@/backoffice/components/ui/sonner'
 import { TooltipProvider } from '@/backoffice/components/ui/tooltip'
 import './backoffice.css'
+import { getPayload } from 'payload'
+import config from '@payload-config'
+import { getBrand, iconVersion } from '@/lib/brand'
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
 const mono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-mono-jb' })
 
-export const metadata: Metadata = {
-  title: { default: 'OddsClub admin', template: '%s · OddsClub admin' },
-  robots: { index: false, follow: false },
-  icons: { icon: [{ url: '/brand/icon/32', sizes: '32x32', type: 'image/png' }], apple: [{ url: '/brand/icon/180', sizes: '180x180', type: 'image/png' }] },
+// the back office's tab icon = the site's (logo or dedicated icon), versioned so a change shows at once
+export async function generateMetadata(): Promise<Metadata> {
+  let v = 'default'
+  try { v = iconVersion(await getBrand(await getPayload({ config }))) } catch {}
+  return {
+    title: { default: 'OddsClub admin', template: '%s · OddsClub admin' },
+    robots: { index: false, follow: false },
+    icons: { icon: [{ url: '/brand/icon/32?v=' + v, sizes: '32x32', type: 'image/png' }], apple: [{ url: '/brand/icon/180?v=' + v, sizes: '180x180', type: 'image/png' }] },
+  }
 }
 
 export default function BackofficeRoot({ children }: { children: React.ReactNode }) {

@@ -99,12 +99,12 @@ export async function runMediaCleanupNow() {
 }
 
 /* ---------- brand images (editors): logo + link-preview image ---------- */
-export async function setBrandImage(kind: 'logo' | 'share' | 'hero', fd: FormData | null) {
+export async function setBrandImage(kind: 'logo' | 'share' | 'hero' | 'icon', fd: FormData | null) {
   return run(async () => {
     await actionUser('editor')
     const payload = await payloadClient()
     const site = await payload.findGlobal({ slug: 'site-settings', depth: 0 })
-    const field = kind === 'logo' ? 'logo' : kind === 'hero' ? 'heroImage' : 'shareImage'
+    const field = kind === 'logo' ? 'logo' : kind === 'icon' ? 'icon' : kind === 'hero' ? 'heroImage' : 'shareImage'
     const old = site[field]
     const file = fd?.get('file')
     let id: string | number | null = null

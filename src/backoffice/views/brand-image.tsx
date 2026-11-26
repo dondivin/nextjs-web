@@ -21,7 +21,7 @@ export function LogoMark({ url, size }: { url: string | null; size: number }) {
 }
 
 /** Upload / replace / remove one brand image; saved immediately (not part of a form). `save` overrides where it goes (e.g. a partner). */
-export function BrandImage({ kind, label, hint, url, fallback, wide, onDone, save }: { kind: 'logo' | 'share' | 'hero'; label: string; hint: string; url: string | null; fallback?: string; wide?: boolean; onDone: () => void; save?: (fd: FormData | null) => Promise<ActionResult<{ transparent?: boolean }>> }) {
+export function BrandImage({ kind, label, hint, url, fallback, wide, onDone, save }: { kind: 'logo' | 'share' | 'hero' | 'icon'; label: string; hint: string; url: string | null; fallback?: string; wide?: boolean; onDone: () => void; save?: (fd: FormData | null) => Promise<ActionResult<{ transparent?: boolean }>> }) {
   const [pending, start] = useTransition()
   const [preview, setPreview] = useState<string | null>(null)
   const input = useRef<HTMLInputElement>(null)

@@ -2,7 +2,10 @@ import type { Payload } from 'payload'
 import { pickLocalized } from '../fields/localizedText'
 
 /** Platform brand (logo, share image, search description) from Site settings. Server only. */
-export type Brand = { siteName: string; logoUrl: string | null; logoId: string | null; shareUrl: string | null; shareId: string | null; night: string; navy: string; blue: string }
+export type Brand = { siteName: string; logoUrl: string | null; logoId: string | null; iconUrl: string | null; iconId: string | null; shareUrl: string | null; shareId: string | null; night: string; navy: string; blue: string }
+
+/** Changes whenever the tab icon would change: added to the icon links so browsers and search engines fetch the new one. */
+export const iconVersion = (b: Pick<Brand, 'iconId' | 'logoId' | 'night'>) => (b.iconId || b.logoId || 'default') + '-' + b.night.replace('#', '')
 
 const urlOf = (x: unknown) => (x && typeof x === 'object' && 'url' in x ? ((x as { url?: string | null }).url || null) : null)
 const idOf = (x: unknown) => (x && typeof x === 'object' && 'id' in x ? String((x as { id: unknown }).id) : x ? String(x) : null)
@@ -14,6 +17,8 @@ export async function getBrand(payload: Payload): Promise<Brand> {
     siteName: site.siteName || 'OddsClub',
     logoUrl: urlOf(site.logo),
     logoId: idOf(site.logo),
+    iconUrl: urlOf(site.icon),
+    iconId: idOf(site.icon),
     shareUrl: urlOf(site.shareImage),
     shareId: idOf(site.shareImage),
     night: dp?.colors?.night || '#081A30',

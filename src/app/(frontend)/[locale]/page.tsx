@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 import { renderSite } from '@/site/render-site'
 import { loadSite, payloadClient } from '@/i18n/data'
-import { getBrand, seoDescription, siteUrl } from '@/lib/brand'
+import { getBrand, iconVersion, seoDescription, siteUrl } from '@/lib/brand'
 
 export const dynamic = 'force-dynamic'
 
@@ -38,8 +38,8 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
     },
     twitter: { card: 'summary_large_image', title, description, images: ['/brand/og'] },
     icons: {
-      icon: [{ url: '/brand/icon/32', sizes: '32x32', type: 'image/png' }, { url: '/brand/icon/192', sizes: '192x192', type: 'image/png' }],
-      apple: [{ url: '/brand/icon/180', sizes: '180x180', type: 'image/png' }],
+      icon: [{ url: '/brand/icon/32?v=' + iconVersion(brand), sizes: '32x32', type: 'image/png' }, { url: '/brand/icon/192?v=' + iconVersion(brand), sizes: '192x192', type: 'image/png' }],
+      apple: [{ url: '/brand/icon/180?v=' + iconVersion(brand), sizes: '180x180', type: 'image/png' }],
     },
     robots: { index: true, follow: true },
     other: { 'theme-color': brand.night },

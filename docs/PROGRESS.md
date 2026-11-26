@@ -1022,3 +1022,41 @@ See `docs/HANDOFF.md` §4.
   only the other site's collections, counts unchanged (partners 10, users 1, …). The owner's `pnpm seed` output
   ("0 created") was correct: `oddsclub` was already restored.
 - Follow-up: `pnpm seed` now says why it skips the snapshot ("the database \"oddsclub\" already has data, so the snapshot was not restored (nothing to do). To replace its data with the snapshot: pnpm seed --restore --yes") instead of only "translations: 0 created" — the owner thought the restore had failed.
+
+### 2026-11-26 — partner switch: the page glides to the new text lengths instead of jumping
+- Owner screenshot (hero CTA + promo box): "not animated when text changes length or a card disappears — the site jumps".
+- `setBrand`: GSAP **Flip** (bundled with gsap, now registered) records the blocks around the partner's texts
+  (`BRAND_FLIP`: hero intro / CTA row / promo box, join steps, join buttons incl. the terms link that shows or hides, code
+  card) before `applySite()`, then animates them from their old size / place to the new one (.6 s, power3.inOut, sizes
+  animated without scaling so text isn't stretched); something that appears fades / scales in. The texts keep their own
+  crossfade. `.is-flipping` turns the blocks' CSS transitions off while they move (the promo box has a hover transition).
+  No animation on first load or with reduced motion.
+- Type-checks. NOT checked in a browser: no dev server was running and starting a test server was declined.
+
+### 2026-11-26 — favicon: visible on every tab, optional dedicated icon, refreshed when changed
+- Owner: "the logo isn't applied as favicon in the back office / search engines — I see nothing".
+- Cause: the icon WAS made from the logo, but the logo is a wide silver-white "ODDS" wordmark in the middle of a big
+  transparent 512 px square: at 16–48 px only ~7 % of the icon had any pixels, pale on transparent → invisible on light tabs.
+- `brandIcon` (src/lib/brand-images.ts): margins trimmed; the logo is centred on a rounded tile in the site's dark colour
+  (default partner `night`), so a light logo shows on light and dark tabs (Apple 180 px: square, iOS rounds it).
+- New optional Site settings → **Browser tab icon** (`site-settings.icon`, trimmed 512 px PNG): when set it's used as it
+  is for the tab / home screen / search results instead of the logo tile (a wordmark can't be read at 16 px).
+- Icon links carry `?v=<icon or logo id>-<colour>` (site page metadata + back-office layout, now generateMetadata) so
+  browsers and crawlers fetch the new icon when it changes; `/favicon.ico` unchanged path (48 px).
+- Site settings previews now show the real generated icon on a light and a dark tab and in the search result.
+- Verified: rendered 16 / 32 / 180 px from the real logo on light and dark backgrounds — visible navy tile with the logo.
+  Type-checks. Back office not clicked through (no running server / team sign-in available to me).
+- Follow-up (owner: "check what you did on the hero yourself"): tested on the running site — the FLIP version was wrong:
+  in the centred button row, giving the promo box its old width during the animation re-centred the row, so the Claim
+  button was off by half the width change (21 px / 89 px) and overshot, briefly sliding under the promo box. Replaced
+  FLIP (plugin no longer used): `brandSizes()` animates only the SIZE of the blocks holding the texts (promo box, hero
+  intro, steps, code card code / bonus) from old to new — the browser lays out the neighbours on every frame, so they glide
+  along; the terms link opens / closes (width + fade) instead of popping. Verified at 1600 px over 4 switches
+  (Betwinner ↔ 1xBet, Betwinner ↔ New partner, sampled every 55 ms): promo width and Claim position change smoothly in one
+  direction, gap between them constantly 12 px, no jump at the end; mid-frame screenshot clean; 390 px: stacked, no movement.
+- Follow-up (owner screenshot, French hero sentence: "these texts too"): only the partner's name faded; the rest of the
+  sentence re-wrapped instantly (words jumping between lines). Now the whole sentence crossfades: a copy of the old one
+  (`.brand-ghost`, same parent, exact position / width) fades out while the new one fades in — an even crossfade (the
+  two add up to one visible sentence every frame), with the block's height gliding as before. Applies to the hero intro and
+  the join steps (`BRAND_TEXTS`). Verified (FR, 430 px and 1600 px): ghost exactly on the old paragraph, old + new = 1.00
+  in every frame, steps crossfade too, no copies left — also after 4 switches 90 ms apart (final text right, opacity 1).

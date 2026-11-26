@@ -1350,3 +1350,7 @@ button.gs-person:hover{background:color-mix(in srgb, var(--c-menu-text) 7%, tran
 .rs-pic-note{font:600 12px var(--font-chat);color:var(--c-accent)}
 .zoomable{cursor:zoom-in}
 .zoomable:focus-visible{outline:2px solid var(--c-accent);outline-offset:3px}
+
+
+/* the old sentence fading out over the new one after a partner switch */
+.brand-ghost{z-index:1}

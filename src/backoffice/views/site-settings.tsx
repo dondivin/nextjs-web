@@ -40,7 +40,7 @@ export function SiteSettingsView({
   languages: Lang[]
   partners: { id: string; name: string; active: boolean }[]
   updatedAt: string | null
-  brand: { logoUrl: string | null; shareUrl: string | null; siteUrl: string }
+  brand: { logoUrl: string | null; iconUrl: string | null; iconV: string; shareUrl: string | null; siteUrl: string }
 }) {
   const router = useRouter()
   const [pending, start] = useTransition()
@@ -104,6 +104,14 @@ export function SiteSettingsView({
               onDone={() => router.refresh()}
             />
             <BrandImage
+              kind="icon"
+              label="Browser tab icon (optional)"
+              hint="A small square mark (e.g. just your symbol or first letter) for the browser tab, phone home screen and search results — a full wordmark is unreadable at 16 px. Empty margins are trimmed. Without it, the icon is made from your logo on a dark tile (see the previews)."
+              url={brand.iconUrl}
+              fallback={`/brand/icon/192?v=${brand.iconV}`}
+              onDone={() => router.refresh()}
+            />
+            <BrandImage
               kind="share"
               label="Link preview image (optional)"
               hint="Shown when the site is shared on WhatsApp, Facebook, X… Cropped to 1200×630. Without it, one is made from your logo."
@@ -144,17 +152,23 @@ export function SiteSettingsView({
               </div>
             </div>
             <div>
-              <p className="mb-1.5 text-xs text-muted-foreground">Browser tab</p>
-              <div className="flex w-fit max-w-full items-center gap-2 rounded-t-lg border border-b-0 bg-muted/60 px-3 py-2 text-sm">
-                <LogoMark url={brand.logoUrl} size={16} />
-                <span className="truncate">{siteName}</span>
+              <p className="mb-1.5 text-xs text-muted-foreground">Browser tab (the real icon, light and dark)</p>
+              <div className="flex flex-wrap gap-2">
+                {[['bg-[#f1f3f4] text-[#202124] border-[#dadce0]', 'light'], ['bg-[#35363a] text-[#e8eaed] border-[#4a4b4f]', 'dark']].map(([cls, k]) => (
+                  <div key={k} className={'flex w-fit max-w-full items-center gap-2 rounded-t-lg border border-b-0 px-3 py-2 text-sm ' + cls}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={`/brand/icon/32?v=${brand.iconV}`} alt="" width={16} height={16} className="size-4" />
+                    <span className="truncate">{siteName}</span>
+                  </div>
+                ))}
               </div>
             </div>
             <div>
               <p className="mb-1.5 text-xs text-muted-foreground">Search result</p>
               <div className="rounded-lg border bg-background p-4">
                 <div className="flex items-center gap-2.5">
-                  <span className="grid size-7 place-items-center rounded-full border bg-white"><LogoMark url={brand.logoUrl} size={18} /></span>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <span className="grid size-7 place-items-center overflow-hidden rounded-full border bg-white"><img src={`/brand/icon/48?v=${brand.iconV}`} alt="" width={18} height={18} className="size-[18px]" /></span>
                   <div className="min-w-0 leading-tight">
                     <div className="text-sm">{siteName}</div>
                     <div className="truncate text-xs text-muted-foreground">{brand.siteUrl.replace(/^https?:\/\//, '')} › {defLang?.code || 'en'}</div>

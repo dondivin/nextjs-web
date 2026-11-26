@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import { requireUser, payloadClient } from '@/backoffice/lib/server'
 import { SiteSettingsView } from '@/backoffice/views/site-settings'
 import { fillLanguages } from '@/backoffice/lib/localized'
-import { getBrand, siteUrl } from '@/lib/brand'
+import { getBrand, iconVersion, siteUrl } from '@/lib/brand'
 
 export const metadata: Metadata = { title: 'Site settings' }
 export const dynamic = 'force-dynamic'
@@ -23,7 +23,7 @@ export default async function SiteSettingsPage() {
       languages={languages}
       partners={partners.docs.map((p) => ({ id: String(p.id), name: p.name, active: !!p.active }))}
       updatedAt={site.updatedAt || null}
-      brand={{ logoUrl: brand.logoUrl, shareUrl: brand.shareUrl, siteUrl: siteUrl() }}
+      brand={{ logoUrl: brand.logoUrl, iconUrl: brand.iconUrl, iconV: iconVersion(brand), shareUrl: brand.shareUrl, siteUrl: siteUrl() }}
       initial={{
         siteName: site.siteName || 'OddsClub',
         defaultPartner: dp ? String(typeof dp === 'object' ? dp.id : dp) : null,

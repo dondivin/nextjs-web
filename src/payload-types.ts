@@ -1595,6 +1595,10 @@ export interface SiteSetting {
    * Square logo (stored as 512×512 PNG). Used in the nav, chat, back office, browser tab, home-screen icon and search engines.
    */
   logo?: (string | null) | Media;
+  /**
+   * Optional browser-tab / app icon (square, empty margins trimmed). Without it the icon is made from the logo on a dark tile.
+   */
+  icon?: (string | null) | Media;
   heroImage?: (string | null) | Media;
   /**
    * Optional 1200×630 image for link previews (WhatsApp, Facebook, X…). Without it one is made from the logo.
@@ -1753,6 +1757,7 @@ export interface SiteSettingsSelect<T extends boolean = true> {
         id?: T;
       };
   logo?: T;
+  icon?: T;
   heroImage?: T;
   shareImage?: T;
   seoDescription?:

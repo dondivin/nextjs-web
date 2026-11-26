@@ -88,25 +88,28 @@ export async function storeLanguageIcon(payload: Payload, file: File, code: stri
 }
 
 /** Platform logo → 512×512 PNG (transparency kept, nothing cropped). Share image → 1200×630 JPG. SVG is rasterised. */
-export async function storeBrandImage(payload: Payload, file: File, kind: 'logo' | 'share') {
+export async function storeBrandImage(payload: Payload, file: File, kind: 'logo' | 'share' | 'icon') {
   if (!file || typeof file.arrayBuffer !== 'function') throw new AvatarError('missing')
   if (file.size > AVATAR_MAX_BYTES) throw new AvatarError('tooBig')
   if (file.type && ![...TYPES, 'image/svg+xml'].includes(file.type)) throw new AvatarError('type')
   let out: Buffer
   try {
     const img = sharp(Buffer.from(await file.arrayBuffer()), { density: 400, limitInputPixels: 60_000_000, animated: false }).rotate()
-    out = kind === 'logo'
+    out = kind === 'icon'
+      // the tab icon: empty margins trimmed so the mark fills the square
+      ? await sharp(await img.png().toBuffer()).trim({ threshold: 8 }).resize(512, 512, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).png({ compressionLevel: 9 }).toBuffer()
+      : kind === 'logo'
       ? await img.resize(512, 512, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).png({ compressionLevel: 9 }).toBuffer()
       : await img.resize(1200, 630, { fit: 'cover', position: 'attention' }).flatten({ background: '#081A30' }).jpeg({ quality: 86, mozjpeg: true }).toBuffer()
   } catch {
     throw new AvatarError('type')
   }
-  const ext = kind === 'logo' ? 'png' : 'jpg'
+  const ext = kind === 'share' ? 'jpg' : 'png'
   const doc = await payload.create({
     collection: 'media',
     overrideAccess: true,
-    data: { alt: kind === 'logo' ? 'Logo' : 'Share image' },
-    file: { data: out, mimetype: kind === 'logo' ? 'image/png' : 'image/jpeg', name: `brand-${kind}-${Date.now()}.${ext}`, size: out.length },
+    data: { alt: kind === 'logo' ? 'Logo' : kind === 'icon' ? 'Browser tab icon' : 'Share image' },
+    file: { data: out, mimetype: kind === 'share' ? 'image/jpeg' : 'image/png', name: `brand-${kind}-${Date.now()}.${ext}`, size: out.length },
   })
   return doc.id
 }

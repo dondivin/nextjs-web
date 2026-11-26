@@ -245,6 +245,52 @@ function movePartnerPill(btn, instant){
   G.timeline().to(pill, {x: right ? cx : x, width: right ? (x + w - cx) : (cx + cw - x), duration:.2, ease:'power2.in'})
               .to(pill, {x:x, width:w, duration:.6, ease:'elastic.out(1, .75)'});
 }
+/* the blocks that move when a partner's texts change length (the texts themselves crossfade separately) */
+/* A partner's texts (name, code, bonus) change the size of the blocks that hold them. Their SIZE is animated from the old
+   to the new one; everything around them is laid out by the browser on every frame, so neighbours (the Claim button next
+   to the promo box, the rows under a paragraph…) glide along on their own — nothing can drift or overshoot.
+   (Moving the neighbours separately, e.g. with FLIP, fought the centred button row: it re-centred and overshot.) */
+var BRAND_SIZED = '.hero-cta .promo, .hero-foot > p:not(.brand-ghost), .steps li, .codecard .cc-code, .codecard .cc-bonus';
+// whole sentences that contain the partner's name / bonus: crossfaded as a whole (not only the name)
+var BRAND_TEXTS = '.hero-foot > p:not(.brand-ghost), .steps li > div:not(.brand-ghost)';
+function brandSizes(){
+  var els = Array.prototype.slice.call(document.querySelectorAll(BRAND_SIZED)).filter(function(e){ return e.offsetParent; });
+  var before = els.map(function(e){ var r = e.getBoundingClientRect(); return [r.width, r.height]; });
+  var terms = Array.prototype.slice.call(document.querySelectorAll('.js-terms')).map(function(e){ return [e, !e.hidden]; });
+  // sentences with the partner's name inside re-wrap when the name changes length (words jump between lines): keep a copy
+  // of the old sentence exactly where it was and crossfade it into the new one, while the block's height glides
+  var ghosts = Array.prototype.slice.call(document.querySelectorAll(BRAND_TEXTS)).filter(function(e){ return e.offsetParent; }).map(function(e){
+    var g = e.cloneNode(true), cs = getComputedStyle(e);
+    g.removeAttribute('id'); g.setAttribute('aria-hidden', 'true'); g.classList.add('brand-ghost');
+    Object.assign(g.style, {position: 'absolute', left: e.offsetLeft + 'px', top: e.offsetTop + 'px', width: e.offsetWidth + 'px', margin: '0', pointerEvents: 'none', textAlign: cs.textAlign});
+    return [e, g];
+  });
+  return function(){   // call after the new texts are in
+    ghosts.forEach(function(x){
+      var e = x[0], g = x[1]; if (!e.parentNode || !e.offsetParent) return;
+      if (g.textContent === e.textContent) return;   // same sentence (e.g. a part without the name): nothing to do
+      // next to the sentence (same styles); positioned against the same box its offsets were measured from
+      e.parentNode.insertBefore(g, e.nextSibling);
+      // an even crossfade (the two always add up to about one fully visible sentence — never a blank moment)
+      G.fromTo(g, {opacity: 1}, {opacity: 0, duration: .45, ease: 'sine.inOut', onComplete: function(){ g.remove(); }});
+      G.fromTo(e, {opacity: 0}, {opacity: 1, duration: .45, ease: 'sine.inOut', clearProps: 'opacity'});
+    });
+    els.forEach(function(e, i){
+      var r = e.getBoundingClientRect(), w0 = before[i][0], h0 = before[i][1], from = {}, to = {};
+      if (Math.abs(r.width - w0) > .5){ from.width = w0; to.width = r.width; }
+      if (Math.abs(r.height - h0) > .5){ from.height = h0; to.height = r.height; }
+      if (!('width' in to) && !('height' in to)) return;
+      from.overflow = 'hidden';
+      G.fromTo(e, from, Object.assign(to, {duration: .6, ease: 'power3.inOut', overwrite: 'auto', clearProps: 'width,height,overflow'}));
+    });
+    // the terms link: opens / closes instead of popping in or out (its neighbours follow, as above)
+    terms.forEach(function(t){
+      var e = t[0], was = t[1], now = !e.hidden; if (was === now) return;
+      if (now){ var w = e.getBoundingClientRect().width; G.fromTo(e, {width: 0, opacity: 0, overflow: 'hidden', whiteSpace: 'nowrap'}, {width: w, opacity: 1, duration: .5, ease: 'power3.out', clearProps: 'width,opacity,overflow,whiteSpace'}); }
+      else { e.hidden = false; var w2 = e.getBoundingClientRect().width; G.fromTo(e, {width: w2, opacity: 1, overflow: 'hidden', whiteSpace: 'nowrap'}, {width: 0, opacity: 0, duration: .35, ease: 'power2.in', clearProps: 'width,opacity,overflow,whiteSpace', onComplete: function(){ e.hidden = true; }}); }
+    });
+  };
+}
 function setBrand(id, opts){
   opts = opts || {}; if (!BRANDS.length) return; var b = brandById(id) || BRANDS[0], first = !CUR_BRAND, prevBrand = CUR_BRAND;
   if (!first && b === CUR_BRAND && !opts.force) return;
@@ -253,7 +299,11 @@ function setBrand(id, opts){
   var vars = brandVars(b.c), root = document.documentElement;
   if (!first && !REDUCE) G.to(root, Object.assign({duration:.9, ease:'power2.inOut', overwrite:true}, vars));
   else for (var k in vars) root.style.setProperty(k, vars[k]);
+  // the partner's texts change length (name, code, bonus) and some parts show or hide (terms link): record where every
+  // block is, apply the new texts, then glide each block from its old place / size to the new one — no jumping
+  var resize = !first && !REDUCE ? brandSizes() : null;
   applySite();
+  if (resize) resize();
   document.querySelectorAll('.p-btn').forEach(function(x){ x.setAttribute('aria-pressed', x.dataset.id === b.id ? 'true' : 'false'); });
   var active = document.querySelector('.p-btn[data-id="' + b.id + '"]'); movePartnerPill(active, first);
   if (active){ var box = $('partners'), left = active.offsetLeft - box.clientWidth / 2 + active.offsetWidth / 2; try { box.scrollTo({left: Math.max(0, left), behavior: (first || REDUCE) ? 'auto' : 'smooth'}); } catch(e){ box.scrollLeft = left; } }
