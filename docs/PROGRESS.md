@@ -1422,3 +1422,13 @@ See `docs/HANDOFF.md` §4.
   (only the very first picture uses the opening fade). The animation itself is unchanged.
 - Measured (opacity every 40–50 ms through partner switches): Safari on the iPhone simulator before — at the end of
   the entrance 1 → 0 → back to 1 over ~1 s; after — no drop, two switches in a row; Chrome desktop + phone — no drop.
+
+## 2026-11-27 — No zoom in the chat
+
+- While the chat is open (`engine.ts` `lockZoom`, on open / close in `route()`): the viewport meta becomes
+  `maximum-scale=1, user-scalable=no` (Android; on iPhone it also stops the automatic zoom-in when tapping the message
+  box) and is restored on the site; iPhone Safari's `gesturestart` / `gesturechange` (pinch) are cancelled while it is
+  open. `site.css`: `touch-action: pan-x pan-y` on the chat, its sheets, the photo viewer, the photo editor and the
+  palette menu (no pinch / double-tap zoom; scrolling and swipes keep working). The rest of the site keeps normal zoom.
+- Checked (emulated phone): home → normal viewport; chat opened from the site or loaded from a link → locked +
+  `pan-x pan-y`; back on the site → restored. Finger scrolling of the conversation and long-press menu still work.

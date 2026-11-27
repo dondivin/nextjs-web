@@ -2075,6 +2075,18 @@ function maybePromptSignIn(){
 /* a conversation is really on screen (not the welcome page shown when none is chosen) */
 function viewing(){ var m = $('messenger'); return m.classList.contains('open') && !m.classList.contains('no-room'); }
 function siteInert(on){ ['.nav', 'main#top', 'footer', '.to-top'].forEach(function(q){ var e = document.querySelector(q); if (e){ if (on) e.setAttribute('inert', ''); else e.removeAttribute('inert'); } }); }
+/* No zoom while the chat is open (like a messaging app): the page settings say so (Android; on iPhone it also stops the
+   automatic zoom-in when tapping the message box), the chat's areas don't allow pinch / double-tap zoom (CSS), and
+   iPhone Safari's own pinch gesture is cancelled. Everything is back to normal on the site. */
+var ZOOM = {meta: document.querySelector('meta[name="viewport"]'), was: null, on: false};
+function noZoom(e){ if (ZOOM.on) e.preventDefault(); }
+['gesturestart', 'gesturechange'].forEach(function(ev){ document.addEventListener(ev, noZoom, {passive: false}); });
+function lockZoom(on){
+  if (on === ZOOM.on) return; ZOOM.on = on;
+  var m = ZOOM.meta || (ZOOM.meta = document.querySelector('meta[name="viewport"]')); if (!m) return;
+  if (on){ ZOOM.was = m.getAttribute('content'); m.setAttribute('content', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no'); }
+  else if (ZOOM.was != null) m.setAttribute('content', ZOOM.was);
+}
 function showMessenger(){ var m = $('messenger'); m.classList.add('open'); m.setAttribute('aria-hidden', 'false'); markSeen(); renderRooms(); setPresence(); setTimeout(function(){ placeSegPill(); placeRoomPill(); }, 30); }
 /* Invite link: join the group / channel, then open it. Not signed in yet: ask to sign in (the token waits in this tab). */
 var JOINING = false;
@@ -2102,7 +2114,7 @@ function route(){
     if (valid && id === 'support' && location.pathname !== chatPathFor('support')) { try { history.replaceState(history.state, '', chatPathFor('support')); } catch(e){} }
     if (!wasOpen){
       document.documentElement.classList.add('chat-open'); document.body.classList.add('chat-open'); if (lenis) lenis.stop();
-      siteInert(true); showMessenger();
+      siteInert(true); showMessenger(); lockZoom(true);
       maybePromptSignIn();
     }
     clearReply(); closeCtx(true); renderRooms(); renderHeader(); renderConvo(); setPresence(); placeRoomPill(); applyComposer();
@@ -2112,7 +2124,7 @@ function route(){
   } else if (isOpen()){
     UI.routed = true; UI.prompted = false; clearTimeout(UI.promptT);   // back on the site: next time the chat opens, offer sign-in again
     closeCtx(true);
-    m.classList.remove('open', 'in-convo'); m.setAttribute('aria-hidden', 'true');
+    m.classList.remove('open', 'in-convo'); m.setAttribute('aria-hidden', 'true'); lockZoom(false);
     document.documentElement.classList.remove('chat-open'); document.body.classList.remove('chat-open'); siteInert(false);
     setTitle(CH.title);
     // back where the visitor was on the site

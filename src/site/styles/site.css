@@ -691,7 +691,9 @@ mark.hl{background:transparent;color:var(--c-accent);font-weight:800}
 html.kb-open .sheet-wrap.open{padding-bottom:var(--kb,0px)}
 .sheet-wrap.open .sheet{max-height:min(calc(var(--vvh,100vh) - 24px),780px)}
 html.kb-open .sheet-wrap.open .sheet{padding-bottom:16px}
-.sheet[tabindex="-1"]:focus{outline:none}   /* the form itself holds the focus on phones (no keyboard popping up): no ring */
+.sheet[tabindex="-1"]:focus{outline:none}
+/* no pinch / double-tap zoom in the chat (scrolling and swipes still work; engine.ts lockZoom does the rest) */
+html.chat-open .messenger,html.chat-open .sheet-wrap,html.chat-open .lightbox,html.chat-open .pe,html.chat-open .look-menu{touch-action:pan-x pan-y}   /* the form itself holds the focus on phones (no keyboard popping up): no ring */
 /* the picture editor follows the visible area too: caption + photo strip stay just above the keyboard, and its height
    follows the keyboard smoothly instead of jumping */
 .pe.open{top:var(--vvt,0px);bottom:auto;height:var(--vvfull,100%);transition:padding-bottom .26s cubic-bezier(.2,.8,.2,1)}
