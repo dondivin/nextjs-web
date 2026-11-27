@@ -395,7 +395,10 @@ function swapHero(b, first, from){
     heroSet(next, h); next.hidden = false; HERO.el = next;
     heroAnim(next, [{opacity:0, transform:heroFrames(M, from, true), offset:0}, {opacity:1, offset: M.style === 'fade' ? 1 : .85}, {opacity:1, transform:'none', offset:1}], REDUCE ? 600 : M.inMs, REDUCE ? 'ease' : M.ease, REDUCE ? 0 : old ? M.delay : 0).then(function(a){
       if (seq !== HERO.seq && HERO.el !== next) return;
-      next.style.opacity = ''; next.style.transform = ''; if (a) a.cancel(); next.style.transition = '';
+      // hand over from the animation to the normal style WITHOUT the page's opening fade: Safari took "invisible" (the inline
+      // starting value) as the fade's start when both changed at once, so the picture vanished and faded in again. The
+      // style is applied (offsetWidth) while transitions are still off — and they stay off: only the first picture fades in.
+      next.style.opacity = ''; next.style.transform = ''; if (a) a.cancel(); void next.offsetWidth; next.style.transition = 'none';
     });
   });
 }

@@ -1410,3 +1410,15 @@ See `docs/HANDOFF.md` §4.
 - Checked at 360 / 390 / 430 px (en + fr): all 12 cards the same size, no name cut, 0 size changes after 6 picks.
 - Local DB: `pnpm seed` added the 61 missing translations (new texts since the last start); the two shortened French
   names were updated in place (the seed never overwrites existing texts).
+
+## 2026-11-27 — Hero picture vanishing and fading in again after a partner switch (Safari)
+
+- Owner: after the switch animation the hero picture disappeared and came back, "as if it loaded twice". Cause
+  (`engine.ts` `swapHero`): at the end of the entrance, the inline `opacity:0`, the finished Web Animation and the
+  inline `transition:none` were all removed in the same instant; Safari then ran the picture's CSS opening fade (1 s,
+  .2 s delay) from "invisible" → it dropped to 0 and faded back in. Chrome started from the animated value, so it never
+  showed there.
+- Fix: the style is applied first (`offsetWidth`) with transitions still off, and they stay off on swapped pictures
+  (only the very first picture uses the opening fade). The animation itself is unchanged.
+- Measured (opacity every 40–50 ms through partner switches): Safari on the iPhone simulator before — at the end of
+  the entrance 1 → 0 → back to 1 over ~1 s; after — no drop, two switches in a row; Chrome desktop + phone — no drop.
