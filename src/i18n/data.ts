@@ -104,6 +104,8 @@ export async function loadSite(locale: string) {
       rules: (chat.rules || []).map((r) => ({ icon: r.icon, title: pickLocalized(r.title, locale, def), body: pickLocalized(r.body, locale, def) })),
       loungeTeamOnly: chat.lounge?.postBy === 'team',
       loungeMedia: { view: chat.lounge?.mediaView || 'everyone', save: chat.lounge?.mediaSave !== false },
+      pmPictures: chat.privateChats?.pictures === true,   // private chats between members (Chat settings → Private chats)
+      pmVoice: chat.privateChats?.voice !== false,
       // notifications of new messages (src/chat/push.ts): the public VAPID key
       pushKey: pushPublicKey(),   // (null when the keys or the web-push package are missing: the chat doesn't offer it)
     },

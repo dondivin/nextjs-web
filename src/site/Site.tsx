@@ -618,6 +618,9 @@ export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl, 
             <p>{t('themes.intro')}</p>
             <div className="themes" id="themeList" role="group" aria-label={t('themes.aria')}></div>
             <div className="sheet-actions">
+              <button className="btn btn-secondary" id="toFonts" type="button">
+                {t('fonts.open')}
+              </button>
               <button className="btn btn-secondary" id="toWalls" type="button">
                 {t('walls.open')}
               </button>
@@ -672,6 +675,24 @@ export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl, 
             <input type="file" id="wallFile" accept="image/*" hidden />
             <div className="sheet-actions">
               <button className="btn btn-primary" id="wallsDone" type="button">
+                {t('themes.done')}
+              </button>
+            </div>
+          </div>
+          {/* step 4: the font of the chat's text (engine.ts "chat text font") */}
+          <div className="ts-pane" id="tsFonts" hidden>
+            <div className="ts-head">
+              <button className="iconbtn" id="fontsBack" type="button" aria-label={t('fonts.back')} title={t('fonts.back')}>
+                <Icon>
+                  <path d="M15 5l-7 7 7 7" />
+                </Icon>
+              </button>
+              <h3 id="fontsTitle">{r('fonts.title')}</h3>
+            </div>
+            <p>{t('fonts.intro')}</p>
+            <div className="themes fonts" id="fontList" role="group" aria-label={t('fonts.aria')}></div>
+            <div className="sheet-actions">
+              <button className="btn btn-primary" id="fontsDone" type="button">
                 {t('themes.done')}
               </button>
             </div>

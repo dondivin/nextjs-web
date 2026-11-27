@@ -50,6 +50,8 @@ export const chatSchema = z.object({
   maxLength: z.number({ error: 'Enter a number' }).int().min(50, '50 to 2000').max(2000, '50 to 2000'),
   voiceMaxSeconds: z.number({ error: 'Enter a number' }).int().min(10, '10 to 600 seconds').max(600, '10 to 600 seconds'),
   mediaRetentionDays: z.number({ error: 'Enter a number' }).int().min(0, '0 to 3650 days').max(3650, '0 to 3650 days'),
+  pmPictures: z.boolean(),   // private chats between members: pictures
+  pmVoice: z.boolean(),      // … and voice messages
   rules: z.array(z.object({ icon: z.string(), title: localized, body: localized })),
   bannedWords: z.string().max(20000), // one per line in the form
 })

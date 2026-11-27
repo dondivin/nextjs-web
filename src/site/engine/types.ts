@@ -24,7 +24,7 @@ export type EngineConfig = {
   matches: EngineMatch[]
   siteName: string
   agentName?: string
-  chat: { slowSeconds: number; maxLength: number; bannedWords: string[]; rules: EngineRule[]; loungeTeamOnly?: boolean; voiceMax?: number; loungeMedia?: { view: string; save: boolean }; pushKey?: string | null }
+  chat: { slowSeconds: number; maxLength: number; bannedWords: string[]; rules: EngineRule[]; loungeTeamOnly?: boolean; voiceMax?: number; loungeMedia?: { view: string; save: boolean }; pushKey?: string | null; pmPictures?: boolean; pmVoice?: boolean }
   apiBase: string
   stickers?: { name: string; url: string }[]   // our own stickers for the photo editor
   wallpapers?: { id: string; name: string; url: string; mode: 'cover' | 'tile'; dim: number }[]   // chat wallpapers (back office → Wallpapers)

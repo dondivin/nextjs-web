@@ -1339,3 +1339,74 @@ See `docs/HANDOFF.md` §4.
   password (they had random ones).
 - Not tested here: tapping the notification (needs a person), private-chat / help-chat / reply notifications (same
   sending path, recipients chosen in `src/chat/push.ts`), iPhone.
+
+## 2026-11-27 — iPhone (iOS 26 Safari): empty bands + the see-through keyboard
+
+- Owner's iPhone screenshots: an empty band above the chat header and above the home page's top bar, one under the
+  message box, and the website showing through the (see-through) keyboard below the chat.
+- Bands: the viewport asked for `viewport-fit=cover`, so Safari reported the status bar / home bar as safe areas
+  (~59 / 34 pt) although its own bars already sit there → our `env(safe-area-inset-*)` paddings left empty strips.
+  Removed from `src/app/(frontend)/layout.tsx` (the paddings now resolve to 0 in the browser).
+- Keyboard: the chat was shrunk to the area above the keyboard, so the page behind showed through iOS's see-through
+  keyboard. Now (`engine.ts` keyboard block, `site.css`): the chat / photo editor / pop-up forms keep the full screen
+  height (`--vvfull`, learnt while the keyboard is down), and only the bottom part is lifted by the keyboard's height
+  (`--kb`): the message box (`.dock` margin, + 14 px), the room list's bottom, the editor's caption, a form's buttons.
+  Eased (.26 s). The conversation keeps showing the latest message just above the box while it moves (a ResizeObserver
+  on the message list keeps it at the end when it was at the end).
+- Not checked yet: the owner's dev server was stopped when the change was made (not restarted by me, as agreed).
+
+## 2026-11-27 — Dragging the hero phone on some phones
+
+- Owner: some phones can drag-rotate the mockup, others can't. Not a motion problem: the drag zone (`#dragZone`) is
+  meant to have `touch-action: pan-y`, but GSAP's Draggable writes `touch-action: manipulation` inline, which lets the
+  browser claim sideways swipes. Browsers that do (Chrome on Android among them) send `pointercancel` after ~28 px →
+  Draggable treats it as a release → under the 70 px threshold → the phone springs back. Others never cancel, so it
+  worked there.
+- Fix (`site.css`): `touch-action: pan-y !important` on `.drag-zone`. No change to any motion / animation / thresholds.
+- Checked (emulated phone, real touch events): sideways left / right, a diagonal-start thumb swipe and a slightly
+  downward one all switch the partner; a 50 px swipe springs back; a vertical swipe still scrolls the page. It is the
+  only Draggable on the site.
+
+## 2026-11-27 — Private chats: pictures / voice setting · notification card loading + "Not now"
+
+- Private chats between members had no setting: pictures were always refused and voice messages always allowed (hard
+  wired). New in back office → Chat settings → **Private chats**: "Pictures" (off by default = as before) and "Voice
+  messages" (on by default = as before). Stored in `chat-settings.privateChats` {pictures, voice}; applied by the server
+  (`sendImage` / `sendVoice` → `chatConfig().pmPictures / pmVoice`, messages `chat.err.pmPicturesOff` /
+  `chat.err.pmVoiceOff`) and by the chat (`cfg.chat.pmPictures / pmVoice` → picture button / microphone shown or hidden
+  in private chats). The chat with the team always allows both; shared rooms still follow the role's right.
+- Notification card: "Turn on" shows a spinner from the tap until done (also while the browser's "Allow
+  notifications?" question is open), "Not now" disabled meanwhile; success or a refusal → the card folds away. "Not
+  now" folds the card away (height / padding / opacity, .3 s) and is also remembered for the visit in memory — when the
+  browser can't store it (private browsing) the card used to come back at the next refresh. The account panel's switch
+  pulses while working.
+- Upload errors: a failed voice upload said "can't be used as a photo"; now "That recording can't be used".
+- Checked: private chat between the two test accounts — picture refused with the new message, voice passes the rule
+  (then closed the chat again); card — spinner while the question is open, Not-now disabled, clear message after;
+  Not now with storage blocked folds 130 → 26 → 0 px and stays hidden after a refresh.
+
+## 2026-11-27 — Chat text font (theme picker step 4)
+
+- New step "Text font" in the theme sheet (`Site.tsx` `#tsFonts`), reachable from the Theme step ("Font" button) and
+  from the palette menu (Theme / Wallpaper / **Font**). 13 choices (`engine.ts` `FONTS`): Theme default (as before),
+  This device's font, Inter, Roboto, Open Sans, Lato, Poppins, Nunito, Montserrat, Source Sans 3, Lexend, Atkinson
+  Hyperlegible, Merriweather. Each card: "Aa" + name + a sample message in that font + a short description (en + fr).
+- Loading: Google Fonts only when chosen (`loadFont`); the cards' previews load only the letters they show (`&text=`).
+  Saved per device (`ps_font`), applied at start.
+- Applied everywhere in the chat: `--font-chat`, `--font-title` and `--body` set on every themed part (messenger, menus,
+  every chat sheet, the palette menu, the photo viewer, toasts; the photo editor lives inside the messenger). On the
+  OddsClub theme (tall display titles) the titles get weight 800 with a text font. Theme previews keep their own font.
+- Checked (emulated phone): with Poppins — bubbles, room list, header, search, message box, sheet title + buttons,
+  sign-in button, toast, chat title all Poppins; kept after a reload and after changing theme; "Theme default" brings
+  back the theme's own font.
+- Follow-up (owner): fonts in a 2-column grid like the other steps, and clearly different fonts. List now: Theme
+  default, Device font, Inter, Poppins, Fredoka (round), Oswald (tall / sporty), Exo 2 (futuristic), Merriweather (book
+  serif), Playfair Display (elegant serif), Space Mono (typewriter), Patrick Hand (handwritten), Atkinson (legible).
+  Cards (`.tcard.fcard`): a preview (theme colours, "Aa" + the sample message, wraps on 2 lines) + name + style + check.
+- Cards changed size when a font was picked (the whole sheet's font changed, so every label re-wrapped). Now each card
+  — preview and labels — is written in its own font, the name has one line (… + tooltip) and the style a fixed two
+  lines. Also: the check circle was a `<span>` caught by the label's `flex:1` and took half the width (fixed).
+  Shortened names that didn't fit at 360 px: "Device font" / fr "Appareil", fr "Thème", "Atkinson".
+- Checked at 360 / 390 / 430 px (en + fr): all 12 cards the same size, no name cut, 0 size changes after 6 picks.
+- Local DB: `pnpm seed` added the 61 missing translations (new texts since the last start); the two shortened French
+  names were updated in place (the seed never overwrites existing texts).

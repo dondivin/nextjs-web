@@ -996,7 +996,7 @@ function openLightbox(url, thumb, w, h, nosave){
     sv.addEventListener('click', function(e){ e.stopPropagation(); if (LB._url && !LB.classList.contains('nosave')) mediaSave(LB._url, 'oddsclub-photo-' + new Date().toISOString().slice(0, 10) + '.webp'); });
     x.addEventListener('click', function(e){ e.stopPropagation(); closeLightbox(); });
     LB.addEventListener('click', function(){ if (!LB._dragged) closeLightbox(); LB._dragged = false; });
-    document.body.appendChild(LB);
+    document.body.appendChild(LB); if (typeof paintFont === 'function') paintFont(LB);
     window.addEventListener('keydown', function(e){ if (e.key === 'Escape' && LB.classList.contains('open')){ e.stopImmediatePropagation(); closeLightbox(); } }, true);   // window: before any sheet underneath (room settings, group info…)
     window.addEventListener('resize', function(){ if (LB.classList.contains('show') && !LB._closing){ LB._frame.style.transition = 'none'; lbPlace(lbFit(LB._w, LB._h), '0px'); } });
     // drag down (or up) to close
@@ -1422,7 +1422,8 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('mess
 function refreshSend(){ var v = $('msgInput').value.trim() || UI.pic, slow = slowApplies() && Date.now() < UI.slowUntil; $('composer').classList.toggle('has-text', !!v || slow); $('sendBtn').disabled = !v || slow; if ($('micBtn')) updateMic(); }
 function roomMediaRule(id){ id = String(id); if (isDmRoom(id)) return null; if (grpId(id)){ var g = grpOf(id); return (g && g.media) || null; } return (cfg.chat && cfg.chat.loungeMedia) || null; }
 function mediaOff(){ var r = roomMediaRule(CHAT.active); return !!(r && r.view === 'none'); }   // text-only room: no pictures / voice at all
-function canAttach(){ return !mediaOff() && !!(CHAT.db && CHAT.canPost && (CHAT.canEdit || CHAT.active === 'support' || (CHAT.perms && CHAT.perms.sendPictures && !pmUid(CHAT.active)))); }
+// private chats between members: Chat settings → Private chats → Pictures (off unless turned on)
+function canAttach(){ return !mediaOff() && !!(CHAT.db && CHAT.canPost && (CHAT.canEdit || CHAT.active === 'support' || (pmUid(CHAT.active) ? !!(cfg.chat && cfg.chat.pmPictures) : (CHAT.perms && CHAT.perms.sendPictures)))); }
 function updateAttach(){ var ok = canAttach(); $('attachBtn').hidden = !ok; if (!ok) clearPic(); updateMic(); }
 
 /* ---------- Voice messages: record in the browser (MediaRecorder), then send or throw away ----------
@@ -1431,7 +1432,8 @@ function updateAttach(){ var ok = canAttach(); $('attachBtn').hidden = !ok; if (
 var REC = null, VOICE_MAX = Math.max(10, Number(cfg.chat && cfg.chat.voiceMax) || 120);
 function canVoice(){
   if (!(window.MediaRecorder && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) || mediaOff()) return false;
-  return !!(CHAT.db && CHAT.canPost && (CHAT.canEdit || CHAT.active === 'support' || pmUid(CHAT.active) || (CHAT.perms && CHAT.perms.sendPictures)));
+  // private chats between members: Chat settings → Private chats → Voice messages (on unless turned off)
+  return !!(CHAT.db && CHAT.canPost && (CHAT.canEdit || CHAT.active === 'support' || (pmUid(CHAT.active) ? !(cfg.chat && cfg.chat.pmVoice === false) : (CHAT.perms && CHAT.perms.sendPictures))));
 }
 function updateMic(){ var ok = canVoice() && !REC; $('micBtn').hidden = !ok; $('composer').classList.toggle('voice-ok', ok); }
 function recMime(){ var c = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg;codecs=opus', 'audio/webm']; for (var i = 0; i < c.length; i++) if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(c[i])) return c[i]; return ''; }
@@ -1907,31 +1909,40 @@ function startSlow(){
     if (left <= 0){ ring.style.strokeDashoffset = 145; num.hidden = true; ic.style.visibility = ''; refreshSend(); return; }
     ring.style.strokeDashoffset = 145 * (1 - left / SLOW_MS); num.textContent = Math.ceil(left / 1000); refreshSend(); requestAnimationFrame(tick); })();
 }
-/* On-screen keyboard. Phones open it OVER the page (Android Chrome, iOS Safari): a chat pinned to the full screen keeps its
-   message box behind the keys. The chat is sized to the part of the screen above the keyboard (visualViewport) instead,
-   with a little space between the box and the keys; a conversation read to the end stays at the end. */
+/* On-screen keyboard. Phones open it OVER the page (Android Chrome, iOS Safari — on iPhone it is see-through). The chat
+   (and the photo editor, the pop-up forms) keep covering the whole screen, the keyboard covers their lower part, and only
+   what you type in is lifted above it: the message box (with a little space), the caption, a form's buttons. The
+   conversation shrinks from the bottom, so the latest messages stay just above the box.
+   Values on the page root: --vvt (where the visible area starts), --vvh (its height), --vvfull (the screen height without
+   the keyboard), --kb (how much the keyboard covers) + the class kb-open. */
 (function(){
   var vv = window.visualViewport; if (!vv) return;
   var m = $('messenger'), root = document.documentElement, raf = 0, base = {w: 0, h: 0};
   ['fullscreenchange', 'webkitfullscreenchange'].forEach(function(ev){ document.addEventListener(ev, function(){ base.h = 0; soon(); }); });   // the screen's height changed: measure again
   document.addEventListener('focusin', function(){ soon(); }); document.addEventListener('focusout', function(){ setTimeout(soon, 50); });
   function sync(){ raf = 0;
-    // on the page root: the chat and every pop-up form (sign-in, room settings…) use it
-    if (vv.scale > 1.01){ root.style.removeProperty('--vvh'); root.style.removeProperty('--vvt'); m.classList.remove('kb-open'); root.classList.remove('kb-open'); return; }   // (pinch-zoomed: leave it)
-    var wall = $('wall'), atEnd = wall && wall.scrollHeight - wall.scrollTop - wall.clientHeight < 40;
+    if (vv.scale > 1.01){ ['--vvh', '--vvt', '--vvfull', '--kb'].forEach(function(k){ root.style.removeProperty(k); }); m.classList.remove('kb-open'); root.classList.remove('kb-open'); return; }   // (pinch-zoomed: leave it)
     // keyboard up? The visible area is clearly shorter than the tallest seen at this width while a text box has the focus.
-    // (Comparing with the page height alone missed it in full screen: there the whole page shrinks with the keyboard.)
+    // (Comparing with the page height alone missed it when the whole page shrinks with the keyboard.)
     var w = window.innerWidth; if (w !== base.w){ base.w = w; base.h = 0; }
-    base.h = Math.max(base.h, vv.height, window.innerHeight);
     var a = document.activeElement, typing = !!a && (a.tagName === 'TEXTAREA' || a.isContentEditable || (a.tagName === 'INPUT' && /^(text|search|email|password|url|tel|number)$/.test(a.type)));
     var kb = window.innerHeight - vv.height > 120 || (typing && base.h - vv.height > 120);
-    root.style.setProperty('--vvh', vv.height + 'px'); root.style.setProperty('--vvt', vv.offsetTop + 'px'); m.classList.toggle('kb-open', kb && m.classList.contains('open')); root.classList.toggle('kb-open', kb);
-    if (kb && window.scrollY) window.scrollTo(0, 0);   // iOS scrolls the page under a fixed chat to show the box: not needed any more
-    if (atEnd && wall) wall.scrollTop = wall.scrollHeight;
+    if (!kb) base.h = Math.max(base.h, vv.height, window.innerHeight);   // (the full height is learnt while the keyboard is down)
+    var full = kb ? Math.max(base.h, vv.height) : vv.height, cover = kb ? Math.max(0, full - vv.height) : 0;
+    root.style.setProperty('--vvh', vv.height + 'px'); root.style.setProperty('--vvt', vv.offsetTop + 'px');
+    root.style.setProperty('--vvfull', full + 'px'); root.style.setProperty('--kb', cover + 'px');
+    m.classList.toggle('kb-open', kb && m.classList.contains('open')); root.classList.toggle('kb-open', kb);
+    if (kb && window.scrollY) window.scrollTo(0, 0);   // iOS scrolls the page under the fixed chat to show the box: not needed
   }
   function soon(){ if (!raf) raf = requestAnimationFrame(sync); }
   vv.addEventListener('resize', soon); vv.addEventListener('scroll', soon);
   new MutationObserver(soon).observe(m, {attributes: true, attributeFilter: ['class']});
+  // the conversation read to the end stays at the end while its height changes (keyboard up / down, box growing)
+  var wall = $('wall'), atEnd = true;
+  if (wall){
+    wall.addEventListener('scroll', function(){ atEnd = wall.scrollHeight - wall.scrollTop - wall.clientHeight < 40; }, {passive: true});
+    if (window.ResizeObserver) new ResizeObserver(function(){ if (atEnd) wall.scrollTop = wall.scrollHeight; }).observe(wall);
+  }
 })();
 /* Send keeps the keyboard open (people often write several messages in a row): tapping the button must not take the focus
    from the text box — the tap still sends */
@@ -2155,8 +2166,8 @@ function renderBubbleCards(){
 }
 function themeStep(n){
   var box = $('themeSteps'); if (!box) return;
-  var panes = [$('tsThemes'), $('tsBubbles'), $('tsWalls')], prev = Number(box.getAttribute('data-step')) || 1;
-  if (n === 2) renderBubbleCards(); if (n === 3) renderWallCards();
+  var panes = [$('tsThemes'), $('tsBubbles'), $('tsWalls'), $('tsFonts')], prev = Number(box.getAttribute('data-step')) || 1;
+  if (n === 2) renderBubbleCards(); if (n === 3) renderWallCards(); if (n === 4) renderFontCards();
   box.setAttribute('data-step', String(n)); panes.forEach(function(p, i){ p.hidden = i !== n - 1; });
   var cur = panes[n - 1]; cur.classList.remove('ts-in-l', 'ts-in-r'); void box.offsetWidth; cur.classList.add(n >= prev ? 'ts-in-r' : 'ts-in-l');
   box.scrollTop = 0;
@@ -2209,10 +2220,67 @@ function renderWallCards(){
     var card = document.querySelector('.wcard[data-id="' + id + '"] .bprev'); if (card) paintWall(card, id);
   });
 })();
+/* ---------- chat text font (per device): "theme" = the theme's own font, "system" = the device's, or a Google font —
+   downloaded only when chosen (the cards' previews only load the few letters they show). Applied to the whole chat:
+   messages, lists, headers, the message box, buttons, forms and menus, headings included. ---------- */
+var FONTS = [   // [id, CSS stack, display name, Google Fonts family spec] — each one a clearly different style
+  ['theme', '', ''],
+  ['system', '-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif', ''],
+  ['inter', '"Inter",system-ui,sans-serif', 'Inter', 'Inter:wght@400;500;600;700;800'],
+  ['poppins', '"Poppins",system-ui,sans-serif', 'Poppins', 'Poppins:wght@400;500;600;700;800'],
+  ['fredoka', '"Fredoka",system-ui,sans-serif', 'Fredoka', 'Fredoka:wght@400;500;600;700'],
+  ['oswald', '"Oswald",system-ui,sans-serif', 'Oswald', 'Oswald:wght@400;500;600;700'],
+  ['exo', '"Exo 2",system-ui,sans-serif', 'Exo 2', 'Exo+2:wght@400;500;600;700;800'],
+  ['merriweather', '"Merriweather",Georgia,serif', 'Merriweather', 'Merriweather:wght@400;700;900'],
+  ['playfair', '"Playfair Display",Georgia,serif', 'Playfair Display', 'Playfair+Display:wght@400;500;600;700;800'],
+  ['spacemono', '"Space Mono",ui-monospace,monospace', 'Space Mono', 'Space+Mono:wght@400;700'],
+  ['patrick', '"Patrick Hand",system-ui,sans-serif', 'Patrick Hand', 'Patrick+Hand'],
+  ['atkinson', '"Atkinson Hyperlegible",system-ui,sans-serif', 'Atkinson', 'Atkinson+Hyperlegible:wght@400;700'],   // (its full name, Atkinson Hyperlegible, is too long for a card)
+];
+function fontOf(id){ return FONTS.filter(function(f){ return f[0] === id; })[0] || FONTS[0]; }
+CHAT.font = (function(){ var f = store('ps_font'); return FONTS.some(function(x){ return x[0] === f; }) ? f : 'theme'; })();
+var FONT_LINKS = {};
+function fontLink(href){ if (FONT_LINKS[href]) return; var l = document.createElement('link'); l.rel = 'stylesheet'; l.href = href; document.head.appendChild(l); FONT_LINKS[href] = l; }
+function loadFont(id){ var f = fontOf(id); if (f[3]) fontLink('https://fonts.googleapis.com/css2?family=' + f[3] + '&display=swap'); }
+/** the chat's elements that carry the theme (+ the palette menu) get the font as CSS variables */
+var FONT_SCOPES = ['messenger', 'ctx', 'rulesSheet', 'themeSheet', 'authSheet', 'personSheet', 'roomSheet', 'confirmSheet', 'groupSheet'];
+function paintFont(e){
+  var f = fontOf(CHAT.font), vars = ['--font-chat', '--font-title', '--body'];
+  if (!f[1]){ vars.forEach(function(k){ e.style.removeProperty(k); }); e.style.removeProperty('--title-weight'); return; }
+  vars.forEach(function(k){ e.style.setProperty(k, f[1]); });
+  // the OddsClub theme's titles are a tall display font at a light weight: with a text font they need a bolder weight
+  if (CHAT.theme === 'oddsclub') e.style.setProperty('--title-weight', '800'); else e.style.removeProperty('--title-weight');
+}
+function setFontVars(){ FONT_SCOPES.forEach(function(k){ var e = $(k); if (e) paintFont(e); }); [LOOKMENU && LOOKMENU.el, LB, $('toast')].forEach(function(e){ if (e) paintFont(e); }); }   // (+ the palette menu, the photo viewer, the toasts)
+function applyFont(id){
+  var run = function(){ CHAT.font = id; store('ps_font', id); loadFont(id); setFontVars(); document.querySelectorAll('.fcard').forEach(function(c){ c.setAttribute('aria-pressed', c.dataset.id === id ? 'true' : 'false'); }); };
+  if (!REDUCE && document.startViewTransition){ try { document.startViewTransition(run); return; } catch(e){} }
+  run();
+}
+function renderFontCards(){
+  var list = $('fontList'); if (!list) return; list.textContent = '';
+  var sample = S('bubbles.sample1');
+  FONTS.forEach(function(f, i){
+    var id = f[0], name = id === 'theme' ? S('fonts.theme') : id === 'system' ? S('fonts.system') : f[2];
+    // previews: only the letters shown (a few KB per font)
+    if (f[3]) fontLink('https://fonts.googleapis.com/css2?family=' + (f[3].indexOf(':wght@') > 0 ? f[3].replace(/:wght@.*$/, ':wght@400;700') : f[3]) + '&display=swap&text=' + encodeURIComponent('Aa' + name + sample));
+    // a card like the other steps: a preview ("Aa" + a sample message, in that font) then its name + style + check
+    var b = el('button', 'tcard fcard'); b.type = 'button'; b.dataset.id = id; b.setAttribute('aria-pressed', id === CHAT.font ? 'true' : 'false'); b.style.animationDelay = (i * 30) + 'ms'; b.title = name;
+    // the whole card (preview AND its labels) is written in its own font: picking another font doesn't re-wrap the cards
+    if (id === 'theme') b.setAttribute('data-ct', CHAT.theme); else b.style.setProperty('--font-chat', f[1]);
+    var pv = el('div', 'fprev'); pv.setAttribute('aria-hidden', 'true'); pv.setAttribute('data-ct', CHAT.theme);   // (the theme's colours; "Theme default" also keeps its font)
+    if (id !== 'theme') pv.style.setProperty('--font-chat', f[1]);
+    pv.appendChild(el('span', 'f-aa', 'Aa')); pv.appendChild(el('span', 'f-sample', sample)); b.appendChild(pv);
+    var nm = el('div', 'tname'), lb = el('span'); lb.appendChild(el('b', null, name)); lb.appendChild(el('small', null, S(id === 'theme' || id === 'system' ? 'fonts.' + id + '.desc' : 'fonts.desc.' + id))); nm.appendChild(lb);
+    var ck = el('span', 'tcheck'); ck.appendChild(svg('<path d="M5 12l5 5 9-10"/>')); nm.appendChild(ck); b.appendChild(nm);
+    b.onclick = function(){ applyFont(id); };
+    list.appendChild(b);
+  });
+}
 function setThemeAttr(id){ ['messenger','ctx','rulesSheet','themeSheet','authSheet','personSheet','roomSheet','confirmSheet','groupSheet'].forEach(function(k){ var e = $(k); if (e) e.setAttribute('data-ct', id); }); }
 function applyTheme(id, animate){
   if (id === CHAT.theme && !animate) { setThemeAttr(id); return; }
-  var run = function(){ CHAT.theme = id; setThemeAttr(id); store('ps_chat_theme', id); if ($('toBubbles')) $('toBubbles').hidden = id === 'discord';
+  var run = function(){ CHAT.theme = id; setThemeAttr(id); setFontVars(); store('ps_chat_theme', id); if ($('toBubbles')) $('toBubbles').hidden = id === 'discord';
     document.querySelectorAll('.tcard').forEach(function(c){ c.setAttribute('aria-pressed', c.dataset.id === id ? 'true' : 'false'); });
     UI.rows.forEach(function(r){ r._sig = null; }); if (isOpen()) renderConvo(); };
   if (animate && !REDUCE && document.startViewTransition){ try { document.startViewTransition(run); return; } catch(e){} }
@@ -2255,7 +2323,7 @@ window.addEventListener('keydown', function(e){
   if (e.key === 'Escape'){ e.preventDefault(); e.stopImmediatePropagation(); CF.done(false); }
   else if (e.key === 'Tab'){ var a = $('cfCancel'), b = $('cfOk'); if (document.activeElement !== a && document.activeElement !== b){ e.preventDefault(); a.focus(); } else if (e.shiftKey ? document.activeElement === a : document.activeElement === b){ e.preventDefault(); (e.shiftKey ? b : a).focus(); } }
 }, true);
-function openThemes(step){ themeFocus = document.activeElement; themeStep(step === 3 ? 3 : 1);   /* 3: straight to the wallpaper (quick button) */
+function openThemes(step){ themeFocus = document.activeElement; themeStep(step === 3 || step === 4 ? step : 1);   /* 4: straight to the font */   /* 3: straight to the wallpaper (quick button) */
   if (!UI.wallsWarm){ UI.wallsWarm = true; (cfg.wallpapers || []).forEach(function(w){ var i = new Image(); i.decoding = 'async'; i.src = w.url; }); }   // wallpaper previews ready by step 3
   var w = $('themeSheet'); w.classList.add('open'); w.setAttribute('aria-hidden', 'false'); setTimeout(function(){ var c = w.querySelector('.tcard[aria-pressed="true"]'); if (c) c.focus({preventScroll:true}); }, 60); }
 function closeThemes(){ var w = $('themeSheet'); w.classList.remove('open'); w.setAttribute('aria-hidden', 'true'); if (themeFocus && themeFocus.focus) themeFocus.focus({preventScroll:true}); }
@@ -2266,12 +2334,13 @@ function openLookMenu(btn){
   if (LOOKMENU){ var same = LOOKMENU.btn === btn; closeLookMenu(); if (same) return; }
   var menu = el('div', 'look-menu glass'); menu.setAttribute('role', 'menu'); menu.setAttribute('data-ct', CHAT.theme);
   [['theme', S('chat.themeAria'), '<circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 2a10 10 0 0 0 0 20c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.4A5.6 5.6 0 0 0 22 9.8C22 5.5 17.5 2 12 2z"/>', 1],
-   ['wall', S('walls.open'), '<rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/>', 3]].forEach(function(x){
+   ['wall', S('walls.open'), '<rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/>', 3],
+   ['font', S('fonts.open'), '<path d="M4 20l5.5-14h1L16 20M6.2 15h7.6"/><path d="M17 20v-6.5a2.5 2.5 0 0 1 5 0V20M17 16.5h5"/>', 4]].forEach(function(x){
     var it = el('button', 'look-item'); it.type = 'button'; it.setAttribute('role', 'menuitem'); it.appendChild(svg(x[2])); it.appendChild(el('span', null, x[1]));
     it.onclick = function(){ closeLookMenu(); openThemes(x[3]); };
     menu.appendChild(it);
   });
-  document.body.appendChild(menu);
+  paintFont(menu); document.body.appendChild(menu);
   var r = btn.getBoundingClientRect(), w = menu.offsetWidth, left = Math.max(8, Math.min(window.innerWidth - w - 8, r.right - w));
   menu.style.left = left + 'px'; menu.style.top = (r.bottom + 6) + 'px'; menu.style.transformOrigin = (r.left + r.width / 2 - left) + 'px top';
   LOOKMENU = {el: menu, btn: btn}; btn.setAttribute('aria-expanded', 'true');
@@ -2294,6 +2363,11 @@ $('toBubbles').onclick = function(){ themeStep(2); };
 $('toWalls').onclick = $('bubblesNext').onclick = function(){ themeStep(3); };
 $('wallsBack').onclick = function(){ themeStep(CHAT.theme === 'discord' ? 1 : 2); };
 $('wallsDone').onclick = closeThemes;
+$('toFonts').onclick = function(){ themeStep(4); };
+$('fontsBack').onclick = function(){ themeStep(1); };
+$('fontsDone').onclick = closeThemes;
+// the chosen font, from the start
+loadFont(CHAT.font); setFontVars();
 function syncBubbleBtn(){ $('toBubbles').hidden = CHAT.theme === 'discord'; }
 $('themeSheet').addEventListener('click', function(e){ if (e.target === this) closeThemes(); });
 document.addEventListener('keydown', function(e){ if (e.key === 'Escape' && $('themeSheet').classList.contains('open')){ e.stopImmediatePropagation(); closeThemes(); } }, true);

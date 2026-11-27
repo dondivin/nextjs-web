@@ -306,7 +306,11 @@ export async function sendImage(ctx: Ctx, form: FormData) {
   const text = str(b.text, 5000).trim()
   const batch = /^[\w-]{4,40}$/.test(String(b.batch || '')) ? String(b.batch) : undefined
   const p = await prepareSend(ctx, b, text, { batch })
-  if (ctx.viewer.kind !== 'staff' && p.room !== 'dm:' + ctx.viewer.uid && !(ctx.perms.sendPictures && !p.room.startsWith('pm:'))) throw new ChatError(ctx.t('chat.err.imagesDmOnly'), 403)
+  // members: their chat with the team always; private chats when Chat settings → Private chats → Pictures is on; shared rooms with the role right
+  if (ctx.viewer.kind !== 'staff' && p.room !== 'dm:' + ctx.viewer.uid) {
+    const ok = p.room.startsWith('pm:') ? (await chatConfig(ctx.payload)).pmPictures : ctx.perms.sendPictures
+    if (!ok) throw new ChatError(ctx.t(p.room.startsWith('pm:') ? 'chat.err.pmPicturesOff' : 'chat.err.imagesDmOnly'), 403)
+  }
   if (roomMedia(await mediaPolicy(ctx.payload), p.room)?.view === 'none') throw new ChatError(ctx.t('chat.err.mediaOff'), 403)   // text-only room
   const file = form.get('file')
   let data: Buffer, thumb = ''
@@ -343,6 +347,7 @@ export async function sendVoice(ctx: Ctx, form: FormData) {
   const p = await prepareSend(ctx, b, '')
   const shared = !p.room.startsWith('dm:') && !p.room.startsWith('pm:')
   if (ctx.viewer.kind !== 'staff' && shared && !ctx.perms.sendPictures) throw new ChatError(ctx.t('chat.err.voiceNotHere'), 403)
+  if (ctx.viewer.kind !== 'staff' && p.room.startsWith('pm:') && !(await chatConfig(ctx.payload)).pmVoice) throw new ChatError(ctx.t('chat.err.pmVoiceOff'), 403)   // Chat settings → Private chats
   if (roomMedia(await mediaPolicy(ctx.payload), p.room)?.view === 'none') throw new ChatError(ctx.t('chat.err.mediaOff'), 403)   // text-only room
   const file = form.get('file')
   const type = file instanceof File ? String(file.type || '').split(';')[0].trim().toLowerCase() : ''

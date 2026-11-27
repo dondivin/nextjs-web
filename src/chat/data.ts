@@ -88,7 +88,7 @@ export async function cached<T>(key: string, ms: number, fn: () => Promise<T>): 
   return v
 }
 
-export type ChatConfig = { slowMs: number; maxLength: number; banned: string[]; promoCodes: string[]; agentName: string; loungeTeamOnly: boolean }
+export type ChatConfig = { slowMs: number; maxLength: number; banned: string[]; promoCodes: string[]; agentName: string; loungeTeamOnly: boolean; pmPictures: boolean; pmVoice: boolean }
 export function chatConfig(payload: Payload): Promise<ChatConfig> {
   return cached('config', 30_000, async () => {
     const [chat, site, partners] = await Promise.all([
@@ -103,6 +103,9 @@ export function chatConfig(payload: Payload): Promise<ChatConfig> {
       promoCodes: partners.docs.map((p) => p.promoCode).filter((c): c is string => !!c),
       agentName: site.agentName || '',
       loungeTeamOnly: chat.lounge?.postBy === 'team',
+      // private chats between members (Chat settings → Private chats)
+      pmPictures: chat.privateChats?.pictures === true,
+      pmVoice: chat.privateChats?.voice !== false,
     }
   })
 }

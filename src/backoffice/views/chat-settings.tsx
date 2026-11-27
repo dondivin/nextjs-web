@@ -17,6 +17,7 @@ import {
 import { Button } from '@/backoffice/components/ui/button'
 import { Input } from '@/backoffice/components/ui/input'
 import { Label } from '@/backoffice/components/ui/label'
+import { Switch } from '@/backoffice/components/ui/switch'
 import { Textarea } from '@/backoffice/components/ui/textarea'
 import {
   Select,
@@ -302,6 +303,29 @@ export function ChatSettingsView({
                 />
                 {e.maxLength && <p className="text-xs text-destructive">{e.maxLength.message}</p>}
               </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Private chats</CardTitle>
+              <CardDescription>What members can send each other in private chats. The chat with your team always allows pictures and voice messages.</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-3">
+              <Controller control={control} name="pmPictures" render={({ field }) => (
+                <label className="flex items-start gap-3 rounded-lg border p-3 text-sm">
+                  <Switch checked={field.value} onCheckedChange={field.onChange} className="mt-0.5" />
+                  <span className="leading-tight"><b className="font-medium"><ImageIcon className="mr-1 inline size-3.5" />Pictures</b>
+                    <span className="mt-0.5 block text-xs text-muted-foreground">{field.value ? 'Members can send pictures to each other.' : 'Off: the picture button is hidden in private chats.'}</span></span>
+                </label>
+              )} />
+              <Controller control={control} name="pmVoice" render={({ field }) => (
+                <label className="flex items-start gap-3 rounded-lg border p-3 text-sm">
+                  <Switch checked={field.value} onCheckedChange={field.onChange} className="mt-0.5" />
+                  <span className="leading-tight"><b className="font-medium"><Mic className="mr-1 inline size-3.5" />Voice messages</b>
+                    <span className="mt-0.5 block text-xs text-muted-foreground">{field.value ? 'Members can send voice messages to each other.' : 'Off: the microphone is hidden in private chats.'}</span></span>
+                </label>
+              )} />
             </CardContent>
           </Card>
 

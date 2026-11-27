@@ -16,7 +16,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     // languages (switcher in the nav), so automatic translation is turned off.
     <html lang={lang?.code || 'en'} dir={lang?.dir || 'ltr'} translate="no" className="notranslate" suppressHydrationWarning>
       <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+        {/* no viewport-fit=cover: in Safari it made iOS report the status / home bar areas as "safe areas" to keep free, which
+            left empty bands above the top bar and under the chat's message box */}
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta name="google" content="notranslate" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />

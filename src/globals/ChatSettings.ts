@@ -32,6 +32,16 @@ export const ChatSettings: GlobalConfig = {
       ],
     },
     {
+      // private chats between members (the chat with the team always allows both)
+      name: 'privateChats',
+      type: 'group',
+      admin: { description: 'Private chats between members' },
+      fields: [
+        { name: 'pictures', type: 'checkbox', defaultValue: false, admin: { description: 'Members can send pictures in private chats' } },
+        { name: 'voice', type: 'checkbox', defaultValue: true, admin: { description: 'Members can send voice messages in private chats' } },
+      ],
+    },
+    {
       // the built-in "Community lounge" room (managed in the back office: Groups & channels → Community lounge)
       name: 'lounge',
       type: 'group',

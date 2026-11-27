@@ -67,8 +67,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ action:
       return json({ ok: true, ...(await chat.uploadAvatar(ctx, file instanceof File ? file : null)) })
     } catch (e) {
       if (e instanceof chat.ChatError) return json({ error: e.message }, e.status)
-      payload.logger.error({ err: e, msg: '[chat] avatar upload failed' })
-      return json({ error: ctx.t('auth.err.photoType') }, 400)
+      payload.logger.error({ err: e, msg: '[chat] ' + action + ' upload failed' })
+      return json({ error: ctx.t(action === 'voice' ? 'chat.err.voiceType' : 'auth.err.photoType') }, 400)   // (an audio file isn't "a photo")
     }
   }
   if (!(req.headers.get('content-type') || '').includes('application/json')) return json({ error: 'Unsupported content type' }, 415)

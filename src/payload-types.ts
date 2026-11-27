@@ -1728,6 +1728,19 @@ export interface ChatSetting {
       }[]
     | null;
   /**
+   * Private chats between members
+   */
+  privateChats?: {
+    /**
+     * Members can send pictures in private chats
+     */
+    pictures?: boolean | null;
+    /**
+     * Members can send voice messages in private chats
+     */
+    voice?: boolean | null;
+  };
+  /**
    * The chat’s main room. Empty texts use the default wording (Translations).
    */
   lounge?: {
@@ -1858,6 +1871,12 @@ export interface ChatSettingsSelect<T extends boolean = true> {
               id?: T;
             };
         id?: T;
+      };
+  privateChats?:
+    | T
+    | {
+        pictures?: T;
+        voice?: T;
       };
   lounge?:
     | T

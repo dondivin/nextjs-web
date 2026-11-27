@@ -363,7 +363,17 @@ export function createChatBackend(cfg: EngineConfig, h) {
     pushCard()
   }
   const LATER = 'oc_push_later'
-  function later() { try { return Date.now() - Number(localStorage.getItem(LATER) || 0) < 14 * 864e5 } catch (e) { return false } }
+  // "Not now": remembered for two weeks — and for this visit in any case (when the browser can't store it, e.g. private
+  // browsing, the card used to come back at the next refresh)
+  function later() { if (push.dismissed) return true; try { return Date.now() - Number(localStorage.getItem(LATER) || 0) < 14 * 864e5 } catch (e) { return false } }
+  /** the card folds away (height, padding and opacity), then is hidden */
+  function foldAway(box) {
+    if (box.hidden) return
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) { box.hidden = true; return }
+    box.style.height = box.offsetHeight + 'px'; void box.offsetHeight
+    box.classList.add('closing'); box.style.height = '0px'
+    setTimeout(() => { box.hidden = true; box.classList.remove('closing'); box.style.height = '' }, 320)
+  }
   /** the card in the room list: "Get notified of new messages" */
   function pushCard() {
     const box = $('pushCard'); if (!box) return
@@ -375,11 +385,17 @@ export function createChatBackend(cfg: EngineConfig, h) {
     const txt = tag('div', 'push-txt'); txt.appendChild(tag('b', null, S('push.cardTitle'))); txt.appendChild(tag('span', null, st === 'ios-install' ? S('push.iosHint') : S('push.cardBody')))
     const acts = tag('div', 'push-acts')
     const no = tag('button', 'btn-text', S('push.later')); no.type = 'button'
-    no.onclick = () => { try { localStorage.setItem(LATER, String(Date.now())) } catch (e) {} box.hidden = true }
+    no.onclick = () => { push.dismissed = true; try { localStorage.setItem(LATER, String(Date.now())) } catch (e) {} foldAway(box) }
     acts.appendChild(no)
     if (st === 'ok') {
       const yes = tag('button', 'btn btn-primary btn-sm', S('push.turnOn')); yes.type = 'button'
-      yes.onclick = () => pushOn().then(() => { box.hidden = true; h.toast(S('push.enabled'), true); renderPushBox() }, (e) => h.toast(e.message))
+      // busy from the tap until it's done (the browser's "Allow notifications?" question can stay open a while)
+      yes.onclick = () => {
+        if (yes.classList.contains('is-busy')) return
+        yes.classList.add('is-busy'); yes.setAttribute('aria-busy', 'true'); yes.disabled = true; no.disabled = true
+        const done = () => { yes.classList.remove('is-busy'); yes.removeAttribute('aria-busy'); yes.disabled = false; no.disabled = false }
+        pushOn().then(() => { done(); push.dismissed = true; foldAway(box); h.toast(S('push.enabled'), true); renderPushBox() }, (e) => { done(); h.toast(e.message); if (Notification.permission === 'denied') foldAway(box) })
+      }
       acts.appendChild(yes)
     }
     box.appendChild(ic); box.appendChild(txt); box.appendChild(acts)
@@ -399,7 +415,8 @@ export function createChatBackend(cfg: EngineConfig, h) {
     const on = !!push.sub
     label.appendChild(tag('span', null, S(on ? 'push.onHint' : 'push.offHint')))
     const sw = tag('button', 'switch' + (on ? ' on' : '')); sw.type = 'button'; sw.setAttribute('role', 'switch'); sw.setAttribute('aria-checked', on ? 'true' : 'false'); sw.setAttribute('aria-label', S('push.title'))
-    sw.onclick = () => { if (push.busy) return; push.busy = true; (on ? pushOff() : pushOn().then(() => h.toast(S('push.enabled'), true))).catch((e) => h.toast(e.message)).finally(() => { push.busy = false; renderPushBox(); pushCard() }) }
+    sw.onclick = () => { if (push.busy) return; push.busy = true; sw.classList.add('loading'); sw.setAttribute('aria-busy', 'true')   // (pulses while working)
+      ;(on ? pushOff() : pushOn().then(() => h.toast(S('push.enabled'), true))).catch((e) => h.toast(e.message)).finally(() => { push.busy = false; renderPushBox(); pushCard() }) }
     head.appendChild(sw)
     if (on) {
       const row = tag('label', 'push-check'), cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !push.prefs || push.prefs.preview !== false

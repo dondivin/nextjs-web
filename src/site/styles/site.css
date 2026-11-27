@@ -29,7 +29,10 @@ body.on-light .brand,body.on-light .nav-links a:not(.btn){color:var(--night)}
 .p-btn[aria-pressed="true"]{color:var(--green-ink)}
 .p-btn:focus-visible{outline-offset:-2px}
 .p-word{position:absolute;left:50%;bottom:clamp(120px,22vh,220px);transform:translateX(-50%);z-index:0;font-family:var(--display);text-transform:uppercase;font-size:clamp(40px,9vw,140px);line-height:1;letter-spacing:.06em;color:transparent;-webkit-text-stroke:1.5px color-mix(in srgb, var(--light) 22%, transparent);white-space:nowrap;pointer-events:none;user-select:none}
-.drag-zone{position:absolute;left:50%;top:22%;bottom:24%;width:min(380px,62vw);transform:translateX(-50%);z-index:4;cursor:grab;touch-action:pan-y;-webkit-user-select:none;user-select:none}
+.drag-zone{position:absolute;left:50%;top:22%;bottom:24%;width:min(380px,62vw);transform:translateX(-50%);z-index:4;cursor:grab;touch-action:pan-y !important;-webkit-user-select:none;user-select:none}
+/* (!important: GSAP's Draggable writes touch-action: manipulation on it, which lets the browser take sideways swipes for
+   itself — some phones then cancel the drag after a few pixels and the phone springs back. pan-y: up / down still scroll
+   the page, sideways is always the drag) */
 .drag-zone.grabbing{cursor:grabbing}
 .drag-hint{position:absolute;left:50%;bottom:-8px;transform:translateX(-50%);display:flex;align-items:center;gap:8px;padding:7px 12px;border-radius:999px;background:color-mix(in srgb, var(--night) 70%, transparent);border:1px solid var(--line);color:var(--light);font:700 12px var(--body);letter-spacing:.04em;white-space:nowrap;pointer-events:none;transition:opacity .4s}
 .drag-hint .icon{width:16px;height:16px}
@@ -97,6 +100,11 @@ body.scrolled .nav{background:color-mix(in srgb, var(--nav-bg) 94%, transparent)
 .switch.on{background:var(--c-accent)}
 .switch.on::after{transform:translateX(18px)}
 .switch:focus-visible{outline:2px solid var(--c-accent);outline-offset:2px}
+.switch.loading{cursor:progress}
+.switch.loading::after{animation:switch-pulse .9s ease-in-out infinite}
+@keyframes switch-pulse{50%{transform:translateX(9px) scale(.85);opacity:.7}}
+.push-card.closing{overflow:hidden;opacity:0;margin-top:0;margin-bottom:0;padding-top:0;padding-bottom:0;border-width:0;transition:height .3s cubic-bezier(.2,.8,.2,1), opacity .2s, margin .3s, padding .3s}
+.push-acts .btn:disabled,.push-acts .btn-text:disabled{cursor:default}
 .push-check{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:14px;cursor:pointer}
 .push-check input{width:20px;height:20px;accent-color:var(--c-accent)}
 /* password field with an eye (show / hide) */
@@ -673,19 +681,24 @@ mark.hl{background:transparent;color:var(--c-accent);font-weight:800}
 /* a chosen wallpaper runs behind the input too (like WhatsApp): the bar under the field becomes see-through */
 .wp-scope[data-wp="cover"] .dock,.wp-scope[data-wp="tile"] .dock{background:transparent}
 /* on-screen keyboard: the chat takes the visible part of the screen above it (see engine.ts), with room between the box and the keys */
-.messenger.open{top:var(--vvt,0px);bottom:auto;height:var(--vvh,100%)}
-.messenger.kb-open .dock{padding-bottom:14px}
-.sheet-wrap.open{top:var(--vvt,0px);bottom:auto;height:var(--vvh,100%)}
+.messenger.open{top:var(--vvt,0px);bottom:auto;height:var(--vvfull,100%)}
+/* keyboard up: only the message box moves above it (14 px of space); the conversation shrinks from the bottom, the chat's
+   background still fills the screen behind the (see-through on iPhone) keyboard */
+.dock{transition:margin-bottom .26s cubic-bezier(.2,.8,.2,1), padding-bottom .26s}
+.messenger.kb-open .dock{padding-bottom:14px;margin-bottom:var(--kb,0px)}
+.messenger.kb-open .m-side{padding-bottom:var(--kb,0px)}
+.sheet-wrap.open{top:var(--vvt,0px);bottom:auto;height:var(--vvfull,100%)}
+html.kb-open .sheet-wrap.open{padding-bottom:var(--kb,0px)}
 .sheet-wrap.open .sheet{max-height:min(calc(var(--vvh,100vh) - 24px),780px)}
 html.kb-open .sheet-wrap.open .sheet{padding-bottom:16px}
 .sheet[tabindex="-1"]:focus{outline:none}   /* the form itself holds the focus on phones (no keyboard popping up): no ring */
 /* the picture editor follows the visible area too: caption + photo strip stay just above the keyboard, and its height
    follows the keyboard smoothly instead of jumping */
-.pe.open{top:var(--vvt,0px);bottom:auto;height:var(--vvh,100%);transition:height .26s cubic-bezier(.2,.8,.2,1)}
-.messenger.open{transition:opacity .24s ease, visibility 0s, height .26s cubic-bezier(.2,.8,.2,1)}   /* (the open state, plus a smooth height with the keyboard) */
+.pe.open{top:var(--vvt,0px);bottom:auto;height:var(--vvfull,100%);transition:padding-bottom .26s cubic-bezier(.2,.8,.2,1)}
+html.kb-open .pe.open{padding-bottom:var(--kb,0px)}
 @keyframes pe-thumb-in{from{opacity:0;transform:scale(.6)}}
 .pe-thumb.fresh{animation:pe-thumb-in .28s cubic-bezier(.2,.9,.3,1.2) both}
-@media (prefers-reduced-motion:reduce){.pe.open,.messenger.open{transition:none}.pe-thumb.fresh{animation:none}}
+@media (prefers-reduced-motion:reduce){.pe.open,.dock{transition:none}.pe-thumb.fresh{animation:none}}
 .reply-wrap{display:grid;grid-template-rows:0fr;transition:grid-template-rows var(--spring-d) var(--spring)}
 .reply-wrap.show{grid-template-rows:1fr}
 .reply-wrap > div{overflow:hidden;min-height:0}
@@ -781,6 +794,18 @@ html.kb-open .sheet-wrap.open .sheet{padding-bottom:16px}
 .tcheck{width:22px;height:22px;border-radius:50%;background:var(--c-accent);color:var(--c-accent-ink);display:grid;place-items:center;transform:scale(0);transition:transform var(--bounce-d) var(--bounce)}
 .tcard[aria-pressed="true"] .tcheck{transform:scale(1)}
 .tcheck .icon{width:14px;height:14px;stroke-width:3}
+/* font step: a 2-column grid like the other steps — each card previews "Aa" and a message in its font */
+.fprev{height:118px;border-radius:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:10px;overflow:hidden;background-color:var(--c-wall);background-image:var(--c-wall-img);background-size:var(--c-wall-size);border:1px solid var(--c-border);color:var(--c-in-text, #fff);font-family:var(--font-chat);pointer-events:none}
+.fprev .f-aa{font-size:38px;line-height:1;font-weight:700}
+.fprev .f-sample{font-size:13px;line-height:1.25;padding:5px 10px;border-radius:12px;background:var(--c-in);color:var(--c-in-text);max-width:100%;text-align:center;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+/* fixed label space: the name on one line, the style on up to two — every card keeps its size, whatever is chosen */
+.fcard{font-family:var(--font-chat)}
+.fcard .tname{align-items:flex-start}
+.fcard .tname > span:not(.tcheck){flex:1;min-width:0}   /* (not the check circle: it took half the width) */
+.fcard .tname b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3}
+.fcard .tname small{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;height:2.6em;line-height:1.3;font-weight:500;opacity:.65;font-size:12px;margin-top:2px}
+.fcard .tname .tcheck{flex:none;width:22px}
+@media (max-width:380px){.fprev{height:104px}.fprev .f-aa{font-size:32px}}
 /* toast drops from the top */
 .toast{position:fixed;left:50%;top:calc(env(safe-area-inset-top,0px) + 14px);z-index:90;display:flex;align-items:center;gap:10px;max-width:min(92vw,460px);padding:11px 18px 11px 12px;border-radius:999px;background:#F2F7FF;color:#081A30;font-weight:700;font-size:14px;box-shadow:0 12px 30px rgba(0,0,0,.3);
   transform:translate(-50%,-140%) scale(.7);opacity:0;pointer-events:none;transition:transform var(--bounce-d) var(--bounce), opacity .2s}

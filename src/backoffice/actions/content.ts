@@ -78,6 +78,7 @@ export async function saveChatSettings(input: ChatForm) {
         maxLength: d.maxLength,
         voiceMaxSeconds: d.voiceMaxSeconds,
         mediaRetentionDays: d.mediaRetentionDays,
+        privateChats: { pictures: d.pmPictures, voice: d.pmVoice },
         rules: d.rules.map((r) => ({ icon: r.icon as never, title: clean(r.title), body: clean(r.body) })).filter((r) => r.title.length || r.body.length),
         bannedWords: words.map((word) => ({ word })),
       },
