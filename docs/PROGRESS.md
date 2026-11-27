@@ -1505,3 +1505,18 @@ See `docs/HANDOFF.md` §4.
 - Strings en + fr (`chat.reacted`, `chat.reactedDm`, `chat.youReacted`). Checked live with the two test accounts in a
   group (the receiver on the chat list, never opening the chat): reaction shown at once, badge unchanged (40); taken
   back → the message again; new message → badge 41; my own reaction → "You reacted 😂 …". Test messages removed.
+
+## 2026-11-27 — Chat list ordered by activity · after forwarding, open the first chat
+
+- The chat list was in a fixed order (team chat, private chats, lounge, groups, match rooms). Now (`engine.ts`
+  `renderRooms` + `roomLastTs`) it is sorted by the latest message, newest first, like WhatsApp: a chat you write or
+  forward into, or that gets a message, goes to the top; chats without messages keep their order at the end; reactions
+  don't move a chat. Rows that change place glide there (FLIP, .38 s; none with reduced motion).
+- After forwarding: the first chosen chat that got it opens, replacing the conversation forwarded from in the history
+  (`goChat(first, {replace: true})`), so Back returns to the chat list.
+- Checked with the two test accounts: a message in the group moved it from 2nd to 1st on the other's list; forwarding
+  from the group to the team chat → the team chat opens and is first; Back → the chat list. Test messages removed.
+- Correction (owner): the partner (team) chat and the community lounge are priority chats and stay on top, as before;
+  only the chats below them are ordered by latest message (`rank`: partner 0, lounge 1, others 2, then newest first).
+  Checked: partner · lounge always first; a message in the group or the private chat moves that one above the other.
+  (After forwarding, "takes the place" only concerns Back → the chat list; the list position follows the order above.)

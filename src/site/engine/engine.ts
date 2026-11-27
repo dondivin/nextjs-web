@@ -717,6 +717,13 @@ function renderRooms(){
     if (UI.filter === 'live') return r.lounge || (r.match && r.match.status === 'live');
     if (UI.filter === 'upcoming') return r.lounge || (r.match && r.match.status === 'upcoming');
     return true; });
+  // the priority chats stay on top — the partner (team) chat, then the community lounge; below them the newest activity
+  // first: the chat you just wrote / forwarded in (or that just got a message) goes up. Chats without messages keep their
+  // order at the end; reactions don't move a chat.
+  var rank = function(r){ return r.agent ? 0 : r.lounge ? 1 : 2; };
+  list = list.map(function(r, i){ return {r: r, i: i, k: rank(r), t: roomLastTs(r)}; }).sort(function(a, b){ return (a.k - b.k) || (b.t - a.t) || (a.i - b.i); }).map(function(x){ return x.r; });
+  // rows that change place glide there (FLIP) instead of jumping
+  var before = {}; if (!REDUCE) UI.roomEls.forEach(function(li, id){ if (li.isConnected) before[id] = li.offsetTop; });
   var keep = new Set([$('roomPill')]);
   list.forEach(function(r, i){
     var li = UI.roomEls.get(r.id);
@@ -725,7 +732,16 @@ function renderRooms(){
     if (ul.children[i + 1] !== li) ul.insertBefore(li, ul.children[i + 1] || null);
   });
   Array.prototype.slice.call(ul.children).forEach(function(c){ if (!keep.has(c)) c.remove(); });
+  if (!REDUCE) list.forEach(function(r){ var li = UI.roomEls.get(r.id), was = before[r.id]; if (li == null || was == null) return; var dy = was - li.offsetTop; if (Math.abs(dy) < 2) return;
+    li.style.transition = 'none'; li.style.transform = 'translateY(' + dy + 'px)'; void li.offsetWidth; li.style.transition = 'transform .38s cubic-bezier(.2,.8,.2,1)'; li.style.transform = '';
+    clearTimeout(li._flip); li._flip = setTimeout(function(){ li.style.transition = ''; }, 420); });
   placeRoomPill(); srchRender();
+}
+/** when a chat last had a message (0 = none yet) — the list's order */
+function roomLastTs(r){
+  var ms = roomMsgs(r.id), last = ms[ms.length - 1], t = last ? Number(last.ts) || 0 : 0;
+  if (r.dm && r.uid && DM.threads[r.uid] && DM.threads[r.uid].lastTs) t = Math.max(t, Number(DM.threads[r.uid].lastTs) || 0);   // a team thread not loaded yet: its summary
+  return t;
 }
 function placeRoomPill(){
   var li = UI.roomEls.get(CHAT.active), show = !!(li && li.isConnected && viewing() && window.innerWidth > 820);
@@ -2481,6 +2497,10 @@ $('fwdSend').addEventListener('click', function(){
   backend.forward(FWD.m.id, to).then(function(d){
     closeForward();
     var failed = (d && d.failed) || [];
+    // open the first chosen chat that got it — it takes the place of the conversation forwarded from, so Back returns to the
+    // chat list (not to that conversation)
+    var first = to.filter(function(x){ return !failed.some(function(f){ return f.to === x; }); })[0];
+    if (first && first !== CHAT.active) goChat(first, {replace: true});
     if (d && d.sent) toast(d.sent === 1 ? S('fwd.done1', {name: names[to.filter(function(x){ return !failed.some(function(f){ return f.to === x; }); })[0]] || ''}) : S('fwd.done', {n: d.sent}), true);
     if (failed.length) setTimeout(function(){ toast((names[failed[0].to] ? names[failed[0].to] + ': ' : '') + failed[0].error + (failed.length > 1 ? ' (+' + (failed.length - 1) + ')' : '')); }, d && d.sent ? 3000 : 0);
   }, function(e){ toast(e && e.message ? e.message : S('chat.sendFailed')); });
