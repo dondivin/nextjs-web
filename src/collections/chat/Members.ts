@@ -56,6 +56,8 @@ export const Members: CollectionConfig = {
     { name: 'rulesAcceptedAt', type: 'date' },
     { name: 'lastSeenAt', type: 'date', index: true },
     // notifications of new messages (set from the chat): show the message text on the lock screen · muted groups
+    // who may start a private chat with this member (set by them in the chat): ask first (a request) · anyone (opens at once) · nobody
+    { name: 'pmPolicy', type: 'select', defaultValue: 'request', options: [{ label: 'Ask first (request)', value: 'request' }, { label: 'Anyone can message', value: 'everyone' }, { label: 'Nobody', value: 'nobody' }], admin: { description: 'Who can start a private chat with this member (they choose it in the chat)' } },
     { name: 'pushPreview', type: 'checkbox', defaultValue: true, admin: { hidden: true } },
     { name: 'pushMuted', type: 'json', admin: { hidden: true } },
   ],

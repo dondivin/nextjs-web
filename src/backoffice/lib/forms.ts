@@ -52,6 +52,7 @@ export const chatSchema = z.object({
   mediaRetentionDays: z.number({ error: 'Enter a number' }).int().min(0, '0 to 3650 days').max(3650, '0 to 3650 days'),
   pmPictures: z.boolean(),   // private chats between members: pictures
   pmVoice: z.boolean(),      // … and voice messages
+  pmForward: z.boolean(),    // … and forwarding their messages
   rules: z.array(z.object({ icon: z.string(), title: localized, body: localized })),
   bannedWords: z.string().max(20000), // one per line in the form
 })
@@ -107,6 +108,7 @@ export const groupSchema = z.object({
   order: z.number({ error: 'Enter a number' }).int(),
   mediaView: z.enum(['everyone', 'members', 'team', 'none']),
   mediaSave: z.boolean(),
+  allowForward: z.boolean(),   // its messages can be forwarded to other chats
 })
 export type GroupForm = z.infer<typeof groupSchema>
 

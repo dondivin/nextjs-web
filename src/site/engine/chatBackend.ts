@@ -66,7 +66,7 @@ export function createChatBackend(cfg: EngineConfig, h) {
     let room = w.room
     if (room.indexOf('dm:') === 0) { const uid = room.slice(3); room = !me.staff && uid === me.uid ? 'support' : 'sup:' + uid }
     else if (room.indexOf('pm:') === 0) room = 'pm:' + pmOther(room)
-    return { id: w.id, by: w.by, text: w.text, ts: w.ts, room, reply: w.reply || null, reactions: w.reactions || {}, image: w.image || undefined, voice: w.voice || undefined, expired: w.expired || undefined, locked: w.locked || undefined, nosave: w.nosave || undefined, mod: w.mod || undefined, clientId: w.clientId }
+    return { id: w.id, by: w.by, text: w.text, ts: w.ts, room, reply: w.reply || null, reactions: w.reactions || {}, image: w.image || undefined, voice: w.voice || undefined, expired: w.expired || undefined, locked: w.locked || undefined, nosave: w.nosave || undefined, mod: w.mod || undefined, fwd: w.fwd || undefined, clientId: w.clientId }
   }
   // the other member of a stored private room 'pm:<a>_<b>'
   function pmOther(room) { const [a, b] = room.slice(3).split('_'); return a === me.uid ? b : a }
@@ -425,6 +425,24 @@ export function createChatBackend(cfg: EngineConfig, h) {
       if (!push.prefs) pushPrefs().then(() => { cb.checked = push.prefs.preview !== false }, () => {})
     }
   }
+  /* who may start a private chat with me (account panel; members only): ask first · anyone · nobody */
+  function renderPrivacy() {
+    const box = $('authPrivacy'); if (!box) return
+    box.hidden = !me.uid || me.staff; box.textContent = ''
+    if (box.hidden) return
+    const cur = (info && info.me && info.me.pmPolicy) || 'request'
+    const head = tag('div', 'push-txt'); head.appendChild(tag('b', null, S('pm.policy.title'))); head.appendChild(tag('span', null, S('pm.policy.intro'))); box.appendChild(head)
+    const list = tag('div', 'pm-policy-list'); list.setAttribute('role', 'radiogroup'); list.setAttribute('aria-label', S('pm.policy.title'))
+    ;['request', 'everyone', 'nobody'].forEach((v) => {
+      const b = tag('button', 'pm-opt' + (v === cur ? ' on' : '')); b.type = 'button'; b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', v === cur ? 'true' : 'false')
+      const dot = tag('span', 'pm-dot'); const t = tag('span', 'pm-opt-txt'); t.appendChild(tag('b', null, S('pm.policy.' + v))); t.appendChild(tag('small', null, S('pm.policy.' + v + 'Hint')))
+      b.appendChild(dot); b.appendChild(t)
+      b.onclick = () => { if (v === ((info && info.me && info.me.pmPolicy) || 'request')) return
+        post('pm-policy', { policy: v }).then(() => { if (info && info.me) info.me.pmPolicy = v; renderPrivacy(); h.toast(S('pm.policy.saved'), true) }, (e) => h.toast(e.message)) }
+      list.appendChild(b)
+    })
+    box.appendChild(list)
+  }
   function renderAuth() {
     const r = getReset(), email = (r && r.email) || ''
     const form = ['signin', 'signup', 'forgot', 'newpass', 'profile'].indexOf(mode) >= 0
@@ -444,7 +462,7 @@ export function createChatBackend(cfg: EngineConfig, h) {
     // opened by itself when the chat opens: the way out is "Continue as guest"
     $('authCancel').textContent = guest ? S('auth.asGuest') : S('auth.notNow')
     show('authForm', form); show('authAccount', mode === 'account'); show('authNotice', mode === 'notice')
-    if (mode === 'account') { renderPushBox(); pushCurrent().then(renderPushBox) }
+    if (mode === 'account') { renderPushBox(); pushCurrent().then(renderPushBox); renderPrivacy() }
     const named = mode === 'signup' || mode === 'profile'
     show('authNameRow', named); $('authName').required = named; show('authAvatarRow', named)
     show('authEmailRow', mode === 'signin' || mode === 'signup' || mode === 'forgot')
@@ -676,8 +694,12 @@ export function createChatBackend(cfg: EngineConfig, h) {
   async function request(uid, note) {
     try {
       const d = await post('chat-request', { to: uid, note })
-      h.toast(d.status === 'accepted' ? S('pm.acceptedToast', { name: nameOfUid(uid) }) : S('pm.sent', { name: nameOfUid(uid) }), true)
       closeCard()
+      if (d.status === 'accepted') {
+        // they accept messages from anyone (or had asked me): the chat exists now — open it and start writing
+        if (!st.pms[uid] || st.pms[uid].status !== 'accepted') { st.pms[uid] = Object.assign({}, st.pms[uid], { uid, status: 'accepted', at: Date.now() }); if (!st.pm[uid]) { st.pm[uid] = []; h.pmMsgs(uid, []) } h.pms(Object.assign({}, st.pms)) }
+        setTimeout(() => h.openChatWith(uid), 60)
+      } else h.toast(S('pm.sent', { name: nameOfUid(uid) }), true)
     } catch (e) { h.toast(e.message) }
   }
 
@@ -779,7 +801,14 @@ export function createChatBackend(cfg: EngineConfig, h) {
     if (me.staff) { if (p.staff) { secondary(S('auth.done'), closeCard) } else { secondary(S('auth.notNow'), closeCard); primary(S('pm.message'), () => { closeCard(); h.openChatWith(uid) }) } return }
     if (p.staff) { secondary(S('auth.notNow'), closeCard); primary(S('pm.messageTeam'), () => { closeCard(); h.openChatWith(uid) }); return }
     const status = rel ? rel.status : 'none'
-    if (status === 'none') {
+    if (status === 'none' && p.pm === 'nobody') {
+      // they don't take new private chats
+      say(S('pm.closedHint', { name: p.name || nameOfUid(uid) })); primary(S('auth.done'), closeCard)
+    } else if (status === 'none' && p.pm === 'everyone') {
+      // they accept messages from anyone: no request, the chat opens at once
+      say(S('pm.openHint', { name: p.name || nameOfUid(uid) }))
+      secondary(S('auth.notNow'), closeCard); primary(S('pm.message'), () => request(uid, ''))
+    } else if (status === 'none') {
       noteRow.hidden = false; note.value = ''
       say(S('pm.consentHint', { name: p.name || nameOfUid(uid) }))
       secondary(S('auth.notNow'), closeCard); primary(S('pm.send'), () => request(uid, note.value.trim()))
@@ -817,8 +846,8 @@ export function createChatBackend(cfg: EngineConfig, h) {
     if (id && !(g && g.isAdmin)) return
     rs.open = true; rs.id = id || null; rs.link = undefined; rs.anim = null; rs.slide = null; rs.tab = g && g.requests ? 'members' : 'settings'; rs.members = null; rs.results = null; rs.q = ''; rs.err = ''; rs.busy = false
     if (P('rsBody')) P('rsBody').textContent = ''   // a fresh sheet: nothing carried over from last time (pill position, scroll)
-    rs.data = g ? { name: g.name, description: g.description || '', rules: g.rules || '', kind: g.kind, join: g.join, visibility: g.vis || (g.join === 'invite' ? 'hidden' : 'public'), preview: typeof g.preview === 'boolean' ? g.preview : g.join === 'open' }
-      : { name: '', description: '', rules: '', kind: perms().createGroups || me.staff ? 'group' : 'channel', join: 'open', visibility: 'public', preview: true }
+    rs.data = g ? { name: g.name, description: g.description || '', rules: g.rules || '', kind: g.kind, join: g.join, visibility: g.vis || (g.join === 'invite' ? 'hidden' : 'public'), preview: typeof g.preview === 'boolean' ? g.preview : g.join === 'open', forward: g.forward !== false }
+      : { name: '', description: '', rules: '', kind: perms().createGroups || me.staff ? 'group' : 'channel', join: 'open', visibility: 'public', preview: true, forward: true }
     rs.lastFocus = document.activeElement
     renderRoomSheet()
     P('rsBody').scrollTop = 0
@@ -919,6 +948,11 @@ export function createChatBackend(cfg: EngineConfig, h) {
     const pvi = document.createElement('input'); pvi.type = 'checkbox'; pvi.checked = !!d.preview; pvi.onchange = () => { d.preview = pvi.checked }
     const pvt = mk('span'); pvt.appendChild(mk('b', null, S('rooms.preview'))); pvt.appendChild(mk('small', null, S(d.visibility === 'hidden' ? 'rooms.previewHiddenHint' : 'rooms.previewHint')))
     pv.appendChild(pvi); pv.appendChild(pvt); f.appendChild(pv)
+    // forwarding: members can forward its messages to their other chats (the team always can)
+    const fw = mk('label', 'rs-switch')
+    const fwi = document.createElement('input'); fwi.type = 'checkbox'; fwi.checked = d.forward !== false; fwi.onchange = () => { d.forward = fwi.checked }
+    const fwt = mk('span'); fwt.appendChild(mk('b', null, S('rooms.forward'))); fwt.appendChild(mk('small', null, S('rooms.forwardHint')))
+    fw.appendChild(fwi); fw.appendChild(fwt); f.appendChild(fw)
     const joins = mk('fieldset', 'rs-set'); joins.appendChild(mk('legend', null, S('rooms.join')))
     ;['open', 'request', 'invite'].forEach((k) => joins.appendChild(choice('rsJoin', k, d.join, S('rooms.join.' + k), S('rooms.join.' + k + 'Hint'), false, (v) => { d.join = v })))
     f.appendChild(joins)
@@ -1359,6 +1393,8 @@ export function createChatBackend(cfg: EngineConfig, h) {
     },
     /* personal stickers: only their owner sees them */
     myStickers: () => post('stickers', {}).then((d) => d.stickers || []),
+    /** forward one message to up to 5 chats (browser room ids) → { sent, failed: [{ to, error }] } */
+    forward: (id, to) => post('forward', { id, to }),
     /** search mode: are people results on their way, and how many are shown */
     peopleSearch: () => ({ pending: peoplePending, count: results ? results.filter((p) => !(st.pms[p.uid] && st.pms[p.uid].status === 'accepted')).length : 0 }),
     async addSticker(file) {

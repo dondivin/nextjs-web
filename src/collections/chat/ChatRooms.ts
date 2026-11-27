@@ -34,6 +34,7 @@ export const ChatRooms: CollectionConfig = {
     { name: 'inviteToken', type: 'text', index: true, admin: { readOnly: true, description: 'Invite link token (managed from the room page / the chat)' } },
     // pictures & voice messages in this room (see src/chat/media-policy.ts)
     { name: 'mediaView', type: 'select', defaultValue: 'everyone', options: [{ label: 'Everyone', value: 'everyone' }, { label: 'Members only', value: 'members' }, { label: 'The team only', value: 'team' }, { label: 'Nobody (text only)', value: 'none' }], admin: { description: 'Who can see pictures and voice messages (members = people who joined). The team always can.' } },
+    { name: 'allowForward', type: 'checkbox', defaultValue: true, admin: { description: 'Its messages can be forwarded to other chats' } },
     { name: 'mediaSave', type: 'checkbox', defaultValue: true, admin: { description: 'Allow saving them (screenshots can never be prevented)' } },
     { name: 'name', type: 'text', required: true, maxLength: 60 },
     { name: 'description', type: 'textarea', maxLength: 300 },

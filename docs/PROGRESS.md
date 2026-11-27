@@ -1432,3 +1432,57 @@ See `docs/HANDOFF.md` §4.
   palette menu (no pinch / double-tap zoom; scrolling and swipes keep working). The rest of the site keeps normal zoom.
 - Checked (emulated phone): home → normal viewport; chat opened from the site or loaded from a link → locked +
   `pan-x pan-y`; back on the site → restored. Finger scrolling of the conversation and long-press menu still work.
+
+## 2026-11-27 — iPhone: website under the keyboard (again) · zoom in the photo editor
+
+- Owner's iPhone screenshot: the website still showed between the message box and the keyboard (iOS keyboard and its
+  autofill bar are see-through). Now, whatever the keyboard measurements, nothing of the site is behind the chat: while
+  it is open the 3D phone canvas, top bar, main content, footer and back-to-top button are `visibility:hidden`, and the
+  page's own background takes the chat's colour (`--chat-backdrop`, `engine.ts` `paintBackdrop`, on open and theme
+  change). Checked: chat open → hidden + page colour = chat colour; back on the site → all visible again.
+- Photo editor zoom (only there — the chat itself doesn't zoom), like WhatsApp: the picture itself grows past its frame
+  over the whole editor screen, behind the toolbars (`.pe.zoomed`: stage overflow visible, toolbars float with a shadow),
+  up to 5×, never leaving empty space at the edges. Pinch (the point between the fingers stays under them), one finger
+  moves it when zoomed (not in drawing mode), two fingers in drawing mode (the stroke the first finger began is dropped),
+  double-tap zooms in at that point (2.5×) / back out, Ctrl + wheel / trackpad pinch on a computer, a "2.5×" chip resets.
+  Reset when switching photo, cropping, rotating or flipping; the sent photo is never affected. Done in `peView`: the
+  canvas covers only the visible part and `src` is that part of the picture, so drawing / stickers / pointer stay
+  exact. Checked (emulated phone, real multi-touch): pinch → canvas covers the whole editor (390×844), colour under the
+  fingers unchanged; big drag → still no empty space; white line drawn at 2.5× is under the finger and stays on the
+  picture after zooming out; pinch in drawing mode leaves no stray line; rotate resets.
+
+## 2026-11-27 — Forwarding messages
+
+- Message menu → **Forward** → "Forward to" sheet (`Site.tsx` `#fwdSheet`, `engine.ts` "Forwarding"): a preview of the
+  message, search, the chats I can post in (team chat, accepted private chats, groups / channels where I can post,
+  lounge / match rooms when allowed), up to 5, "Send (n)" (spinner while sending), toast "Forwarded to …" / per-chat
+  errors. The copy is marked **Forwarded** (label on the bubble, `chat-messages.forwarded`, wire `fwd`).
+- Server `forward` (`service.ts`): the source must be visible to the sender and its chat must allow it; each target goes
+  through the normal send checks (who may post, banned content, picture / voice rights there, text-only rooms); one
+  forward = one post for slow mode. Pictures / voice messages are copied as new files for the target chat (each chat's
+  files are only readable by its people), fetched as the sender (their session, so the file's own access rule applies);
+  not offered / refused when the media is locked, expired, or saving is off there. The team can always forward.
+- Settings: back office → Chat settings → Private chats → **Forwarding** (`privateChats.forward`, default on); each
+  group / channel → **Forwarding** (`chat-rooms.allowForward`, default on). Lounge / match rooms: always allowed.
+- Strings en + fr (`chat.forward`, `fwd.*`). Checked with the two test accounts: text forwarded to 2 chats (both copies
+  marked forwarded); photo forwarded with its own file (downloads, 200); photo into a group where the role can't post
+  pictures → refused for that chat only; group forwarding off → refused by the server and no "Forward" in the menu; on
+  → menu Reply / Copy / Forward / Report, picker, "Send (1)", toast, "Forwarded" label. All test messages deleted.
+- Follow-up: **Forwarding** switch in the chat's own room settings too (owners / admins of a group or channel):
+  `chatBackend.ts` room sheet (`d.forward`, under "Can read before joining"), server `roomFields` → `allowForward`
+  (on unless turned off; new rooms on). Strings `rooms.forward` / `rooms.forwardHint` (en + fr). Two switches in a row no
+  longer get a double gap. Checked with a temporary group owned by a test account: the switch shows checked, off + Save
+  → the group reports forwarding off, on again → on; the temporary group was deleted.
+
+## 2026-11-27 — Who can start a private chat with me (per member)
+
+- New member setting `pmPolicy` (`members`, editable by the team in the record too): **Ask me first** (default = the
+  request flow as before) · **Anyone can message me** (`chat-request` creates the chat already accepted, the sender's
+  chat opens at once) · **Nobody** (new chats refused: "This member isn't accepting new private chats"; current chats
+  stay). Blocking still wins; requests they had sent me are accepted as before.
+- Members choose it in the chat's account panel ("Private chats", 3 options, saved at once — API `pm-policy`); the
+  hello payload carries it (`me.pmPolicy`) and profiles carry others' choice (`pm`), so a person card shows: the usual
+  request with a note · "{name} accepts messages from anyone" + **Message** · "{name} isn't accepting new private chats".
+- Strings en + fr (`pm.policy.*`, `pm.openHint`, `pm.closedHint`, `pm.err.closed`). Checked with the two test
+  accounts: options shown, "Anyone" saved; the other's card → "Message" → the private chat opens with the message box
+  and they can write; "Nobody" → refused; "Ask me first" → a normal request again. Test chat / message removed.

@@ -1049,7 +1049,7 @@ function buildRow(m){
   var av = el('div', 'av'), img = document.createElement('img'); img.alt = ''; av.appendChild(img); row._av = av; row._img = img;
   var bw = el('div', 'bwrap'), b = el('div', 'bubble'); b.tabIndex = 0;
   var sw = el('span', 'swipe-ic'); sw.appendChild(svg('<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 6 6v3"/>')); b.appendChild(sw);
-  row._name = el('div', 'b-name'); row._quote = el('div', 'b-quote'); row._text = el('div', 'b-text'); row._meta = el('span', 'b-meta');
+  row._name = el('div', 'b-name'); row._fwd = el('div', 'b-fwd'); row._fwd.hidden = true; row._fwd.appendChild(svg('<path d="M14 5l7 7-7 7"/><path d="M21 12H9a6 6 0 0 0-6 6v1"/>')); row._fwd.appendChild(el('span', null, S('fwd.label'))); row._quote = el('div', 'b-quote'); row._text = el('div', 'b-text'); row._meta = el('span', 'b-meta');
   row._pic = el('button', 'b-pic'); row._pic.type = 'button'; row._pic.setAttribute('aria-label', S('chat.viewImage')); row._picImg = document.createElement('img'); row._picImg.alt = ''; row._picImg.loading = 'lazy'; row._pic.appendChild(row._picImg);
   row._picDl = el('span', 'b-pic-dl'); row._pic.appendChild(row._picDl);
   row._pic.addEventListener('click', function(e){ e.stopPropagation(); var m = row._m; if (!m || !m.image) return;
@@ -1066,7 +1066,7 @@ function buildRow(m){
   vb.addEventListener('click', function(e){ e.stopPropagation(); voiceToggle(row); });
   vw.addEventListener('click', function(e){ e.stopPropagation(); var r = vw.getBoundingClientRect(); voiceToggle(row, Math.max(0, Math.min(1, (e.clientX - r.left) / r.width))); });
   row._gone = el('div', 'b-gone'); row._gone.hidden = true;   // "Photo expired" / "Voice message expired"
-  [row._name, row._quote, row._pic, row._voice, row._gone, row._text].forEach(function(x){ b.appendChild(x); });
+  [row._name, row._fwd, row._quote, row._pic, row._voice, row._gone, row._text].forEach(function(x){ b.appendChild(x); });
   row._reacts = el('div', 'reacts');
   var acts = el('div', 'acts glass'); acts.setAttribute('role', 'toolbar'); acts.setAttribute('aria-label', S('chat.actionsAria'));
   REACTS.forEach(function(rx){ var bt = el('button', 'emo', rx[1]); bt.type = 'button'; bt.setAttribute('aria-label', S('chat.reactAria', {name: S('react.' + rx[0])})); bt.onclick = function(e){ e.stopPropagation(); toggleReact(row._m, rx[0]); }; acts.appendChild(bt); });
@@ -1120,7 +1120,8 @@ function fillRow(row, m, f){
   row.classList.toggle('out', !!mine); row.classList.toggle('in', !mine); row.classList.toggle('gap', f.first); row.classList.toggle('tail', f.tail);
   var rx = m.reactions || {}, rsig = REACTS.map(function(r){ var o = rx[r[0]] || {}; return Object.keys(o).filter(function(k){ return o[k]; }).sort().join(','); }).join('|');
   var grp = !dm && grpOf(CHAT.active), rstate = mine ? tickState(CHAT.active, m) : '';
-  var sig = [m.reply && [m.reply.kind, !!m.reply.thumb, m.reply.text].join('|'), rstate, CHAT.theme, dm, m.text, m.image && m.image.url, m.voice && m.voice.url, m.expired, m.locked && m.locked.why, !!m.nosave, mine, f.first, f.tail, !!on, nameOf(m.by), !!CHAT.pending[m.id], m.reply && m.reply.id, rsig, UI.reports[m.id] || 0, m.mod, LIVE.profiles[m.by] && (LIVE.profiles[m.by].avatarUrl || LIVE.profiles[m.by].gradient), LIVE.profiles[m.by] && LIVE.profiles[m.by].badge && LIVE.profiles[m.by].badge.label].join('§');
+  row._fwd.hidden = !m.fwd;
+  var sig = [!!m.fwd, m.reply && [m.reply.kind, !!m.reply.thumb, m.reply.text].join('|'), rstate, CHAT.theme, dm, m.text, m.image && m.image.url, m.voice && m.voice.url, m.expired, m.locked && m.locked.why, !!m.nosave, mine, f.first, f.tail, !!on, nameOf(m.by), !!CHAT.pending[m.id], m.reply && m.reply.id, rsig, UI.reports[m.id] || 0, m.mod, LIVE.profiles[m.by] && (LIVE.profiles[m.by].avatarUrl || LIVE.profiles[m.by].gradient), LIVE.profiles[m.by] && LIVE.profiles[m.by].badge && LIVE.profiles[m.by].badge.label].join('§');
   if (row._sig === sig) return; row._sig = sig;
   row._av.className = 'av' + ((flat ? f.first : f.tail) ? '' : ' hide'); row._av.hidden = (!!mine || dm) && !flat;
   var p = LIVE.profiles[m.by], ini = row._av.querySelector('.ini');
@@ -1280,6 +1281,7 @@ function ctxItems(menu, m, mine){
   if ((m.image || m.voice) && !m.nosave && !/^blob:/.test((m.image || m.voice).url)) item(S('media.save'), '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>', function(){
     var day = new Date(m.ts).toISOString().slice(0, 10), url = (m.image || m.voice).url, ext = m.image ? 'webp' : (/\.(\w+)$/.exec(url) || [0, 'webm'])[1];
     mediaFetch(url).then(function(u){ mediaSave(u, 'oddsclub-' + (m.image ? 'photo' : 'voice') + '-' + day + '.' + ext); }, function(){ toast(S('media.loadFailed')); }); });
+  if (canForward(m)) item(S('chat.forward'), '<path d="M14 5l7 7-7 7"/><path d="M21 12H9a6 6 0 0 0-6 6v1"/>', function(){ openForward(m); });
   if (!mine && CHAT.canPost) item(UI.reported[m.id] ? S('chat.reported') : S('chat.report'), '<path d="M5 21V4h11l-2 4 2 4H5"/>', function(){ report(m); });
   if (CHAT.canEdit && !mine && m.by) item(UI.mod.muted[m.by] ? S('chat.unmute', {name: nameOf(m.by)}) : S('chat.mute', {name: nameOf(m.by)}), '<path d="M11 5L6 9H3v6h3l5 4z"/><path d="M22 9l-6 6M16 9l6 6"/>', function(){ setMuted(m.by, !UI.mod.muted[m.by]); }, true);
   if (CHAT.canEdit || (mine && CHAT.canPost)) item(S('chat.delete'), '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>', function(){ backend.remove(m).then(function(){ toast(S('chat.deleted'), true); }, function(){ toast(S('chat.deleteFailed')); }); }, true);
@@ -1580,7 +1582,41 @@ function peEl(){
   PE = {root:r, cv:cv, stage:stage, box:box, sel:sel, sub:sub, aspects:aspects, colors:colors, size:1, sizeBtn:sz, caption:cap, strip:strip, items:[], cur:-1, tools:{crop:tCrop, draw:tDraw, sticker:tStick, undo:tUndo, del:tDel}};
   peStickerEvents(sel, rz, del);
   // drawing
-  cv.addEventListener('pointerdown', function(e){ if (PE.mode !== 'draw'){ if (PE.mode !== 'crop') peStickerDown(e); return; } e.preventDefault(); cv.setPointerCapture(e.pointerId); pePush(); var p = peToBase(e); PE.stroke = {c:PE.color, s:PE.size, pts:[p]}; PE.strokes.push(PE.stroke); peRender(); });
+  /* zoom & move the picture: two fingers pinch / move (any mode but crop), one finger drags it when zoomed (not in
+     drawing mode, not on a sticker), double-tap zooms in / out, Ctrl + wheel or a trackpad pinch on a computer */
+  PE_ptrs = new Map();
+  stage.addEventListener('pointerdown', function(e){
+    if (PE.mode === 'crop') return;
+    PE_ptrs.set(e.pointerId, {x: e.clientX, y: e.clientY});
+    if (PE_ptrs.size === 2){
+      // a stroke the first finger started is dropped (it was the start of a pinch)
+      if (PE.stroke){ PE.strokes = PE.strokes.filter(function(k){ return k !== PE.stroke; }); PE.stroke = null; PE.hist.pop(); PE.tools.undo.disabled = !PE.hist.length; }
+      PE.pan = null; peZoomStart(); e.stopPropagation(); e.preventDefault();
+    }
+  }, true);
+  stage.addEventListener('pointermove', function(e){
+    if (!PE_ptrs.has(e.pointerId)) return; PE_ptrs.set(e.pointerId, {x: e.clientX, y: e.clientY});
+    if (PE.pinch){ peZoomMove(); e.stopPropagation(); }
+    else if (PE.pan){ var v = PE.view, dx = e.clientX - PE.pan.x, dy = e.clientY - PE.pan.y; if (Math.abs(dx) + Math.abs(dy) > 4) PE.pan.moved = true;
+      PE.zoom.cx = PE.pan.cx - dx / v.fw * PE.crop.w; PE.zoom.cy = PE.pan.cy - dy / v.fh * PE.crop.h; peRender(); }
+  }, true);
+  var ptrUp = function(e){ PE_ptrs.delete(e.pointerId); if (PE_ptrs.size < 2 && PE.pinch){ PE.pinch = null; PE.pinchEnd = Date.now(); } if (!PE_ptrs.size){ PE.panMoved = !!(PE.pan && PE.pan.moved); PE.pan = null; } };
+  stage.addEventListener('pointerup', ptrUp, true); stage.addEventListener('pointercancel', ptrUp, true);
+  cv.addEventListener('pointerup', function(e){
+    // double-tap (not drawing, not a drag, not right after a pinch): zoom in on that spot / back to the whole picture
+    if (PE.mode === 'draw' || PE.mode === 'crop' || PE.selSticker || PE.panMoved || Date.now() - (PE.pinchEnd || 0) < 350) { PE.lastTap = null; return; }
+    var now = Date.now(), lt = PE.lastTap;
+    if (lt && now - lt.t < 320 && Math.abs(e.clientX - lt.x) < 30 && Math.abs(e.clientY - lt.y) < 30){ PE.lastTap = null; peZoomTo(PE.zoom.z > 1.05 ? 1 : 2.5, e.clientX, e.clientY); }
+    else PE.lastTap = {t: now, x: e.clientX, y: e.clientY};
+  });
+  cv.addEventListener('wheel', function(e){
+    if (PE.mode === 'crop' || (PE.selSticker && !e.ctrlKey && !e.metaKey)) return;   // (the wheel resizes a selected sticker)
+    if (!e.ctrlKey && !e.metaKey && PE.zoom.z <= 1.001 && e.deltaY > 0) return;
+    e.preventDefault(); e.stopImmediatePropagation(); peZoomTo(PE.zoom.z * Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.002)), e.clientX, e.clientY);
+  }, {passive: false});
+  var zchip = el('button', 'pe-zoomchip'); zchip.type = 'button'; zchip.hidden = true; zchip.setAttribute('aria-label', S('pe.zoomReset')); zchip.title = S('pe.zoomReset');
+  zchip.onclick = function(e){ e.stopPropagation(); peZoomTo(1); }; stage.appendChild(zchip); PE.zchip = zchip;
+  cv.addEventListener('pointerdown', function(e){ if (PE.mode !== 'draw'){ if (PE.mode !== 'crop'){ peStickerDown(e); if (!PE.selSticker && PE.zoom.z > 1.001){ try { cv.setPointerCapture(e.pointerId); } catch(x){} PE.pan = {x: e.clientX, y: e.clientY, cx: PE.zoom.cx, cy: PE.zoom.cy}; } } return; } e.preventDefault(); cv.setPointerCapture(e.pointerId); pePush(); var p = peToBase(e); PE.stroke = {c:PE.color, s:PE.size, pts:[p]}; PE.strokes.push(PE.stroke); peRender(); });
   cv.addEventListener('pointermove', function(e){ if (!PE.stroke) return; PE.stroke.pts.push(peToBase(e)); peRender(); });
   var stopDraw = function(){ PE.stroke = null; }; cv.addEventListener('pointerup', stopDraw); cv.addEventListener('pointercancel', stopDraw);
   // crop box: drag the box or a handle
@@ -1647,6 +1683,7 @@ function peClose(){ if (!PE || !PE.open) return; PE.open = false; PE.adding = fa
   var a = document.activeElement; if (a && a.blur && a !== document.body) a.blur(); }
 /* the picture with rotation / flip applied (at most 2560 px), in its own canvas */
 function peBase(){
+  peZoomReset();   // (another photo, or turned / flipped: start from the whole picture)
   var im = PE.img, w0 = im.naturalWidth, h0 = im.naturalHeight, k = Math.min(1, 2560 / Math.max(w0, h0)), w = Math.round(w0 * k), h = Math.round(h0 * k), side = PE.rot % 180 !== 0;
   var c = PE.base || document.createElement('canvas'); c.width = side ? h : w; c.height = side ? w : h;
   var x = c.getContext('2d'); x.setTransform(1, 0, 0, 1, 0, 0); x.clearRect(0, 0, c.width, c.height);
@@ -1672,17 +1709,59 @@ function peAspect(a){
     PE.crop = {x: Math.max(0, Math.min(1 - w, cx - w / 2)), y: Math.max(0, Math.min(1 - h, cy - h / 2)), w: w, h: h}; }
   peSubUI(); peRender();
 }
-function peMode(m){ PE.mode = m; PE.root.dataset.mode = m; PE.tools.crop.classList.toggle('on', m === 'crop'); PE.tools.draw.classList.toggle('on', m === 'draw'); PE.tools.sticker.classList.toggle('on', m === 'sticker'); if (m === 'crop' || m === 'draw') PE.selSticker = null; if (m === 'sticker') peFillTray(); peSubUI(); peRender(); }
+function peMode(m){ if (m === 'crop') peZoomReset(); PE.mode = m; PE.root.dataset.mode = m; PE.tools.crop.classList.toggle('on', m === 'crop'); PE.tools.draw.classList.toggle('on', m === 'draw'); PE.tools.sticker.classList.toggle('on', m === 'sticker'); if (m === 'crop' || m === 'draw') PE.selSticker = null; if (m === 'sticker') peFillTray(); peSubUI(); peRender(); }
 function peSubUI(){
   PE.aspects.querySelectorAll('button').forEach(function(b){ b.classList.toggle('on', Number(b.dataset.a) === PE.aspect); });
   PE.colors.querySelectorAll('.pe-color').forEach(function(b){ b.classList.toggle('on', b.dataset.c === PE.color); });
   PE.sizeBtn.textContent = S(PE.size === 1 ? 'pe.thin' : 'pe.thick'); PE.tools.undo.disabled = !PE.hist.length;
 }
+/* ---- zoom (only in the editor; the chat itself never zooms) ---- */
+var PE_ptrs = new Map();
+function peZoomReset(){ if (PE) PE.zoom = {z: 1, cx: .5, cy: .5}; }
+/** the picture point under a screen point */
+function peAt(x, y){ var v = PE.view, r = PE.cv.getBoundingClientRect(); return [v.src.x + (x - r.left) / r.width * v.src.w, v.src.y + (y - r.top) / r.height * v.src.h]; }
+/** zoom to z, keeping the picture point under (x, y) where it is (no point: the middle) */
+function peZoomTo(z, x, y){
+  z = Math.max(1, Math.min(5, z)); var Z = PE.zoom, r = PE.cv.getBoundingClientRect();
+  if (x == null){ x = r.left + r.width / 2; y = r.top + r.height / 2; }
+  var b = peAt(x, y); Z.z = z; peCenterOn(b, x, y); peRender();
+}
+/** set the zoom centre so that the picture point b ends up under the screen point (x, y) at the current zoom */
+function peCenterOn(b, x, y){
+  var st = PE.stage, sr = st.getBoundingClientRect(), W = st.clientWidth, H = st.clientHeight, c = PE.crop, bw = PE.base.width, bh = PE.base.height;
+  var k = Math.min((W - 32) / (c.w * bw), (H - 32) / (c.h * bh)), FW = c.w * bw * k * PE.zoom.z, FH = c.h * bh * k * PE.zoom.z;
+  var L = (x - sr.left) - (b[0] - c.x) / c.w * FW, T = (y - sr.top) - (b[1] - c.y) / c.h * FH;
+  PE.zoom.cx = c.x + (W / 2 - L) / FW * c.w; PE.zoom.cy = c.y + (H / 2 - T) / FH * c.h;
+}
+function pePair(){ var a = Array.from(PE_ptrs.values()); return {d: Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y) || 1, x: (a[0].x + a[1].x) / 2, y: (a[0].y + a[1].y) / 2}; }
+function peZoomStart(){ var p = pePair(); PE.pinch = {d: p.d, z: PE.zoom.z, b: peAt(p.x, p.y)}; }
+function peZoomMove(){
+  var p = pePair(), P = PE.pinch;
+  // the picture point that was between the fingers stays between them (zoom + move together)
+  PE.zoom.z = Math.max(1, Math.min(5, P.z * p.d / P.d)); peCenterOn(P.b, p.x, p.y); peRender();
+}
 /* where the picture is drawn on screen: the whole picture while cropping, otherwise the cropped part */
 function peView(){
   var st = PE.stage, W = st.clientWidth, H = st.clientHeight, bw = PE.base.width, bh = PE.base.height, crop = PE.mode === 'crop';
   var src = crop ? {x:0, y:0, w:1, h:1} : PE.crop, sw = src.w * bw, sh = src.h * bh, k = Math.min((W - 32) / sw, (H - 32) / sh);
-  var dw = sw * k, dh = sh * k; return {src: src, x: (W - dw) / 2, y: (H - dh) / 2, w: dw, h: dh};
+  var dw = sw * k, dh = sh * k;
+  /* zoomed in (pinch / double-tap), like WhatsApp: the picture itself grows — past its frame, over the whole editor
+     screen (behind the toolbars) — and moves with the finger. The canvas covers only the part on screen: `src` is that
+     part of the picture, so drawing, stickers and the pointer stay exactly under the finger. */
+  var Z = PE.zoom;
+  if (!crop && Z && Z.z > 1.001){
+    var sr = st.getBoundingClientRect(), rr = PE.root.getBoundingClientRect();
+    var A = {l: rr.left - sr.left, t: rr.top - sr.top, r: rr.right - sr.left, b: rr.bottom - sr.top};   // the area it may fill (the whole editor)
+    var FW = dw * Z.z, FH = dh * Z.z;
+    // the picture point Z.cx / Z.cy sits in the middle of the stage — then no empty space at the edges once it's bigger
+    var L = W / 2 - (Z.cx - src.x) / src.w * FW, T = H / 2 - (Z.cy - src.y) / src.h * FH;
+    L = FW > A.r - A.l ? Math.min(A.l, Math.max(A.r - FW, L)) : (W - FW) / 2;
+    T = FH > A.b - A.t ? Math.min(A.t, Math.max(A.b - FH, T)) : (H - FH) / 2;
+    Z.cx = src.x + (W / 2 - L) / FW * src.w; Z.cy = src.y + (H / 2 - T) / FH * src.h;
+    var vx = Math.max(L, A.l), vy = Math.max(T, A.t), vw = Math.min(L + FW, A.r) - vx, vh = Math.min(T + FH, A.b) - vy;
+    return {src: {x: src.x + (vx - L) / FW * src.w, y: src.y + (vy - T) / FH * src.h, w: vw / FW * src.w, h: vh / FH * src.h}, x: vx, y: vy, w: vw, h: vh, fw: FW, fh: FH, zoomed: true};
+  }
+  return {src: src, x: (W - dw) / 2, y: (H - dh) / 2, w: dw, h: dh, fw: dw, fh: dh};
 }
 function peToBase(e){ var v = PE.view, r = PE.cv.getBoundingClientRect(), px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height; return [v.src.x + px * v.src.w, v.src.y + py * v.src.h]; }
 function peStrokes(x, src, ox, oy, sw, sh){   // draw the strokes of the 'src' part of the picture into a box (ox, oy, sw × sh)
@@ -1790,7 +1869,9 @@ function peRender(){
   peSelUI();
   var b = PE.box; b.hidden = PE.mode !== 'crop';
   if (!b.hidden){ var c = PE.crop; b.style.left = (v.x + c.x * v.w) + 'px'; b.style.top = (v.y + c.y * v.h) + 'px'; b.style.width = (c.w * v.w) + 'px'; b.style.height = (c.h * v.h) + 'px'; }
-  PE.cv.style.cursor = PE.mode === 'draw' ? 'crosshair' : '';
+  PE.cv.style.cursor = PE.mode === 'draw' ? 'crosshair' : PE.zoom && PE.zoom.z > 1.001 && PE.mode !== 'crop' ? 'grab' : '';
+  PE.root.classList.toggle('zoomed', !!v.zoomed);
+  if (PE.zchip){ var zz = PE.zoom ? PE.zoom.z : 1; PE.zchip.hidden = PE.mode === 'crop' || zz <= 1.001; PE.zchip.textContent = zz.toFixed(1) + '×'; }
 }
 function peCropDrag(e){
   var d = PE.drag, v = PE.view, dx = (e.clientX - d.x) / v.w, dy = (e.clientY - d.y) / v.h, c = Object.assign({}, d.c), MIN = 0.06, h = d.h;
@@ -2081,6 +2162,9 @@ function siteInert(on){ ['.nav', 'main#top', 'footer', '.to-top'].forEach(functi
 var ZOOM = {meta: document.querySelector('meta[name="viewport"]'), was: null, on: false};
 function noZoom(e){ if (ZOOM.on) e.preventDefault(); }
 ['gesturestart', 'gesturechange'].forEach(function(ev){ document.addEventListener(ev, noZoom, {passive: false}); });
+/* the page's own background = the chat's (seen under the see-through iPhone keyboard), set when the chat opens and when
+   the theme / wallpaper changes */
+function paintBackdrop(){ var c = document.querySelector('#messenger .convo'); if (!c) return; var bg = getComputedStyle(c).backgroundColor; if (bg && bg !== 'rgba(0, 0, 0, 0)') document.documentElement.style.setProperty('--chat-backdrop', bg); }
 function lockZoom(on){
   if (on === ZOOM.on) return; ZOOM.on = on;
   var m = ZOOM.meta || (ZOOM.meta = document.querySelector('meta[name="viewport"]')); if (!m) return;
@@ -2114,7 +2198,7 @@ function route(){
     if (valid && id === 'support' && location.pathname !== chatPathFor('support')) { try { history.replaceState(history.state, '', chatPathFor('support')); } catch(e){} }
     if (!wasOpen){
       document.documentElement.classList.add('chat-open'); document.body.classList.add('chat-open'); if (lenis) lenis.stop();
-      siteInert(true); showMessenger(); lockZoom(true);
+      siteInert(true); showMessenger(); lockZoom(true); paintBackdrop();
       maybePromptSignIn();
     }
     clearReply(); closeCtx(true); renderRooms(); renderHeader(); renderConvo(); setPresence(); placeRoomPill(); applyComposer();
@@ -2258,7 +2342,7 @@ var FONT_LINKS = {};
 function fontLink(href){ if (FONT_LINKS[href]) return; var l = document.createElement('link'); l.rel = 'stylesheet'; l.href = href; document.head.appendChild(l); FONT_LINKS[href] = l; }
 function loadFont(id){ var f = fontOf(id); if (f[3]) fontLink('https://fonts.googleapis.com/css2?family=' + f[3] + '&display=swap'); }
 /** the chat's elements that carry the theme (+ the palette menu) get the font as CSS variables */
-var FONT_SCOPES = ['messenger', 'ctx', 'rulesSheet', 'themeSheet', 'authSheet', 'personSheet', 'roomSheet', 'confirmSheet', 'groupSheet'];
+var FONT_SCOPES = ['messenger', 'ctx', 'rulesSheet', 'themeSheet', 'authSheet', 'personSheet', 'roomSheet', 'confirmSheet', 'groupSheet', 'fwdSheet'];
 function paintFont(e){
   var f = fontOf(CHAT.font), vars = ['--font-chat', '--font-title', '--body'];
   if (!f[1]){ vars.forEach(function(k){ e.style.removeProperty(k); }); e.style.removeProperty('--title-weight'); return; }
@@ -2292,10 +2376,10 @@ function renderFontCards(){
     list.appendChild(b);
   });
 }
-function setThemeAttr(id){ ['messenger','ctx','rulesSheet','themeSheet','authSheet','personSheet','roomSheet','confirmSheet','groupSheet'].forEach(function(k){ var e = $(k); if (e) e.setAttribute('data-ct', id); }); }
+function setThemeAttr(id){ ['messenger','ctx','rulesSheet','themeSheet','authSheet','personSheet','roomSheet','confirmSheet','groupSheet','fwdSheet'].forEach(function(k){ var e = $(k); if (e) e.setAttribute('data-ct', id); }); }
 function applyTheme(id, animate){
   if (id === CHAT.theme && !animate) { setThemeAttr(id); return; }
-  var run = function(){ CHAT.theme = id; setThemeAttr(id); setFontVars(); store('ps_chat_theme', id); if ($('toBubbles')) $('toBubbles').hidden = id === 'discord';
+  var run = function(){ CHAT.theme = id; setThemeAttr(id); setFontVars(); setTimeout(paintBackdrop, 50); store('ps_chat_theme', id); if ($('toBubbles')) $('toBubbles').hidden = id === 'discord';
     document.querySelectorAll('.tcard').forEach(function(c){ c.setAttribute('aria-pressed', c.dataset.id === id ? 'true' : 'false'); });
     UI.rows.forEach(function(r){ r._sig = null; }); if (isOpen()) renderConvo(); };
   if (animate && !REDUCE && document.startViewTransition){ try { document.startViewTransition(run); return; } catch(e){} }
@@ -2319,6 +2403,66 @@ var themeFocus = null;
 /* ---------- "Are you sure?" dialog (themed, replaces window.confirm). askConfirm(message, okLabel, danger) → Promise<boolean>.
    The message's first question becomes the title, the rest the explanation. Escape / backdrop / Cancel = no. ---------- */
 var CF = null;
+/* ---------- Forwarding: a copy of a message to up to 5 of my chats, marked "Forwarded" (server: service.ts forward).
+   Offered when the chat it comes from allows it — Chat settings → Private chats → Forwarding, each group / channel's
+   Forwarding; the team always can — and not for pictures / voice messages that can't be saved there. ---------- */
+var FWD = null, FWD_MAX = 5;
+function canForward(m){
+  if (!CHAT.db || !CHAT.uid || !CHAT.canPost || !m || !/^[a-f0-9]{24}$/i.test(String(m.id)) || m.locked || m.expired || m.deleted) return false;
+  if (!m.text && !m.image && !m.voice) return false;
+  if (CHAT.canEdit) return true;
+  if ((m.image || m.voice) && m.nosave) return false;
+  if (pmUid(CHAT.active)) return !(cfg.chat && cfg.chat.pmForward === false);
+  var g = grpOf(CHAT.active); if (g) return g.forward !== false;
+  return true;
+}
+/** the chats I can post in */
+function fwdTargets(){ return rooms().filter(function(r){
+  if (r.pendingOut) return false;
+  if (r.group) return !!r.group.canPost;
+  if (r.pm) return !!(PM.rels[r.uid] && PM.rels[r.uid].status === 'accepted');
+  if (r.id === 'support') return !!CHAT.uid && !CHAT.canEdit;
+  if (/^sup:/.test(r.id)) return !!CHAT.canEdit;
+  if (r.lounge) return CHAT.canPost && !(cfg.chat && cfg.chat.loungeTeamOnly && !CHAT.canEdit);
+  return !!CHAT.canPost;   // match rooms
+}); }
+function openForward(m){
+  if (!fwdTargets().length){ toast(S('fwd.noChats')); return; }
+  FWD = {m: m, sel: [], back: document.activeElement};
+  var what = $('fwdWhat'); what.textContent = ''; what.appendChild(svg('<path d="M14 5l7 7-7 7"/><path d="M21 12H9a6 6 0 0 0-6 6v1"/>')); what.appendChild(el('span', null, msgPreview(m)));
+  $('fwdSearch').value = ''; renderFwd();
+  var w = $('fwdSheet'); w.classList.add('open'); w.setAttribute('aria-hidden', 'false');
+  setTimeout(function(){ var f = window.innerWidth > 820 ? $('fwdSearch') : w.querySelector('.fwd-item'); if (f) f.focus({preventScroll: true}); }, 60);
+}
+function closeForward(){ if (!FWD) return; var back = FWD.back; FWD = null; var w = $('fwdSheet'); w.classList.remove('open'); w.setAttribute('aria-hidden', 'true'); if (back && back.focus && document.contains(back)) back.focus({preventScroll: true}); }
+function renderFwd(){
+  if (!FWD) return;
+  var q = $('fwdSearch').value.trim(), ul = $('fwdList'), keep = ul.scrollTop; ul.textContent = '';
+  var list = fwdTargets().filter(function(r){ return !q || r.title.toLowerCase().indexOf(q.toLowerCase()) >= 0; });
+  if (!list.length) ul.appendChild(el('li', 'fwd-empty', S('search.none', {q: q})));
+  list.forEach(function(r){
+    var on = FWD.sel.indexOf(r.id) >= 0, li = el('li'), b = el('button', 'fwd-item' + (on ? ' on' : '')); b.type = 'button'; b.setAttribute('role', 'checkbox'); b.setAttribute('aria-checked', on ? 'true' : 'false');
+    b.appendChild(roomAvatar(r, false)); b.appendChild(hlName(r.title, q)); var ck = el('span', 'fwd-check'); ck.appendChild(svg('<path d="M5 12l5 5 9-10"/>')); b.appendChild(ck);
+    b.onclick = function(){ var i = FWD.sel.indexOf(r.id); if (i >= 0) FWD.sel.splice(i, 1); else { if (FWD.sel.length >= FWD_MAX){ toast(S('fwd.max', {n: FWD_MAX})); return; } FWD.sel.push(r.id); } renderFwd(); };
+    b.dataset.id = r.id; li.appendChild(b); ul.appendChild(li);
+  });
+  ul.scrollTop = keep;
+  var send = $('fwdSend'); send.disabled = !FWD.sel.length; send.textContent = FWD.sel.length ? S('fwd.sendN', {n: FWD.sel.length}) : S('fwd.send');
+}
+$('fwdSearch').addEventListener('input', renderFwd);
+$('fwdCancel').addEventListener('click', closeForward);
+$('fwdSheet').addEventListener('click', function(e){ if (e.target === this) closeForward(); });
+window.addEventListener('keydown', function(e){ if (e.key === 'Escape' && FWD){ e.stopImmediatePropagation(); closeForward(); } }, true);
+$('fwdSend').addEventListener('click', function(){
+  if (!FWD || !FWD.sel.length) return;
+  var to = FWD.sel.slice(), names = {}; fwdTargets().forEach(function(r){ names[r.id] = r.title; });
+  backend.forward(FWD.m.id, to).then(function(d){
+    closeForward();
+    var failed = (d && d.failed) || [];
+    if (d && d.sent) toast(d.sent === 1 ? S('fwd.done1', {name: names[to.filter(function(x){ return !failed.some(function(f){ return f.to === x; }); })[0]] || ''}) : S('fwd.done', {n: d.sent}), true);
+    if (failed.length) setTimeout(function(){ toast((names[failed[0].to] ? names[failed[0].to] + ': ' : '') + failed[0].error + (failed.length > 1 ? ' (+' + (failed.length - 1) + ')' : '')); }, d && d.sent ? 3000 : 0);
+  }, function(e){ toast(e && e.message ? e.message : S('chat.sendFailed')); });
+});
 function askConfirm(msg, okLabel, danger){
   if (CF) CF.done(false);
   var m = /^([\s\S]*?\?)\s+([\s\S]+)$/.exec(String(msg)), w = $('confirmSheet'), ok = $('cfOk'), back = document.activeElement;

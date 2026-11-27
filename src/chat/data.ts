@@ -19,10 +19,11 @@ export type WireMsg = {
   mod?: boolean
   deleted?: boolean
   clientId?: string
+  fwd?: boolean   // a forwarded copy (shows "Forwarded")
 }
 export type ChatImage = { url: string; w: number; h: number; thumb?: string; size?: number }
 export type ChatVoiceInfo = { url: string; dur: number; peaks: number[]; size?: number }
-export type Profile = { name: string; color?: string; gradient?: string; avatarUrl?: string; staff?: boolean; badge?: { label: string; color: string } }
+export type Profile = { name: string; color?: string; gradient?: string; avatarUrl?: string; staff?: boolean; badge?: { label: string; color: string }; pm?: 'everyone' | 'nobody' }   // pm: who may start a private chat with them (absent = ask first)
 
 const relId = (x: unknown): string | null =>
   x && typeof x === 'object' && 'id' in x ? String((x as { id: unknown }).id) : x ? String(x) : null
@@ -66,6 +67,7 @@ export function toWire(doc: any, images?: Map<string, ChatImage | ChatVoiceInfo>
     voice,
     expired: doc.mediaExpired || undefined,
     mod: doc.isMod ? true : undefined,
+    fwd: doc.forwarded ? true : undefined,
     deleted: doc.deleted ? true : undefined,
     clientId: doc.clientId || undefined,
   }
@@ -88,7 +90,7 @@ export async function cached<T>(key: string, ms: number, fn: () => Promise<T>): 
   return v
 }
 
-export type ChatConfig = { slowMs: number; maxLength: number; banned: string[]; promoCodes: string[]; agentName: string; loungeTeamOnly: boolean; pmPictures: boolean; pmVoice: boolean }
+export type ChatConfig = { slowMs: number; maxLength: number; banned: string[]; promoCodes: string[]; agentName: string; loungeTeamOnly: boolean; pmPictures: boolean; pmVoice: boolean; pmForward: boolean }
 export function chatConfig(payload: Payload): Promise<ChatConfig> {
   return cached('config', 30_000, async () => {
     const [chat, site, partners] = await Promise.all([
@@ -106,6 +108,7 @@ export function chatConfig(payload: Payload): Promise<ChatConfig> {
       // private chats between members (Chat settings → Private chats)
       pmPictures: chat.privateChats?.pictures === true,
       pmVoice: chat.privateChats?.voice !== false,
+      pmForward: chat.privateChats?.forward !== false,
     }
   })
 }
@@ -123,7 +126,7 @@ export async function profilesFor(payload: Payload, ids: (string | null | undefi
   for (const m of members.docs) {
     const av = m.avatar && typeof m.avatar === 'object' ? m.avatar.url : null
     const pr = await permsOf(payload, m.memberRole)
-    out[String(m.id)] = { name: m.displayName, color: m.color || undefined, gradient: m.avatarGradient || undefined, avatarUrl: av || undefined, ...(pr.showBadge ? { badge: { label: pr.role, color: pr.color } } : {}) }
+    out[String(m.id)] = { name: m.displayName, color: m.color || undefined, gradient: m.avatarGradient || undefined, avatarUrl: av || undefined, ...(m.pmPolicy === 'everyone' || m.pmPolicy === 'nobody' ? { pm: m.pmPolicy } : {}), ...(pr.showBadge ? { badge: { label: pr.role, color: pr.color } } : {}) }
   }
   for (const u of staff.docs) {
     const av = u.chatAvatar && typeof u.chatAvatar === 'object' ? u.chatAvatar.url : null

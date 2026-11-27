@@ -787,6 +787,8 @@ export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl, 
             </div>
             {/* notifications of new messages: on / off, message text on the lock screen (engine: chatBackend.ts) */}
             <div className="push-box" id="authPush" hidden></div>
+            {/* who may start a private chat with me: ask first · anyone · nobody (engine: chatBackend.ts renderPrivacy) */}
+            <div className="push-box pm-policy" id="authPrivacy" hidden></div>
             <div className="sheet-actions">
               <button className="btn-text auth-switch" id="authEdit" type="button">
                 {t('auth.editProfile')}
@@ -825,6 +827,26 @@ export default function Site({ cfg, initial, extras, languageSwitcher, logoUrl, 
         </div>
       </div>
       {/* in-app "are you sure?" (instead of the browser's confirm box): engine.ts → askConfirm() */}
+      {/* forward a message: pick up to 5 chats (engine.ts "Forwarding") */}
+      <div className="sheet-wrap" id="fwdSheet" data-ct="oddsclub" role="dialog" aria-modal="true" aria-labelledby="fwdTitle" aria-hidden="true">
+        <div className="sheet glass fwd-sheet">
+          <h3 id="fwdTitle">{r('fwd.title')}</h3>
+          <div className="fwd-what" id="fwdWhat"></div>
+          <label className="search fwd-search">
+            <span className="sr">{t('fwd.search')}</span>
+            <Icon>
+              <circle cx="11" cy="11" r="7" />
+              <path d="M20 20l-3.5-3.5" />
+            </Icon>
+            <input id="fwdSearch" type="search" placeholder={t('fwd.search')} autoComplete="off" enterKeyHint="search" />
+          </label>
+          <ul className="fwd-list" id="fwdList" role="group" aria-labelledby="fwdTitle"></ul>
+          <div className="sheet-actions">
+            <button className="btn btn-secondary" id="fwdCancel" type="button">{t('rooms.cancel')}</button>
+            <button className="btn btn-primary" id="fwdSend" type="button" disabled>{t('fwd.send')}</button>
+          </div>
+        </div>
+      </div>
       <div className="sheet-wrap confirm-wrap" id="confirmSheet" data-ct="oddsclub" role="alertdialog" aria-modal="true" aria-labelledby="cfTitle" aria-describedby="cfText" aria-hidden="true">
         <div className="sheet glass confirm-sheet">
           <h4 id="cfTitle"></h4>

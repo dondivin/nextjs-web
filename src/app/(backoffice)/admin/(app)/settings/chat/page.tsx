@@ -27,6 +27,7 @@ export default async function ChatSettingsPage() {
         mediaRetentionDays: chat.mediaRetentionDays ?? 0,
         pmPictures: chat.privateChats?.pictures === true,
         pmVoice: chat.privateChats?.voice !== false,
+        pmForward: chat.privateChats?.forward !== false,
         rules: (chat.rules || []).map((r) => ({ icon: r.icon || 'shield', title: fillLanguages(r.title, languages), body: fillLanguages(r.body, languages) })),
         bannedWords: (chat.bannedWords || []).map((w) => w.word).filter(Boolean).join('\n'),
       }}

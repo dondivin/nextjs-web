@@ -35,6 +35,7 @@ export const ChatMessages: CollectionConfig = {
     { name: 'voice', type: 'upload', relationTo: 'chat-voice' },
     { name: 'mediaExpired', type: 'select', options: ['photo', 'voice'], admin: { description: 'Its picture / voice message was removed by the media clean-up (Chat settings)' } },
     { name: 'isMod', type: 'checkbox', defaultValue: false },
+    { name: 'forwarded', type: 'checkbox', defaultValue: false, admin: { description: 'A copy of a message forwarded from another chat' } },
     {
       name: 'reply', type: 'group',
       fields: [

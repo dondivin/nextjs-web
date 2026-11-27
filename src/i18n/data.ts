@@ -106,6 +106,7 @@ export async function loadSite(locale: string) {
       loungeMedia: { view: chat.lounge?.mediaView || 'everyone', save: chat.lounge?.mediaSave !== false },
       pmPictures: chat.privateChats?.pictures === true,   // private chats between members (Chat settings → Private chats)
       pmVoice: chat.privateChats?.voice !== false,
+      pmForward: chat.privateChats?.forward !== false,
       // notifications of new messages (src/chat/push.ts): the public VAPID key
       pushKey: pushPublicKey(),   // (null when the keys or the web-push package are missing: the chat doesn't offer it)
     },

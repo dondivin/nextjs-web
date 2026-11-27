@@ -509,6 +509,10 @@ export interface Member {
   moderationNote?: string | null;
   rulesAcceptedAt?: string | null;
   lastSeenAt?: string | null;
+  /**
+   * Who can start a private chat with this member (they choose it in the chat)
+   */
+  pmPolicy?: ('request' | 'everyone' | 'nobody') | null;
   pushPreview?: boolean | null;
   pushMuted?:
     | {
@@ -604,6 +608,10 @@ export interface ChatMessage {
    */
   mediaExpired?: ('photo' | 'voice') | null;
   isMod?: boolean | null;
+  /**
+   * A copy of a message forwarded from another chat
+   */
+  forwarded?: boolean | null;
   reply?: {
     msgId?: string | null;
     /**
@@ -789,6 +797,10 @@ export interface ChatRoom {
    * Who can see pictures and voice messages (members = people who joined). The team always can.
    */
   mediaView?: ('everyone' | 'members' | 'team' | 'none') | null;
+  /**
+   * Its messages can be forwarded to other chats
+   */
+  allowForward?: boolean | null;
   /**
    * Allow saving them (screenshots can never be prevented)
    */
@@ -1291,6 +1303,7 @@ export interface MembersSelect<T extends boolean = true> {
   moderationNote?: T;
   rulesAcceptedAt?: T;
   lastSeenAt?: T;
+  pmPolicy?: T;
   pushPreview?: T;
   pushMuted?: T;
   updatedAt?: T;
@@ -1325,6 +1338,7 @@ export interface ChatMessagesSelect<T extends boolean = true> {
   voice?: T;
   mediaExpired?: T;
   isMod?: T;
+  forwarded?: T;
   reply?:
     | T
     | {
@@ -1421,6 +1435,7 @@ export interface ChatRequestsSelect<T extends boolean = true> {
 export interface ChatRoomsSelect<T extends boolean = true> {
   inviteToken?: T;
   mediaView?: T;
+  allowForward?: T;
   mediaSave?: T;
   name?: T;
   description?: T;
@@ -1739,6 +1754,10 @@ export interface ChatSetting {
      * Members can send voice messages in private chats
      */
     voice?: boolean | null;
+    /**
+     * Messages of private chats can be forwarded to other chats
+     */
+    forward?: boolean | null;
   };
   /**
    * The chat’s main room. Empty texts use the default wording (Translations).
@@ -1877,6 +1896,7 @@ export interface ChatSettingsSelect<T extends boolean = true> {
     | {
         pictures?: T;
         voice?: T;
+        forward?: T;
       };
   lounge?:
     | T

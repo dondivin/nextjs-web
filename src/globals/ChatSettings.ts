@@ -39,6 +39,7 @@ export const ChatSettings: GlobalConfig = {
       fields: [
         { name: 'pictures', type: 'checkbox', defaultValue: false, admin: { description: 'Members can send pictures in private chats' } },
         { name: 'voice', type: 'checkbox', defaultValue: true, admin: { description: 'Members can send voice messages in private chats' } },
+        { name: 'forward', type: 'checkbox', defaultValue: true, admin: { description: 'Messages of private chats can be forwarded to other chats' } },
       ],
     },
     {

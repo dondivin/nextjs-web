@@ -33,7 +33,7 @@ export default async function GroupPage({ params }: { params: Promise<{ id: stri
       photo={room.photo && typeof room.photo === 'object' ? room.photo.url || null : null}
       owner={room.owner && typeof room.owner === 'object' ? room.owner.displayName : room.createdBy && typeof room.createdBy === 'object' && room.createdBy.name ? `${room.createdBy.name} (team)` : null}
       members={members}
-      initial={{ name: room.name, description: room.description || '', rules: room.rules || '', kind: (room.kind || 'group') as 'group' | 'channel', join: (room.join || 'open') as 'open' | 'request' | 'invite', ...roomVisibilityForm(room), autoAdd: !!room.autoAdd, active: room.active !== false, order: room.order ?? 0, mediaView: (room.mediaView || 'everyone') as 'everyone', mediaSave: room.mediaSave !== false }}
+      initial={{ name: room.name, description: room.description || '', rules: room.rules || '', kind: (room.kind || 'group') as 'group' | 'channel', join: (room.join || 'open') as 'open' | 'request' | 'invite', ...roomVisibilityForm(room), autoAdd: !!room.autoAdd, active: room.active !== false, order: room.order ?? 0, mediaView: (room.mediaView || 'everyone') as 'everyone', mediaSave: room.mediaSave !== false, allowForward: room.allowForward !== false }}
     />
   )
 }

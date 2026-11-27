@@ -5,7 +5,7 @@ import { Controller, useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { toast } from 'sonner'
 import { formatDistanceToNowStrict } from 'date-fns'
-import { ArrowDown, ArrowUp, Check, Eraser, ImageIcon, Loader2, Mic, Plus, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, Eraser, Forward, ImageIcon, Loader2, Mic, Plus, Trash2 } from 'lucide-react'
 import { PageHeader } from '@/backoffice/components/page-header'
 import {
   Card,
@@ -324,6 +324,13 @@ export function ChatSettingsView({
                   <Switch checked={field.value} onCheckedChange={field.onChange} className="mt-0.5" />
                   <span className="leading-tight"><b className="font-medium"><Mic className="mr-1 inline size-3.5" />Voice messages</b>
                     <span className="mt-0.5 block text-xs text-muted-foreground">{field.value ? 'Members can send voice messages to each other.' : 'Off: the microphone is hidden in private chats.'}</span></span>
+                </label>
+              )} />
+              <Controller control={control} name="pmForward" render={({ field }) => (
+                <label className="flex items-start gap-3 rounded-lg border p-3 text-sm">
+                  <Switch checked={field.value} onCheckedChange={field.onChange} className="mt-0.5" />
+                  <span className="leading-tight"><b className="font-medium"><Forward className="mr-1 inline size-3.5" />Forwarding</b>
+                    <span className="mt-0.5 block text-xs text-muted-foreground">{field.value ? 'Messages of private chats can be forwarded to other chats.' : 'Off: messages of private chats can’t be forwarded.'}</span></span>
                 </label>
               )} />
             </CardContent>

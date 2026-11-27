@@ -18,6 +18,7 @@ export type GroupView = {
   media: { view: string; save: boolean }   // who sees pictures / voice messages here, saving allowed
   vis: 'public' | 'members' | 'hidden'; preview: boolean   // who sees it · non-members read before joining
   photo: string | null   // the room's picture (else its colours)
+  forward: boolean   // its messages can be forwarded
 }
 
 export const groupRoom = (id: string) => 'g:' + id
@@ -82,6 +83,7 @@ export async function roomsFor(payload: Payload, viewer: Viewer, req?: PayloadRe
       media: { view: r.mediaView || 'everyone', save: r.mediaSave !== false },
       ...roomVisibility(r),
       photo: photos[relId(r.photo)] || null,
+      forward: r.allowForward !== false,
     })
   }
   return out

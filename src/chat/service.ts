@@ -22,7 +22,7 @@ export class ChatError extends Error {
   }
 }
 
-export type Ctx = { payload: Payload; viewer: Viewer; member: Member | null; staff: User | null; perms: Perms; t: (k: string, v?: Record<string, string | number>) => string }
+export type Ctx = { payload: Payload; viewer: Viewer; member: Member | null; staff: User | null; perms: Perms; t: (k: string, v?: Record<string, string | number>) => string; cookie?: string }
 
 const REACTIONS = new Set(['goal', 'fire', 'laugh', 'clap', 'wow'])
 const ROOM_RE = /^(lounge|support|(sup|pm|g):[a-f0-9]{24}|[a-f0-9]{24})$/i
@@ -44,8 +44,9 @@ export async function context(payload: Payload, headers: Headers, locale: string
   try {
     user = (await payload.auth({ headers })).user as Authed
   } catch {}
-  if (user?.collection === 'users' && hasRole(user, 'moderator')) return { payload, t, viewer: { kind: 'staff', uid: String(user.id) }, member: null, staff: user, perms: STAFF_PERMS }
-  if (user?.collection === 'members') return { payload, t, viewer: { kind: 'member', uid: String(user.id) }, member: user, staff: null, perms: await permsOf(payload, user.memberRole) }
+  const cookie = headers.get('cookie') || undefined   // (forwarding a picture fetches it as this person)
+  if (user?.collection === 'users' && hasRole(user, 'moderator')) return { payload, t, viewer: { kind: 'staff', uid: String(user.id) }, member: null, staff: user, perms: STAFF_PERMS, cookie }
+  if (user?.collection === 'members') return { payload, t, viewer: { kind: 'member', uid: String(user.id) }, member: user, staff: null, perms: await permsOf(payload, user.memberRole), cookie }
   return { payload, t, viewer: { kind: 'anon', uid: null }, member: null, staff: null, perms: { ...STAFF_PERMS, createGroups: false, createChannels: false, maxRooms: 0, sendPictures: false, privateChats: false } }
 }
 
@@ -115,7 +116,7 @@ export async function snapshot(ctx: Ctx, connId: string) {
     staff: viewer.kind === 'staff',
     canPost: viewer.kind === 'staff' || (!!member && member.status !== 'banned'),
     canEdit: viewer.kind === 'staff',
-    me: viewer.uid ? { name, email: member?.email || staff?.email || null } : null,
+    me: viewer.uid ? { name, email: member?.email || staff?.email || null, ...(member ? { pmPolicy: member.pmPolicy || 'request' } : {}) } : null,
     rulesAccepted: viewer.kind === 'staff' || !!member?.rulesAcceptedAt,
     messages,
     myDm,
@@ -194,7 +195,7 @@ type Body = Record<string, unknown>
 const str = (v: unknown, max = 200) => (typeof v === 'string' ? v.slice(0, max) : '')
 
 /** Checks shared by text and picture messages: who may post, where it goes, slow mode, the quoted message. */
-async function prepareSend(ctx: Ctx, b: Body, text: string, opts: { batch?: string } = {}) {
+async function prepareSend(ctx: Ctx, b: Body, text: string, opts: { batch?: string; skipSlow?: boolean } = {}) {
   needPoster(ctx)
   const cfg = await chatConfig(ctx.payload)
   if (text) {
@@ -244,7 +245,7 @@ async function prepareSend(ctx: Ctx, b: Body, text: string, opts: { batch?: stri
     const bt = opts.batch ? hub.batches?.get(uid) : undefined
     const inBatch = !!bt && bt.id === opts.batch && bt.room === room && bt.n < ALBUM_MAX && Date.now() - bt.at < 180_000
     const wait = (hub.lastPost.get(uid) || 0) + cfg.slowMs - Date.now()
-    if (wait > 0 && !inBatch) throw new ChatError(ctx.t('rule.slow', { s: Math.ceil(wait / 1000) }), 429)
+    if (wait > 0 && !inBatch && !opts.skipSlow) throw new ChatError(ctx.t('rule.slow', { s: Math.ceil(wait / 1000) }), 429)
   }
 
   // reply: always quote the stored message, never what the browser claims
@@ -263,7 +264,7 @@ async function prepareSend(ctx: Ctx, b: Body, text: string, opts: { batch?: stri
   return { room, reply, uid }
 }
 
-async function createMessage(ctx: Ctx, b: Body, p: Awaited<ReturnType<typeof prepareSend>>, text: string, image?: string, voice?: string) {
+async function createMessage(ctx: Ctx, b: Body, p: Awaited<ReturnType<typeof prepareSend>>, text: string, image?: string, voice?: string, extra: { forwarded?: boolean } = {}) {
   hub.lastPost.set(p.uid, Date.now())
   const doc = await ctx.payload.create({
     collection: 'chat-messages',
@@ -274,6 +275,7 @@ async function createMessage(ctx: Ctx, b: Body, p: Awaited<ReturnType<typeof pre
       image,
       voice,
       isMod: ctx.viewer.kind === 'staff',
+      ...(extra.forwarded ? { forwarded: true } : {}),
       clientId: str(b.clientId, 40) || undefined,
       ...(ctx.viewer.kind === 'staff' ? { staffAuthor: p.uid } : { author: p.uid }),
       ...(p.reply ? { reply: p.reply } : {}),
@@ -693,10 +695,14 @@ export async function chatRequest(ctx: Ctx, b: Body) {
     ctx.payload.count({ collection: 'chat-requests', where: { and: [{ from: { equals: me } }, { updatedAt: { greater_than: new Date(Date.now() - 86400e3).toISOString() } }] }, overrideAccess: true }),
   ])
   if (open.totalDocs >= PM_PENDING_MAX || today.totalDocs >= PM_DAY_MAX) throw new ChatError(ctx.t('pm.err.tooMany'), 429)
-  const data = { from: me, to, status: 'pending' as const, note: note || null, blockedBy: null, respondedAt: null }
+  // what they chose (in the chat): ask first → a request · anyone → the chat opens at once · nobody → no new private chats
+  const policy = target.pmPolicy || 'request'
+  if (policy === 'nobody') throw new ChatError(ctx.t('pm.err.closed'), 403)
+  const direct = policy === 'everyone'
+  const data = { from: me, to, status: (direct ? 'accepted' : 'pending') as 'accepted' | 'pending', note: note || null, blockedBy: null, respondedAt: direct ? new Date().toISOString() : null }
   if (pair) await ctx.payload.update({ collection: 'chat-requests', id: pair.id, data, overrideAccess: true })
   else await ctx.payload.create({ collection: 'chat-requests', data: { ...data, pairKey: pairKey(me, to) }, overrideAccess: true })
-  return { status: 'pending-out' }
+  return { status: direct ? 'accepted' : 'pending-out' }
 }
 
 /** accept | decline | block (incoming request or an open chat) | cancel (my own request) | unblock. */
@@ -789,7 +795,7 @@ async function roomFields(ctx: Ctx, b: Body, kindAllowed: (k: string) => boolean
   const join = JOINS.includes(String(b.join)) ? String(b.join) : 'open'
   const visibility = b.visibility === 'members' || b.visibility === 'hidden' ? b.visibility : 'public'
   const gradient = isGradient(b.gradient) ? { gradient: b.gradient } : {}
-  return { name, description: str(b.description, 300).trim(), rules: str(b.rules, 1000).trim(), kind: kind as 'group' | 'channel', join: join as 'open' | 'request' | 'invite', visibility: visibility as 'public' | 'members' | 'hidden', preview: b.preview === true || b.preview === 'true', ...gradient }
+  return { name, description: str(b.description, 300).trim(), rules: str(b.rules, 1000).trim(), kind: kind as 'group' | 'channel', join: join as 'open' | 'request' | 'invite', visibility: visibility as 'public' | 'members' | 'hidden', preview: b.preview === true || b.preview === 'true', allowForward: !(b.forward === false || b.forward === 'false'), ...gradient }   // (forwarding: on unless turned off)
 }
 
 export async function roomCreate(ctx: Ctx, b: Body) {
@@ -1091,4 +1097,93 @@ export async function pushPrefs(ctx: Ctx, b: Body) {
   }
   if (changed) await ctx.payload.update({ collection, id: o.uid, data: { pushPreview: preview, pushMuted: muted }, overrideAccess: true })
   return { preview, muted }
+}
+
+/* ---------- forwarding ---------- */
+const FORWARD_MAX = 5
+/** A chat as the browser names it → the fields a send takes ('pm:<uid>' → pmTo, 'support' → my chat with the team…). */
+function targetBody(ctx: Ctx, to: string): Body {
+  if (to.startsWith('pm:')) return { pmTo: to.slice(3) }
+  if (to === 'support') return { dmTo: ctx.viewer.uid }
+  if (to.startsWith('sup:')) return { dmTo: to.slice(4) }
+  return { room: to }
+}
+/** Fetch a chat file as the person forwarding it (the file's own access rule applies). */
+async function fileBytes(ctx: Ctx, url: string) {
+  const r = await fetch(new URL(url, `http://127.0.0.1:${process.env.PORT || 3000}`), { headers: ctx.cookie ? { cookie: ctx.cookie } : {}, signal: AbortSignal.timeout(15000) })
+  if (!r.ok) throw new ChatError(ctx.t('fwd.err.media'))
+  return Buffer.from(await r.arrayBuffer())
+}
+/**
+ * Forward one message to up to 5 chats: a copy of its text / picture / voice message, marked "Forwarded". The chat it comes
+ * from must allow it (Chat settings → Private chats → Forwarding; each group / channel's "Forwarding"; the team always
+ * can), and each target follows the usual rules (who may post there, pictures / voice there, banned content). One
+ * forward counts as one message for slow mode. Answers { sent, failed: [{ to, error }] }.
+ */
+export async function forward(ctx: Ctx, b: Body) {
+  needPoster(ctx)
+  const src = await loadMessage(ctx, b.id)   // a message this person can see
+  const room = String(src.room), gid = groupIdOf(room), cfg = await chatConfig(ctx.payload)
+  if (ctx.viewer.kind !== 'staff') {
+    const allowed = room.startsWith('pm:') ? cfg.pmForward
+      : gid ? (await ctx.payload.findByID({ collection: 'chat-rooms', id: gid, depth: 0, overrideAccess: true, disableErrors: true, select: { allowForward: true } }))?.allowForward !== false
+      : true
+    if (!allowed) throw new ChatError(ctx.t('fwd.err.notAllowed'), 403)
+  }
+  // its picture / voice message: only when this person may see it, and saving isn't turned off there
+  const imgs = await imagesFor(ctx.payload, [src])
+  const w = lockWire(toWire(src, imgs), ctx.viewer, await mediaPolicy(ctx.payload), await joinedGroups(ctx.payload, ctx.viewer.kind === 'member' ? ctx.viewer.uid : null))
+  if (w.locked || w.expired) throw new ChatError(ctx.t('fwd.err.media'), 403)
+  if ((w.image || w.voice) && w.nosave && ctx.viewer.kind !== 'staff') throw new ChatError(ctx.t('fwd.err.noSave'), 403)
+  const text = String(src.text || ''), kind: 'photo' | 'voice' | null = w.image ? 'photo' : w.voice ? 'voice' : null
+  if (!text && !kind) throw new ChatError(ctx.t('chat.quoteGone'), 404)
+  const targets = (Array.isArray(b.to) ? b.to : []).filter((x): x is string => typeof x === 'string' && ROOM_RE.test(x))
+  const list = [...new Set(targets)].slice(0, FORWARD_MAX)
+  if (!list.length) throw new ChatError(ctx.t('fwd.err.none'))
+  // the file, once
+  let file: { data: Buffer; mimetype: string; name: string; thumb?: string; duration?: number; peaks?: number[] } | null = null
+  if (w.image) {
+    const id = String(typeof src.image === 'object' && src.image ? (src.image as { id: string }).id : src.image)
+    const im = await ctx.payload.findByID({ collection: 'chat-images', id, depth: 0, overrideAccess: true })
+    file = { data: await fileBytes(ctx, w.image.url), mimetype: 'image/webp', name: `chat-${randomBytes(12).toString('hex')}.webp`, thumb: im.thumb || '' }
+  } else if (w.voice) {
+    const id = String(typeof src.voice === 'object' && src.voice ? (src.voice as { id: string }).id : src.voice)
+    const v = await ctx.payload.findByID({ collection: 'chat-voice', id, depth: 0, overrideAccess: true })
+    const mt = String(v.mimeType || 'audio/webm'), ext = VOICE_TYPES[mt] || 'webm'
+    file = { data: await fileBytes(ctx, w.voice.url), mimetype: mt, name: `voice-${randomBytes(12).toString('hex')}.${ext}`, duration: Number(v.duration) || 0, peaks: Array.isArray(v.peaks) ? (v.peaks as number[]) : [] }
+  }
+  let sent = 0
+  const failed: { to: string; error: string }[] = []
+  for (const to of list) {
+    try {
+      const tb = targetBody(ctx, to)
+      const p = await prepareSend(ctx, tb, text, { skipSlow: sent > 0 })   // (slow mode: the forward counts once)
+      let imageId: string | undefined, voiceId: string | undefined
+      if (file && ctx.viewer.kind !== 'staff' && p.room !== 'dm:' + ctx.viewer.uid) {
+        // pictures / voice there, like sending them yourself
+        const pm = p.room.startsWith('pm:')
+        const ok = kind === 'photo' ? (pm ? cfg.pmPictures : ctx.perms.sendPictures) : (pm ? cfg.pmVoice : ctx.perms.sendPictures)
+        if (!ok) throw new ChatError(ctx.t(kind === 'photo' ? (pm ? 'chat.err.pmPicturesOff' : 'chat.err.imagesDmOnly') : (pm ? 'chat.err.pmVoiceOff' : 'chat.err.voiceNotHere')), 403)
+      }
+      if (file && roomMedia(await mediaPolicy(ctx.payload), p.room)?.view === 'none') throw new ChatError(ctx.t('chat.err.mediaOff'), 403)
+      if (file && kind === 'photo') imageId = String((await ctx.payload.create({ collection: 'chat-images', overrideAccess: true, data: { room: p.room, thumb: file.thumb }, file: { data: file.data, mimetype: file.mimetype, name: file.name, size: file.data.length } })).id)
+      if (file && kind === 'voice') voiceId = String((await ctx.payload.create({ collection: 'chat-voice', overrideAccess: true, data: { room: p.room, duration: file.duration, peaks: file.peaks }, file: { data: file.data, mimetype: file.mimetype, name: file.name, size: file.data.length } })).id)
+      await createMessage(ctx, tb, p, text, imageId, voiceId, { forwarded: true })
+      sent++
+    } catch (e) {
+      failed.push({ to, error: e instanceof ChatError ? e.message : ctx.t('chat.sendFailed') })
+    }
+  }
+  return { sent, failed }
+}
+
+/* ---------- who may start a private chat with me ---------- */
+const PM_POLICIES = ['request', 'everyone', 'nobody'] as const
+/** Ask first (a request, the default) · anyone (the chat opens at once) · nobody (no new private chats; current ones stay). */
+export async function pmPolicy(ctx: Ctx, b: Body) {
+  if (ctx.viewer.kind !== 'member' || !ctx.viewer.uid) throw new ChatError(ctx.t('chat.err.notAllowed'), 403)
+  const policy = PM_POLICIES.find((p) => p === b.policy)
+  if (!policy) throw new ChatError(ctx.t('chat.err.notAllowed'))
+  await ctx.payload.update({ collection: 'members', id: ctx.viewer.uid, data: { pmPolicy: policy }, overrideAccess: true })
+  return { policy }
 }

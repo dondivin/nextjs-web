@@ -123,6 +123,12 @@ export function GroupFields({ control, register, errors }: { control: Control<Gr
           )} />
         )} />
       </div>
+      <Controller control={control} name="allowForward" render={({ field }) => (
+        <label className="flex items-start gap-3 rounded-lg border p-3 text-sm">
+          <Switch checked={field.value} onCheckedChange={field.onChange} className="mt-0.5" />
+          <span className="leading-tight"><b className="font-medium">Forwarding</b><span className="mt-0.5 block text-xs text-muted-foreground">{field.value ? 'Members can forward its messages to their other chats (marked “Forwarded”).' : 'Off: its messages can’t be forwarded. The team always can.'}</span></span>
+        </label>
+      )} />
       <div className="grid gap-2">
         <Label htmlFor="g-rules">Room rules (optional)</Label>
         <Textarea id="g-rules" rows={3} placeholder="Shown at the top of the room, on top of the site’s house rules" {...register('rules')} />

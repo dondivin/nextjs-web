@@ -94,7 +94,7 @@ function NewGroup({ onClose }: { onClose: () => void }) {
   const [pending, start] = useTransition()
   const { control, register, handleSubmit, formState } = useForm<GroupForm>({
     resolver: zodResolver(groupSchema),
-    defaultValues: { name: '', description: '', rules: '', kind: 'group', join: 'open', visibility: 'public', preview: true, autoAdd: false, active: true, order: 0, mediaView: 'everyone', mediaSave: true },
+    defaultValues: { name: '', description: '', rules: '', kind: 'group', join: 'open', visibility: 'public', preview: true, autoAdd: false, active: true, order: 0, mediaView: 'everyone', mediaSave: true, allowForward: true },
   })
   function onSubmit(d: GroupForm) {
     start(async () => {

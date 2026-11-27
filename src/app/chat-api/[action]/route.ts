@@ -43,6 +43,8 @@ const ACTIONS: Record<string, Handler> = {
   'push-subscribe': chat.pushSubscribe,
   'push-unsubscribe': chat.pushUnsubscribe,
   'push-prefs': chat.pushPrefs,
+  forward: chat.forward,
+  'pm-policy': chat.pmPolicy,
 }
 
 /**
