@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from 'crypto'
-import type { Payload } from 'payload'
+import { createLocalReq, type Payload } from 'payload'
 import { hasRole } from '../access'
 import { getDictionary, getLanguages } from '../i18n/data'
 import type { Member, User } from '../payload-types'
@@ -384,7 +384,10 @@ export async function react(ctx: Ctx, b: Body) {
   if (b.on) set[uid] = true
   else delete set[uid]
   rx[key] = set
-  await ctx.payload.update({ collection: 'chat-messages', id: doc.id, data: { reactions: rx }, overrideAccess: true })
+  // the latest reaction (who, which, when) — the chat list shows it like WhatsApp; taking it back clears it
+  const prev = doc.lastReact as { by?: string } | null | undefined
+  const lastReact = b.on ? { by: uid, k: key, at: Date.now() } : prev && prev.by === uid ? null : prev || null
+  await ctx.payload.update({ collection: 'chat-messages', id: doc.id, data: { reactions: rx, lastReact }, overrideAccess: true })
   return {}
 }
 
@@ -1108,11 +1111,34 @@ function targetBody(ctx: Ctx, to: string): Body {
   if (to.startsWith('sup:')) return { dmTo: to.slice(4) }
   return { room: to }
 }
-/** Fetch a chat file as the person forwarding it (the file's own access rule applies). */
-async function fileBytes(ctx: Ctx, url: string) {
-  const r = await fetch(new URL(url, `http://127.0.0.1:${process.env.PORT || 3000}`), { headers: ctx.cookie ? { cookie: ctx.cookie } : {}, signal: AbortSignal.timeout(15000) })
-  if (!r.ok) throw new ChatError(ctx.t('fwd.err.media'))
-  return Buffer.from(await r.arrayBuffer())
+/**
+ * A chat file's bytes (forwarding copies it). Read straight from the file storage through the storage plugin's own handler
+ * — no network round trip (fetching our own address failed on some hosts). The caller has already checked that this person
+ * may see it. Fallback: fetch it as that person (their session, so the file's access rule applies). Reasons are logged.
+ */
+async function fileBytes(ctx: Ctx, collection: 'chat-images' | 'chat-voice', filename: string, url: string) {
+  const why: string[] = []
+  try {
+    const up = ctx.payload.collections[collection]?.config.upload
+    const handlers = up && typeof up === 'object' ? (up.handlers || []) : []
+    if (handlers.length) {
+      const req = await createLocalReq({}, ctx.payload)
+      for (const h of handlers) {
+        const res = (await (h as unknown as (r: unknown, a: unknown) => Promise<Response | void>)(req, { params: { collection, filename }, headers: new Headers() })) || null
+        if (res && res.ok) return Buffer.from(await res.arrayBuffer())
+        why.push('storage ' + (res ? res.status : 'no answer'))
+      }
+    } else why.push('no storage handler')
+  } catch (e) { why.push('storage: ' + (e as Error).message) }
+  for (const base of [`http://127.0.0.1:${process.env.PORT || 3000}`, process.env.NEXT_PUBLIC_SERVER_URL || ''].filter(Boolean)) {
+    try {
+      const r = await fetch(new URL(url, base), { headers: ctx.cookie ? { cookie: ctx.cookie } : {}, signal: AbortSignal.timeout(15000) })
+      if (r.ok) return Buffer.from(await r.arrayBuffer())
+      why.push(base + ' ' + r.status)
+    } catch (e) { why.push(base + ' ' + (e as Error).message) }
+  }
+  console.error('[chat] forward: could not read ' + collection + '/' + filename + ' — ' + why.join(' · '))
+  throw new ChatError(ctx.t('fwd.err.media'))
 }
 /**
  * Forward one message to up to 5 chats: a copy of its text / picture / voice message, marked "Forwarded". The chat it comes
@@ -1145,12 +1171,12 @@ export async function forward(ctx: Ctx, b: Body) {
   if (w.image) {
     const id = String(typeof src.image === 'object' && src.image ? (src.image as { id: string }).id : src.image)
     const im = await ctx.payload.findByID({ collection: 'chat-images', id, depth: 0, overrideAccess: true })
-    file = { data: await fileBytes(ctx, w.image.url), mimetype: 'image/webp', name: `chat-${randomBytes(12).toString('hex')}.webp`, thumb: im.thumb || '' }
+    file = { data: await fileBytes(ctx, 'chat-images', String(im.filename), w.image.url), mimetype: 'image/webp', name: `chat-${randomBytes(12).toString('hex')}.webp`, thumb: im.thumb || '' }
   } else if (w.voice) {
     const id = String(typeof src.voice === 'object' && src.voice ? (src.voice as { id: string }).id : src.voice)
     const v = await ctx.payload.findByID({ collection: 'chat-voice', id, depth: 0, overrideAccess: true })
     const mt = String(v.mimeType || 'audio/webm'), ext = VOICE_TYPES[mt] || 'webm'
-    file = { data: await fileBytes(ctx, w.voice.url), mimetype: mt, name: `voice-${randomBytes(12).toString('hex')}.${ext}`, duration: Number(v.duration) || 0, peaks: Array.isArray(v.peaks) ? (v.peaks as number[]) : [] }
+    file = { data: await fileBytes(ctx, 'chat-voice', String(v.filename), w.voice.url), mimetype: mt, name: `voice-${randomBytes(12).toString('hex')}.${ext}`, duration: Number(v.duration) || 0, peaks: Array.isArray(v.peaks) ? (v.peaks as number[]) : [] }
   }
   let sent = 0
   const failed: { to: string; error: string }[] = []

@@ -20,6 +20,7 @@ export type WireMsg = {
   deleted?: boolean
   clientId?: string
   fwd?: boolean   // a forwarded copy (shows "Forwarded")
+  lr?: { by: string; k: string; at: number }   // its latest reaction (the chat list shows it)
 }
 export type ChatImage = { url: string; w: number; h: number; thumb?: string; size?: number }
 export type ChatVoiceInfo = { url: string; dur: number; peaks: number[]; size?: number }
@@ -68,6 +69,7 @@ export function toWire(doc: any, images?: Map<string, ChatImage | ChatVoiceInfo>
     expired: doc.mediaExpired || undefined,
     mod: doc.isMod ? true : undefined,
     fwd: doc.forwarded ? true : undefined,
+    lr: doc.lastReact && typeof doc.lastReact === 'object' && doc.lastReact.by && doc.lastReact.k ? { by: String(doc.lastReact.by), k: String(doc.lastReact.k), at: Number(doc.lastReact.at) || 0 } : undefined,
     deleted: doc.deleted ? true : undefined,
     clientId: doc.clientId || undefined,
   }

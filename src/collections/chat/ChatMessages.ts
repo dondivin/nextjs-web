@@ -50,6 +50,7 @@ export const ChatMessages: CollectionConfig = {
       ],
     },
     { name: 'reactions', type: 'json', admin: { description: '{ reactionKey: { memberId: true } }' } },
+    { name: 'lastReact', type: 'json', admin: { hidden: true, description: 'The latest reaction { by, k, at } — shown in the chat list like WhatsApp' } },
     { name: 'deleted', type: 'checkbox', defaultValue: false, index: true },
     { name: 'deletedBy', type: 'text', admin: { readOnly: true } },
     { name: 'deletedAt', type: 'date', admin: { readOnly: true } },

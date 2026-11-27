@@ -1486,3 +1486,22 @@ See `docs/HANDOFF.md` §4.
 - Strings en + fr (`pm.policy.*`, `pm.openHint`, `pm.closedHint`, `pm.err.closed`). Checked with the two test
   accounts: options shown, "Anyone" saved; the other's card → "Message" → the private chat opens with the message box
   and they can write; "Nobody" → refused; "Ask me first" → a normal request again. Test chat / message removed.
+- Fix (owner: "this voice or message can't be forwarded"): my earlier check covered text and a photo, not a voice
+  message. Locally a voice forward worked, so the failure was the file copy step on the live server: it fetched the
+  file from the server's own address (like the logo problem before), which can fail behind a host's network.
+  `service.ts` `fileBytes` now reads the file straight from storage through the S3 plugin's own handler
+  (`payload.collections[...].config.upload.handlers`, `createLocalReq`) — no network round trip; the old fetch stays as
+  a fallback, and when both fail the server log says why (`[chat] forward: could not read …`). Checked: the handler
+  reads a stored voice file (status 200, same size, valid WebM header); a recorded voice message and a photo forward
+  with their own copies (download 200). Test messages removed.
+
+## 2026-11-27 — Reactions shown in the chat list (like WhatsApp)
+
+- A message remembers its latest reaction (`chat-messages.lastReact` {by, k, at}, set by `react`, cleared when that
+  person takes it back; wire `lr`). The chat list (`engine.ts` `lastReaction` / `reactionLine`) shows it instead of the
+  last message when it is newer and it's someone reacting to MY message or me reacting (others reacting to others aren't
+  shown): "{name} reacted 🔥 to “…”" (groups / lounge), "Reacted 🔥 to “…”" (private chat — the name is the title),
+  "You reacted 😂 to “…”", with the reaction's time and no tick. Never counts as unread; a new message takes over again.
+- Strings en + fr (`chat.reacted`, `chat.reactedDm`, `chat.youReacted`). Checked live with the two test accounts in a
+  group (the receiver on the chat list, never opening the chat): reaction shown at once, badge unchanged (40); taken
+  back → the message again; new message → badge 41; my own reaction → "You reacted 😂 …". Test messages removed.

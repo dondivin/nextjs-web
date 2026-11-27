@@ -66,7 +66,7 @@ export function createChatBackend(cfg: EngineConfig, h) {
     let room = w.room
     if (room.indexOf('dm:') === 0) { const uid = room.slice(3); room = !me.staff && uid === me.uid ? 'support' : 'sup:' + uid }
     else if (room.indexOf('pm:') === 0) room = 'pm:' + pmOther(room)
-    return { id: w.id, by: w.by, text: w.text, ts: w.ts, room, reply: w.reply || null, reactions: w.reactions || {}, image: w.image || undefined, voice: w.voice || undefined, expired: w.expired || undefined, locked: w.locked || undefined, nosave: w.nosave || undefined, mod: w.mod || undefined, fwd: w.fwd || undefined, clientId: w.clientId }
+    return { id: w.id, by: w.by, text: w.text, ts: w.ts, room, reply: w.reply || null, reactions: w.reactions || {}, image: w.image || undefined, voice: w.voice || undefined, expired: w.expired || undefined, locked: w.locked || undefined, nosave: w.nosave || undefined, mod: w.mod || undefined, fwd: w.fwd || undefined, lr: w.lr || undefined, clientId: w.clientId }
   }
   // the other member of a stored private room 'pm:<a>_<b>'
   function pmOther(room) { const [a, b] = room.slice(3).split('_'); return a === me.uid ? b : a }

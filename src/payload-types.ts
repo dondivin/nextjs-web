@@ -645,6 +645,18 @@ export interface ChatMessage {
     | number
     | boolean
     | null;
+  /**
+   * The latest reaction { by, k, at } — shown in the chat list like WhatsApp
+   */
+  lastReact?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
   deleted?: boolean | null;
   deletedBy?: string | null;
   deletedAt?: string | null;
@@ -1351,6 +1363,7 @@ export interface ChatMessagesSelect<T extends boolean = true> {
         text?: T;
       };
   reactions?: T;
+  lastReact?: T;
   deleted?: T;
   deletedBy?: T;
   deletedAt?: T;

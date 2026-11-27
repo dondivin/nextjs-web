@@ -573,6 +573,26 @@ function quoteLine(box, q){
   if (q.kind) box.appendChild(svg(q.kind === 'voice' ? '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>' : '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 8"/>'));
   box.appendChild(document.createTextNode(q.text || (q.kind === 'voice' ? S('chat.voice') + (q.dur ? ' · ' + fmtDur(q.dur) : '') : q.kind === 'photo' ? S('chat.photo') : '')));
 }
+/* Reactions in the chat list, like WhatsApp: the latest one, when it's newer than the last message and it's someone
+   reacting to MY message or me reacting (others reacting to others aren't shown); one taken back isn't shown. It never
+   counts as unread. */
+function lastReaction(msgs, last){
+  var best = null, after = last ? last.ts : 0;
+  for (var i = msgs.length - 1; i >= 0 && i >= msgs.length - 80; i--){
+    var m = msgs[i], x = m.lr;
+    if (!x || !x.at || x.at <= after || (best && x.at <= best.at)) continue;
+    if (!(m.reactions && m.reactions[x.k] && m.reactions[x.k][x.by])) continue;   // taken back since
+    if (x.by !== CHAT.uid && m.by !== CHAT.uid) continue;
+    best = {by: x.by, k: x.k, at: x.at, m: m};
+  }
+  return best;
+}
+function reactionLine(ev, r){
+  var emoji = (REACTS.filter(function(x){ return x[0] === ev.k; })[0] || [0, ''])[1], t = String(msgPreview(ev.m) || '');
+  if (t.length > 40) t = t.slice(0, 39).trim() + '…';
+  if (ev.by === CHAT.uid) return S('chat.youReacted', {emoji: emoji, text: t});
+  return r.dm ? S('chat.reactedDm', {emoji: emoji, text: t}) : S('chat.reacted', {name: nameOf(ev.by), emoji: emoji, text: t});   // (a private chat: the name is already the title)
+}
 function msgPreview(m){ return (m && (m.text || (m.image || m.expired === 'photo' || (m.locked && m.locked.kind === 'photo') ? S('chat.photo') : m.voice || m.expired === 'voice' || (m.locked && m.locked.kind === 'voice') ? S('chat.voice') + (m.voice && m.voice.dur ? ' · ' + fmtDur(m.voice.dur) : '') : ''))) || ''; }
 /* Are this room's messages here yet? (each kind of room loads on its own: the lounge with the first load, a group's
    messages with the group list, a private chat once accepted, a member's help thread when the team opens it) */
@@ -716,9 +736,10 @@ function fillRoom(b, r){
   var unread = msgs.filter(function(m){ return m.ts > (lastSeen[r.id] || 0) && m.by !== CHAT.uid; }).length;
   if (!last && r.dm && r.uid && DM.threads[r.uid] && DM.threads[r.uid].lastTs){ var th = DM.threads[r.uid]; last = {id:'t' + th.lastTs, text:String(th.lastText || (th.photo ? S('chat.photo') : th.voice ? S('chat.voice') : '')), ts:Number(th.lastTs), by:th.lastBy}; if (last.ts > (lastSeen[r.id] || 0) && last.by !== CHAT.uid) unread = 1; }
   var typ = typersIn(r.id), current = r.id === CHAT.active && viewing();
+  var rev = typ.length ? null : lastReaction(msgs, last);   // a newer reaction than the last message: shown instead (no unread count)
   // our last message: its status, like WhatsApp (also for a team thread whose messages aren't loaded yet: its summary has the time)
-  var myTick = !typ.length && last && last.by === CHAT.uid && last.ts ? tickState(r.id, last) : '';
-  var sig = [myTick, r.title, SR.on ? srchQ() : '', !!r.pendingOut, r.group && [r.group.status, r.group.canRead, r.group.kind, r.group.gradient, r.group.photo, r.group.description].join(','), last && last.id, msgPreview(last), unread, typ.length, r.dm ? isOnline(r.uid) : online(r.id) > 0, r.dm && LIVE.profiles[r.uid] && (LIVE.profiles[r.uid].avatarUrl || LIVE.profiles[r.uid].gradient), r.match && [r.match.status, r.match.hs, r.match.as, r.match.kickoff], current, last && nameOf(last.by)].join('|');
+  var myTick = !typ.length && !rev && last && last.by === CHAT.uid && last.ts ? tickState(r.id, last) : '';
+  var sig = [rev ? [rev.by, rev.k, rev.at, rev.m.id].join(',') : '', myTick, r.title, SR.on ? srchQ() : '', !!r.pendingOut, r.group && [r.group.status, r.group.canRead, r.group.kind, r.group.gradient, r.group.photo, r.group.description].join(','), last && last.id, msgPreview(last), unread, typ.length, r.dm ? isOnline(r.uid) : online(r.id) > 0, r.dm && LIVE.profiles[r.uid] && (LIVE.profiles[r.uid].avatarUrl || LIVE.profiles[r.uid].gradient), r.match && [r.match.status, r.match.hs, r.match.as, r.match.kickoff], current, last && nameOf(last.by)].join('|');
   if (b._sig === sig) return; b._sig = sig;
   b.textContent = ''; if (current) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
   b.appendChild(roomAvatar(r, true));
@@ -731,12 +752,13 @@ function fillRoom(b, r){
   if (r.group && (!r.group.canRead || r.group.status === 'invited')){ var gs = r.group.status;
     main.appendChild(el('div', 'r-last' + (gs === 'invited' ? ' typing' : ''), gs === 'invited' ? S('groups.invitedShort') : gs === 'requested' ? S('groups.requestedShort') : (r.group.description || S('groups.membersOnly')))); b.appendChild(main); return; }
   var prev = typ.length ? (typ.length === 1 ? S('chat.isTyping', {name: nameOf(peerId(typ[0]))}) : S('chat.peopleTyping', {n: typ.length}))
+    : rev ? reactionLine(rev, r)
     : (!last && r.group) ? (r.group.description || S(r.group.members === 1 ? 'groups.sub1' : 'groups.sub', {kind: S('groups.kind.' + r.group.kind), n: r.group.members}))
     : last ? (last.by === CHAT.uid ? S('chat.lastByYou', {text: msgPreview(last)}) : (r.dm ? msgPreview(last) : S('chat.lastBy', {name: nameOf(last.by), text: msgPreview(last)}))) : r.dm ? (r.agent ? S('chat.agentHint') : S('chat.noMessages')) : (r.lounge ? S('chat.loungeHint') : (r.match.status === 'upcoming' ? S('chat.starts', {time: r.match.kickoff || S('chat.soon')}) : (r.match.league || S('chat.eventRoom'))));
   var lastEl = el('div', 'r-last' + (typ.length ? ' typing' : '') + (myTick ? ' has-tick' : ''), prev);
   if (myTick) lastEl.insertBefore(tickIcon(myTick, !!r.group), lastEl.firstChild);
   main.appendChild(lastEl); b.appendChild(main);
-  var side = el('div', 'r-side'); side.appendChild(el('span', 'r-time', last ? listTime(last.ts) : ''));
+  var side = el('div', 'r-side'); side.appendChild(el('span', 'r-time', rev ? listTime(rev.at) : last ? listTime(last.ts) : ''));
   if (unread && !current) side.appendChild(el('span', 'unread', unread > 99 ? '99+' : String(unread)));
   b.appendChild(side);
   b.setAttribute('aria-label', unread ? S('chat.roomUnreadAria', {title: r.title, n: unread}) : r.title);
